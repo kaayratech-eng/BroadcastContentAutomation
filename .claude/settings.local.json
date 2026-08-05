@@ -7,7 +7,16 @@
     "allow": [
       "Bash(uv tool *)",
       "Bash(graphifyy --help)",
-      "Bash(git add *)"
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git check-ignore *)",
+      "Bash(git count-objects *)",
+      "Bash(git rm *)",
+      "Bash(git commit *)",
+      "Bash(git checkout *)",
+      "Bash(graphify query *)",
+      "Skill(claude-api)",
+      "Skill(claude-api:*)"
     ]
   },
   "hooks": {
