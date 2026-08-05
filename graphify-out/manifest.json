@@ -1,0 +1,257 @@
+{
+  ".claude/settings.json": {
+    "mtime": 1785733611.2724164,
+    "ast_hash": "c4a1641b975a997d30b79649608181d4",
+    "semantic_hash": "c4a1641b975a997d30b79649608181d4"
+  },
+  ".claude/settings.local.json": {
+    "mtime": 1785734932.3692667,
+    "ast_hash": "db825acc940fd7da402a11a40ac9fc95",
+    "semantic_hash": "db825acc940fd7da402a11a40ac9fc95"
+  },
+  "UploaderApp/Uploader.deps.json": {
+    "mtime": 1783932370.148659,
+    "ast_hash": "b42bd7806c56355d807bf6cc0378f9b8",
+    "semantic_hash": "b42bd7806c56355d807bf6cc0378f9b8"
+  },
+  "UploaderApp/Uploader.runtimeconfig.json": {
+    "mtime": 1783932370.1914158,
+    "ast_hash": "253333997e82f7d44ea8072dfae6db39",
+    "semantic_hash": "253333997e82f7d44ea8072dfae6db39"
+  },
+  "UploaderApp/appsettings.json": {
+    "mtime": 1783930962.5140905,
+    "ast_hash": "0208cf1498400a19496992b648b4fccf",
+    "semantic_hash": "0208cf1498400a19496992b648b4fccf"
+  },
+  "Videos/done/gigi-colors-en.json": {
+    "mtime": 1783932152.579762,
+    "ast_hash": "4975737ee82c716634b39176ac1bad8b",
+    "semantic_hash": "4975737ee82c716634b39176ac1bad8b"
+  },
+  "Youtube/client_secret_desktop.json": {
+    "mtime": 1783930402.1872256,
+    "ast_hash": "ac4ee28e30e17ef99e13a4de7a224c58",
+    "semantic_hash": "ac4ee28e30e17ef99e13a4de7a224c58"
+  },
+  "Youtube/client_secret_web.json": {
+    "mtime": 1783393956.8920095,
+    "ast_hash": "f1b958163056dadd92628e26dde75942",
+    "semantic_hash": "f1b958163056dadd92628e26dde75942"
+  },
+  "gigglegarden-automation/TokenCapture/Program.cs": {
+    "mtime": 1783942834.0,
+    "ast_hash": "2103ea5b0a55d8e9aef9f160bd021d50",
+    "semantic_hash": "2103ea5b0a55d8e9aef9f160bd021d50"
+  },
+  "gigglegarden-automation/TokenCapture/TokenCapture.csproj": {
+    "mtime": 1783942840.0,
+    "ast_hash": "21e07f12cc316ef096706cc7ce06feea",
+    "semantic_hash": "21e07f12cc316ef096706cc7ce06feea"
+  },
+  "gigglegarden-automation/TokenCapture/bin/Debug/net8.0/TokenCapture.deps.json": {
+    "mtime": 1783930484.936319,
+    "ast_hash": "bb707420a4a913538a85243904037e35",
+    "semantic_hash": "bb707420a4a913538a85243904037e35"
+  },
+  "gigglegarden-automation/TokenCapture/bin/Debug/net8.0/TokenCapture.runtimeconfig.json": {
+    "mtime": 1783930178.0599105,
+    "ast_hash": "9fcdf880f73e74cf6347f8194b9f3509",
+    "semantic_hash": "9fcdf880f73e74cf6347f8194b9f3509"
+  },
+  "gigglegarden-automation/TokenCapture/obj/Debug/net8.0/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs": {
+    "mtime": 1783930176.295808,
+    "ast_hash": "9b225453b5a8008eefb62f6c5c66ce15",
+    "semantic_hash": "9b225453b5a8008eefb62f6c5c66ce15"
+  },
+  "gigglegarden-automation/TokenCapture/obj/Debug/net8.0/TokenCapture.AssemblyInfo.cs": {
+    "mtime": 1783930176.3185623,
+    "ast_hash": "eafe2d4a35848ad65d2a31c6fa552634",
+    "semantic_hash": "eafe2d4a35848ad65d2a31c6fa552634"
+  },
+  "gigglegarden-automation/TokenCapture/obj/Debug/net8.0/TokenCapture.GlobalUsings.g.cs": {
+    "mtime": 1783930176.1534216,
+    "ast_hash": "0ca42cbc4f22da0578a209aaeb544bf8",
+    "semantic_hash": "0ca42cbc4f22da0578a209aaeb544bf8"
+  },
+  "gigglegarden-automation/TokenCapture/obj/TokenCapture.csproj.nuget.dgspec.json": {
+    "mtime": 1783930176.0737987,
+    "ast_hash": "5da1eaf43390ffb4ba9d778edaea196c",
+    "semantic_hash": "5da1eaf43390ffb4ba9d778edaea196c"
+  },
+  "gigglegarden-automation/TokenCapture/obj/project.assets.json": {
+    "mtime": 1783930176.0678115,
+    "ast_hash": "c2aaca8e2d2b847ef0f199a0f80bb3da",
+    "semantic_hash": "c2aaca8e2d2b847ef0f199a0f80bb3da"
+  },
+  "gigglegarden-automation/Uploader/Program.cs": {
+    "mtime": 1783942892.0,
+    "ast_hash": "ec7ad04b635ee3a89ed946e6c649c172",
+    "semantic_hash": "ec7ad04b635ee3a89ed946e6c649c172"
+  },
+  "gigglegarden-automation/Uploader/Uploader.csproj": {
+    "mtime": 1783942900.0,
+    "ast_hash": "4302afd8eb27a35a7a82d9917eb4f9ec",
+    "semantic_hash": "4302afd8eb27a35a7a82d9917eb4f9ec"
+  },
+  "gigglegarden-automation/Uploader/appsettings.json": {
+    "mtime": 1783930962.5140905,
+    "ast_hash": "0208cf1498400a19496992b648b4fccf",
+    "semantic_hash": "0208cf1498400a19496992b648b4fccf"
+  },
+  "gigglegarden-automation/Uploader/bin/Debug/net8.0/Uploader.deps.json": {
+    "mtime": 1783932213.0404751,
+    "ast_hash": "b42bd7806c56355d807bf6cc0378f9b8",
+    "semantic_hash": "b42bd7806c56355d807bf6cc0378f9b8"
+  },
+  "gigglegarden-automation/Uploader/bin/Debug/net8.0/Uploader.runtimeconfig.json": {
+    "mtime": 1783931003.1054795,
+    "ast_hash": "9fcdf880f73e74cf6347f8194b9f3509",
+    "semantic_hash": "9fcdf880f73e74cf6347f8194b9f3509"
+  },
+  "gigglegarden-automation/Uploader/bin/Debug/net8.0/appsettings.json": {
+    "mtime": 1783930962.5140905,
+    "ast_hash": "0208cf1498400a19496992b648b4fccf",
+    "semantic_hash": "0208cf1498400a19496992b648b4fccf"
+  },
+  "gigglegarden-automation/Uploader/bin/Release/net8.0/Uploader.deps.json": {
+    "mtime": 1783932370.148659,
+    "ast_hash": "b42bd7806c56355d807bf6cc0378f9b8",
+    "semantic_hash": "b42bd7806c56355d807bf6cc0378f9b8"
+  },
+  "gigglegarden-automation/Uploader/bin/Release/net8.0/Uploader.runtimeconfig.json": {
+    "mtime": 1783932370.1914158,
+    "ast_hash": "253333997e82f7d44ea8072dfae6db39",
+    "semantic_hash": "253333997e82f7d44ea8072dfae6db39"
+  },
+  "gigglegarden-automation/Uploader/bin/Release/net8.0/appsettings.json": {
+    "mtime": 1783930962.5140905,
+    "ast_hash": "0208cf1498400a19496992b648b4fccf",
+    "semantic_hash": "0208cf1498400a19496992b648b4fccf"
+  },
+  "gigglegarden-automation/Uploader/obj/Debug/net8.0/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs": {
+    "mtime": 1783931002.6393583,
+    "ast_hash": "9b225453b5a8008eefb62f6c5c66ce15",
+    "semantic_hash": "9b225453b5a8008eefb62f6c5c66ce15"
+  },
+  "gigglegarden-automation/Uploader/obj/Debug/net8.0/Uploader.AssemblyInfo.cs": {
+    "mtime": 1783931002.669089,
+    "ast_hash": "0e18bdd0fee6dadc29ea5de91ded6558",
+    "semantic_hash": "0e18bdd0fee6dadc29ea5de91ded6558"
+  },
+  "gigglegarden-automation/Uploader/obj/Debug/net8.0/Uploader.GlobalUsings.g.cs": {
+    "mtime": 1783931002.429734,
+    "ast_hash": "0ca42cbc4f22da0578a209aaeb544bf8",
+    "semantic_hash": "0ca42cbc4f22da0578a209aaeb544bf8"
+  },
+  "gigglegarden-automation/Uploader/obj/Release/net8.0/.NETCoreApp,Version=v8.0.AssemblyAttributes.cs": {
+    "mtime": 1783932369.8749435,
+    "ast_hash": "9b225453b5a8008eefb62f6c5c66ce15",
+    "semantic_hash": "9b225453b5a8008eefb62f6c5c66ce15"
+  },
+  "gigglegarden-automation/Uploader/obj/Release/net8.0/Uploader.AssemblyInfo.cs": {
+    "mtime": 1783932369.903824,
+    "ast_hash": "aae0f7fa76b89ff9d1624513e893b9ed",
+    "semantic_hash": "aae0f7fa76b89ff9d1624513e893b9ed"
+  },
+  "gigglegarden-automation/Uploader/obj/Release/net8.0/Uploader.GlobalUsings.g.cs": {
+    "mtime": 1783932369.712536,
+    "ast_hash": "0ca42cbc4f22da0578a209aaeb544bf8",
+    "semantic_hash": "0ca42cbc4f22da0578a209aaeb544bf8"
+  },
+  "gigglegarden-automation/Uploader/obj/Uploader.csproj.nuget.dgspec.json": {
+    "mtime": 1783931002.3504372,
+    "ast_hash": "4f364cf817a07f9b6509f36fce82df19",
+    "semantic_hash": "4f364cf817a07f9b6509f36fce82df19"
+  },
+  "gigglegarden-automation/Uploader/obj/project.assets.json": {
+    "mtime": 1783931002.3453174,
+    "ast_hash": "d57ef5b248b7adbb52bc7a7b32dd2f90",
+    "semantic_hash": "d57ef5b248b7adbb52bc7a7b32dd2f90"
+  },
+  "gigglegarden-automation/VideoGen/GenConfig.cs": {
+    "mtime": 1783943622.0,
+    "ast_hash": "9f41b98717b1c3c04ca1dd7902e92975",
+    "semantic_hash": "9f41b98717b1c3c04ca1dd7902e92975"
+  },
+  "gigglegarden-automation/VideoGen/ImageClient.cs": {
+    "mtime": 1783943582.0,
+    "ast_hash": "632b2d867fb2afa64120bcb934e09344",
+    "semantic_hash": "632b2d867fb2afa64120bcb934e09344"
+  },
+  "gigglegarden-automation/VideoGen/Program.cs": {
+    "mtime": 1783943536.0,
+    "ast_hash": "666dca60b787d9ca48070b7484319436",
+    "semantic_hash": "666dca60b787d9ca48070b7484319436"
+  },
+  "gigglegarden-automation/VideoGen/ScriptGenerator.cs": {
+    "mtime": 1783943552.0,
+    "ast_hash": "4aa8a06d09289e4a13e5a9ec45b57e82",
+    "semantic_hash": "4aa8a06d09289e4a13e5a9ec45b57e82"
+  },
+  "gigglegarden-automation/VideoGen/TtsClient.cs": {
+    "mtime": 1783943566.0,
+    "ast_hash": "446cdc69289795b59cda9ecc93605df7",
+    "semantic_hash": "446cdc69289795b59cda9ecc93605df7"
+  },
+  "gigglegarden-automation/VideoGen/VideoAssembler.cs": {
+    "mtime": 1783943610.0,
+    "ast_hash": "e42b7b2a79938dbd86ac2ac40b845153",
+    "semantic_hash": "e42b7b2a79938dbd86ac2ac40b845153"
+  },
+  "gigglegarden-automation/VideoGen/VideoGen.csproj": {
+    "mtime": 1783943630.0,
+    "ast_hash": "d4e7407ab5d82832d7b908983bfff402",
+    "semantic_hash": "d4e7407ab5d82832d7b908983bfff402"
+  },
+  "gigglegarden-automation/VideoGen/appsettings.json": {
+    "mtime": 1783943640.0,
+    "ast_hash": "d7ddc6d1ba8eba27f4a8fad3e9cdad79",
+    "semantic_hash": "d7ddc6d1ba8eba27f4a8fad3e9cdad79"
+  },
+  "CLAUDE.md": {
+    "mtime": 1785733611.2690344,
+    "ast_hash": "8a6643a420fdad6bfb583523bc6cef16",
+    "semantic_hash": "8a6643a420fdad6bfb583523bc6cef16"
+  },
+  "README.md": {
+    "mtime": 1783943662.0,
+    "ast_hash": "9c0ed5f7d565d538d252e1dffa52b370",
+    "semantic_hash": "9c0ed5f7d565d538d252e1dffa52b370"
+  },
+  "gigglegarden-automation/README.md": {
+    "mtime": 1783943662.0,
+    "ast_hash": "9c0ed5f7d565d538d252e1dffa52b370",
+    "semantic_hash": "9c0ed5f7d565d538d252e1dffa52b370"
+  },
+  "gigglegarden-automation/TokenCapture/obj/Debug/net8.0/TokenCapture.csproj.FileListAbsolute.txt": {
+    "mtime": 1783930178.082754,
+    "ast_hash": "4e9d852ba2154ebf114bf00978a864ec",
+    "semantic_hash": "4e9d852ba2154ebf114bf00978a864ec"
+  },
+  "gigglegarden-automation/Uploader/obj/Debug/net8.0/Uploader.csproj.FileListAbsolute.txt": {
+    "mtime": 1783931003.1138704,
+    "ast_hash": "690624d3d7f6f26de93611183d55b3dd",
+    "semantic_hash": "690624d3d7f6f26de93611183d55b3dd"
+  },
+  "gigglegarden-automation/Uploader/obj/Release/net8.0/PublishOutputs.c870a95c69.txt": {
+    "mtime": 1783932370.2177017,
+    "ast_hash": "5da89c06e7989f53671e06ab27a5902f",
+    "semantic_hash": "5da89c06e7989f53671e06ab27a5902f"
+  },
+  "gigglegarden-automation/Uploader/obj/Release/net8.0/Uploader.csproj.FileListAbsolute.txt": {
+    "mtime": 1783932370.2008832,
+    "ast_hash": "b9975c22872ecdf555614607669018d0",
+    "semantic_hash": "b9975c22872ecdf555614607669018d0"
+  },
+  "generated-image.png": {
+    "mtime": 1752794776.312858,
+    "ast_hash": "d93e3961ae7ba8275836da6282157fb5",
+    "semantic_hash": "d93e3961ae7ba8275836da6282157fb5"
+  },
+  "Videos/done/gigi-colors-en.mp4": {
+    "mtime": 1783931966.7304454,
+    "ast_hash": "58460952fad3364462e5d714ca2b9d73",
+    "semantic_hash": "58460952fad3364462e5d714ca2b9d73"
+  }
+}

@@ -1,0 +1,40 @@
+# --- Secrets: never commit these ---
+**/appsettings.Local.json
+**/appsettings.*.Local.json
+*.secrets.json
+Claude-API/
+Youtube/
+client_secret*.json
+*token*.json
+!**/Uploader.runtimeconfig.json
+!**/*.deps.json
+
+# --- Build output ---
+bin/
+obj/
+UploaderApp/
+*.user
+*.suo
+
+# --- Generated media & work dirs ---
+Videos/
+VideoGen/work/
+generated-image.png
+
+# --- graphify ---
+graphify-out/cache/
+graphify-out/transcripts/
+graphify-out/.graphify_*
+
+# Ruflo local secrets and runtime data
+.env
+.env.local
+.env.*.local
+.claude-flow/data/
+.claude-flow/logs/
+.claude-flow/sessions/
+
+# --- Dependencies & third-party binaries ---
+node_modules/
+ffmpeg-8.1.2-full_build/
+ruvector.db
