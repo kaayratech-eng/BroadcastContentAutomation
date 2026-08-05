@@ -25,6 +25,7 @@ generated-image.png
 graphify-out/cache/
 graphify-out/transcripts/
 graphify-out/.graphify_*
+graphify-out/20*-*-*/
 
 # Ruflo local secrets and runtime data
 .env

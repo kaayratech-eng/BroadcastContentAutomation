@@ -1,9 +1,15 @@
 # GiggleGarden YouTube Automation — Windows / .NET 8
 
-Three projects:
+Projects:
 - **VideoGen** — generates finished videos (script → TTS → images → FFmpeg).
-- **TokenCapture** — run once, saves the refresh token.
-- **Uploader** — runs daily via Task Scheduler.
+- **TokenCapture** — run once, saves the YouTube refresh token.
+- **TikTokTokenCapture** — run once (only if you're enabling TikTok), saves the TikTok refresh token.
+- **Uploader** — runs daily via Task Scheduler; publishes each video to every platform its sidecar targets (YouTube, and optionally Instagram/Facebook/TikTok for the vertical short).
+
+Secrets never go in the tracked `appsettings.json` files — put real keys in a
+gitignored `appsettings.Local.json` next to each project's `appsettings.json`
+(already wired up for `VideoGen` and `Uploader`; values there override the
+tracked file's placeholders).
 
 ## 1. One-time setup
 
@@ -14,12 +20,30 @@ dotnet run -- "C:\Secure\GiggleGarden\client_secret.json"
 Browser opens → sign in as the channel-owner account → approve.
 You should see `Refresh token saved.`
 
+### Optional: enable TikTok
+
+1. Register a TikTok Developer app at developers.tiktok.com with redirect URI
+   **exactly** `http://localhost:53682/callback`.
+2. ```powershell
+   cd TikTokTokenCapture
+   dotnet run -- "<client-key>" "<client-secret>"
+   ```
+   Browser opens → approve → `Refresh token saved.` to `C:\Secure\GiggleGarden\tiktok-token.json`.
+3. Put the client key/secret in `Uploader\appsettings.Local.json` under
+   `Platforms.TikTok`, then set `Platforms.TikTok.Enabled: true` in `appsettings.json`.
+4. TikTok's Direct Post (posting straight to the account) requires an audited
+   app — until then, leave `DirectPost: false` (the default): videos land in
+   the creator's TikTok inbox as drafts for manual publish, which only needs
+   the `video.upload` scope this tool already requests.
+
 ## 2. Configure the uploader
 
-Edit `Uploader\appsettings.json`:
-- `TokenStorePath` — set YOURUSER to your Windows username (must match where TokenCapture saved it).
-- `AnthropicApiKey` — from https://console.anthropic.com (only needed if you use auto-generated metadata).
-- Keep `PrivacyStatus: "private"` until the end-to-end test passes.
+Edit `Uploader\appsettings.json` (structure, safe to commit) and
+`Uploader\appsettings.Local.json` (real secrets, gitignored):
+- `Platforms.YouTube.TokenStorePath` — set YOURUSER to your Windows username (must match where TokenCapture saved it).
+- `AnthropicApiKey` — from https://console.anthropic.com (only needed if a video has no sidecar and metadata must be auto-generated) — put the real value in `appsettings.Local.json`.
+- For Instagram/Facebook: `Platforms.Instagram.IgUserId` / `Platforms.Facebook.PageId` in `appsettings.json`, the Meta Page access token in `appsettings.Local.json`. Both can share one Meta app and Page access token.
+- Keep `Platforms.YouTube.PrivacyStatus: "private"` until the end-to-end test passes.
 
 ## 3. Test end-to-end (do this before scheduling anything)
 

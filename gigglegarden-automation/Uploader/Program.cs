@@ -1,27 +1,31 @@
 // GiggleGarden Daily Uploader (.NET 8)
-// Watches D:\Business\Videos for .mp4 files, generates or reads metadata,
-// uploads to YouTube with selfDeclaredMadeForKids=true, moves files to \done.
+// Watches D:\Business\Videos for .mp4 files and publishes each one to every
+// platform its sidecar declares as a target (YouTube always; Instagram,
+// Facebook, TikTok for vertical shorts once those platforms are enabled and
+// configured). Publishing is per-target and resumable: a video only moves to
+// \done once every target has reached a terminal state (see Sidecar.cs).
 //
 // Metadata resolution order per video:
 //   1. Sidecar JSON  (myvideo.mp4 -> myvideo.json)  — used as-is if present
 //   2. Auto-generate — pulls trending kids' video data from the YouTube API,
 //      sends it + the video filename to the Claude API, receives
-//      title/description/tags in English + Hindi + Punjabi.
+//      title/description/tags in English + Hindi + Punjabi. Defaults to a
+//      YouTube-only target since the source video's aspect ratio is unknown.
 //
 // Scheduled via Windows Task Scheduler (see README).
 
 using System.Text;
 using System.Text.Json;
-using Google.Apis.Auth.OAuth2;
-using Google.Apis.Upload;
-using Google.Apis.Util.Store;
-using Google.Apis.YouTube.v3;
-using Google.Apis.YouTube.v3.Data;
+using GiggleGarden.Shared;
+using GiggleGarden.Uploader;
+using GiggleGarden.Uploader.Publishing;
 using Microsoft.Extensions.Configuration;
 
 var config = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
-    .AddJsonFile("appsettings.json")
+    .AddJsonFile("appsettings.json", optional: false)
+    .AddJsonFile("appsettings.Local.json", optional: true)
+    .AddEnvironmentVariables("GIGGLE_")
     .Build();
 
 var cfg = config.Get<AppConfig>() ?? throw new InvalidOperationException("appsettings.json missing or invalid");
@@ -43,48 +47,122 @@ static async Task RunAsync(AppConfig cfg, Logger log)
     Directory.CreateDirectory(cfg.DoneDirectory);
     Directory.CreateDirectory(cfg.FailedDirectory);
 
+    var publishers = new IPublisher[]
+    {
+        new YouTubePublisher(cfg.Platforms.YouTube, log),
+        new InstagramPublisher(cfg.Platforms.Instagram, log),
+        new FacebookPublisher(cfg.Platforms.Facebook, log),
+        new TikTokPublisher(cfg.Platforms.TikTok, log),
+    };
+    var publishersByPlatform = publishers.ToDictionary(p => p.Platform, StringComparer.OrdinalIgnoreCase);
+
+    // Quota guard, tracked per platform across the whole run rather than
+    // per video — a platform that hits its MaxPerRun stops accepting new
+    // dispatches, but earlier videos it already handled are unaffected.
+    var dispatchedThisRun = publishers.ToDictionary(p => p.Platform, _ => 0, StringComparer.OrdinalIgnoreCase);
+
     var videos = Directory.GetFiles(cfg.WatchDirectory, "*.mp4")
+        .Where(p => (DateTime.UtcNow - File.GetLastWriteTimeUtc(p)).TotalSeconds >= cfg.MinFileAgeSeconds)
         .OrderBy(File.GetCreationTimeUtc)
-        .Take(cfg.MaxUploadsPerRun)   // quota guard: ~1600 units/upload, 10k/day
         .ToList();
 
-    if (videos.Count == 0) { log.Info("No videos to upload."); return; }
+    if (videos.Count == 0) { log.Info("No videos to process."); return; }
 
-    var youtube = await CreateYouTubeServiceAsync(cfg);
-    log.Info($"Found {videos.Count} video(s). Beginning uploads.");
+    log.Info($"Found {videos.Count} video(s).");
 
     foreach (var path in videos)
     {
         try
         {
-            var meta = await ResolveMetadataAsync(path, youtube, cfg, log);
+            var sidecar = await ResolveSidecarAsync(path, publishersByPlatform, cfg, log);
 
-            if (cfg.RequireApproval && meta.Approved != true)
+            if (cfg.RequireApproval && sidecar.Approved != true)
             {
-                // Human-in-the-loop gate: write the generated metadata next to the
-                // video and skip. You review, set "approved": true, next run uploads.
-                var sidecar = Path.ChangeExtension(path, ".json");
-                if (!File.Exists(sidecar))
+                // Human-in-the-loop gate: write the generated sidecar next to
+                // the video and skip. You review, set "approved": true, next
+                // run publishes it.
+                var sidecarPath = Sidecar.PathFor(path);
+                if (!File.Exists(sidecarPath))
                 {
-                    await File.WriteAllTextAsync(sidecar,
-                        JsonSerializer.Serialize(meta, JsonOpts.Pretty));
-                    log.Info($"Awaiting approval: {Path.GetFileName(sidecar)} written. " +
-                             "Review it, set \"approved\": true, and it uploads next run.");
+                    await sidecar.SaveAsync(path);
+                    log.Info($"Awaiting approval: {Path.GetFileName(sidecarPath)} written. " +
+                             "Review it, set \"approved\": true, and it publishes next run.");
                 }
                 else
                 {
-                    log.Info($"Still awaiting approval: {Path.GetFileName(sidecar)}");
+                    log.Info($"Still awaiting approval: {Path.GetFileName(sidecarPath)}");
                 }
                 continue;
             }
 
-            await UploadAsync(youtube, path, meta, cfg, log);
+            foreach (var target in sidecar.OutstandingTargets().ToList())
+            {
+                if (!publishersByPlatform.TryGetValue(target, out var publisher) || !publisher.Enabled)
+                {
+                    sidecar.PublicationFor(target).Status = PublishStatus.Skipped;
+                    continue;
+                }
 
-            var dest = Path.Combine(cfg.DoneDirectory, Path.GetFileName(path));
-            File.Move(path, dest, overwrite: true);
-            var sc = Path.ChangeExtension(path, ".json");
-            if (File.Exists(sc)) File.Move(sc, Path.ChangeExtension(dest, ".json"), overwrite: true);
-            log.Info($"Done: {Path.GetFileName(path)}");
+                if (dispatchedThisRun[publisher.Platform] >= publisher.MaxPerRun)
+                {
+                    log.Info($"  [{publisher.Platform}] run quota reached ({publisher.MaxPerRun}); deferring {Path.GetFileName(path)} to next run.");
+                    continue;
+                }
+
+                if (!publisher.Accepts(sidecar, out var reason))
+                {
+                    log.Info($"  [{publisher.Platform}] skipping {Path.GetFileName(path)}: {reason}");
+                    sidecar.PublicationFor(target).Status = PublishStatus.Skipped;
+                    sidecar.PublicationFor(target).Error = reason;
+                    continue;
+                }
+
+                if (cfg.StaggerSecondsBetweenPosts > 0 && dispatchedThisRun.Values.Sum() > 0)
+                    await Task.Delay(TimeSpan.FromSeconds(cfg.StaggerSecondsBetweenPosts));
+
+                dispatchedThisRun[publisher.Platform]++;
+
+                var publication = sidecar.PublicationFor(target);
+                publication.Attempts++;
+
+                var result = await publisher.PublishAsync(new PublishRequest(path, sidecar), CancellationToken.None);
+
+                if (result.Success)
+                {
+                    publication.Status = PublishStatus.Published;
+                    publication.Id = result.Id;
+                    publication.Url = result.Url;
+                    publication.At = DateTimeOffset.UtcNow;
+                    log.Info($"  [{publisher.Platform}] published: {result.Url ?? result.Id}");
+                }
+                else if (result.Permanent || publication.Attempts >= cfg.MaxAttemptsPerPlatform)
+                {
+                    publication.Status = PublishStatus.Abandoned;
+                    publication.Error = result.Error;
+                    log.Error($"  [{publisher.Platform}] abandoned after {publication.Attempts} attempt(s): {result.Error}");
+                }
+                else
+                {
+                    publication.Status = PublishStatus.Failed;
+                    publication.Error = result.Error;
+                    log.Error($"  [{publisher.Platform}] failed (attempt {publication.Attempts}/{cfg.MaxAttemptsPerPlatform}, will retry): {result.Error}");
+                }
+            }
+
+            await sidecar.SaveAsync(path);
+
+            if (sidecar.AllTargetsTerminal())
+            {
+                var dest = Path.Combine(cfg.DoneDirectory, Path.GetFileName(path));
+                File.Move(path, dest, overwrite: true);
+                var sc = Sidecar.PathFor(path);
+                if (File.Exists(sc)) File.Move(sc, Sidecar.PathFor(dest), overwrite: true);
+                log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
+            }
+            else
+            {
+                log.Info($"Partial: {Path.GetFileName(path)} — outstanding targets remain, will retry next run.");
+            }
         }
         catch (Exception ex)
         {
@@ -94,73 +172,39 @@ static async Task RunAsync(AppConfig cfg, Logger log)
     }
 }
 
-static async Task<YouTubeService> CreateYouTubeServiceAsync(AppConfig cfg)
+static async Task<Sidecar> ResolveSidecarAsync(
+    string videoPath, IReadOnlyDictionary<string, IPublisher> publishersByPlatform, AppConfig cfg, Logger log)
 {
-    using var stream = new FileStream(cfg.ClientSecretPath, FileMode.Open, FileAccess.Read);
-    var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-        GoogleClientSecrets.FromStream(stream).Secrets,
-        new[] { YouTubeService.Scope.YoutubeUpload, YouTubeService.Scope.YoutubeReadonly },
-        "gigglegarden-channel-owner",                        // must match TokenCapture
-        CancellationToken.None,
-        new FileDataStore(cfg.TokenStorePath, fullPath: true));
-    // Token already captured -> this never opens a browser; it refreshes silently.
-
-    return new YouTubeService(new Google.Apis.Services.BaseClientService.Initializer
-    {
-        HttpClientInitializer = credential,
-        ApplicationName = "GiggleGarden Uploader"
-    });
-}
-
-static async Task<VideoMetadata> ResolveMetadataAsync(
-    string videoPath, YouTubeService youtube, AppConfig cfg, Logger log)
-{
-    var sidecar = Path.ChangeExtension(videoPath, ".json");
-    if (File.Exists(sidecar))
+    var existing = await Sidecar.LoadAsync(videoPath);
+    if (existing is not null)
     {
         log.Info($"Using sidecar metadata for {Path.GetFileName(videoPath)}");
-        return JsonSerializer.Deserialize<VideoMetadata>(
-            await File.ReadAllTextAsync(sidecar), JsonOpts.CaseInsensitive)!;
+        return existing;
     }
 
     log.Info("No sidecar — generating metadata from YouTube trends + Claude.");
-    var trends = await FetchTrendingKidsDataAsync(youtube, cfg, log);
-    return await GenerateMetadataAsync(videoPath, trends, cfg, log);
+
+    var youtube = (YouTubePublisher)publishersByPlatform[Platforms.YouTube];
+    var trends = await youtube.FetchTrendingDataAsync(cfg.TrendQueries, log, CancellationToken.None);
+    var meta = await GenerateMetadataAsync(videoPath, trends, cfg, log);
+
+    return new Sidecar
+    {
+        Title = meta.Title,
+        Description = meta.Description,
+        Tags = meta.Tags,
+        Approved = false,
+        Language = "en",
+        Aspect = "landscape",
+        // Aspect ratio of a manually dropped video is unknown, so default to
+        // the one target every render supports regardless of orientation.
+        Targets = [Platforms.YouTube],
+    };
 }
 
-// ---- YouTube trend research (legit, via Data API; no scraping) --------------
+// ---- Claude metadata generation (fallback for videos with no sidecar) -------
 
-static async Task<string> FetchTrendingKidsDataAsync(YouTubeService yt, AppConfig cfg, Logger log)
-{
-    var sb = new StringBuilder();
-    try
-    {
-        // Top kid-focused results by view count for each research query.
-        foreach (var q in cfg.TrendQueries)
-        {
-            var search = yt.Search.List("snippet");
-            search.Q = q;
-            search.Type = "video";
-            search.Order = Google.Apis.YouTube.v3.SearchResource.ListRequest.OrderEnum.ViewCount;
-            search.SafeSearch = Google.Apis.YouTube.v3.SearchResource.ListRequest.SafeSearchEnum.Strict;
-            search.PublishedAfterDateTimeOffset = DateTimeOffset.UtcNow.AddDays(-30);
-            search.MaxResults = 5;
-            var res = await search.ExecuteAsync();   // 100 quota units per call
-
-            foreach (var item in res.Items)
-                sb.AppendLine($"- \"{item.Snippet.Title}\" | channel: {item.Snippet.ChannelTitle}");
-        }
-    }
-    catch (Exception ex)
-    {
-        log.Error($"Trend fetch failed (continuing with generic prompt): {ex.Message}");
-    }
-    return sb.ToString();
-}
-
-// ---- Claude metadata generation ---------------------------------------------
-
-static async Task<VideoMetadata> GenerateMetadataAsync(
+static async Task<GeneratedMetadata> GenerateMetadataAsync(
     string videoPath, string trendData, AppConfig cfg, Logger log)
 {
     var fileName = Path.GetFileNameWithoutExtension(videoPath);
@@ -190,7 +234,7 @@ JSON, no markdown fences, matching exactly:
         messages = new[] { new { role = "user", content = prompt } }
     });
 
-    using var http = new HttpClient();
+    using var http = new HttpClient(new RetryHandler(log: m => log.Info($"  [claude] {m}")));
     http.DefaultRequestHeaders.Add("x-api-key", cfg.AnthropicApiKey);
     http.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
 
@@ -202,101 +246,17 @@ JSON, no markdown fences, matching exactly:
     var text = doc.RootElement.GetProperty("content")[0].GetProperty("text").GetString()!;
     text = text.Replace("```json", "").Replace("```", "").Trim();
 
-    var meta = JsonSerializer.Deserialize<VideoMetadata>(text, JsonOpts.CaseInsensitive)!;
-    meta.Approved = false; // always requires the human glance when RequireApproval=true
+    var meta = JsonSerializer.Deserialize<GeneratedMetadata>(text,
+        new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        ?? throw new Exception("Claude returned no parseable metadata JSON.");
+
     log.Info($"Generated metadata: {meta.Title}");
     return meta;
 }
 
-// ---- Upload ------------------------------------------------------------------
-
-static async Task UploadAsync(
-    YouTubeService yt, string path, VideoMetadata meta, AppConfig cfg, Logger log)
-{
-    var video = new Video
-    {
-        Snippet = new VideoSnippet
-        {
-            Title = meta.Title,
-            Description = meta.Description,
-            Tags = meta.Tags,
-            CategoryId = "24", // Entertainment
-            DefaultLanguage = "en",
-            DefaultAudioLanguage = "en"
-        },
-        Status = new VideoStatus
-        {
-            PrivacyStatus = cfg.PrivacyStatus,        // start with "private" for testing
-            SelfDeclaredMadeForKids = true,
-            MadeForKids = true
-        }
-    };
-
-    using var fs = new FileStream(path, FileMode.Open, FileAccess.Read);
-    var insert = yt.Videos.Insert(video, "snippet,status", fs, "video/mp4");
-    insert.ChunkSize = ResumableUpload.MinimumChunkSize * 4;
-
-    insert.ProgressChanged += p =>
-    {
-        if (p.Status == UploadStatus.Failed)
-            log.Error($"Upload error: {p.Exception?.Message}");
-    };
-
-    var result = await insert.UploadAsync();
-    if (result.Status != UploadStatus.Completed)
-        throw new Exception($"Upload did not complete: {result.Exception?.Message}");
-
-    log.Info($"Uploaded: https://youtu.be/{insert.ResponseBody.Id} ({cfg.PrivacyStatus})");
-}
-
-// ---- Support types -------------------------------------------------------------
-
-record AppConfig
-{
-    public string WatchDirectory { get; init; } = @"D:\Business\Videos";
-    public string DoneDirectory { get; init; } = @"D:\Business\Videos\done";
-    public string FailedDirectory { get; init; } = @"D:\Business\Videos\failed";
-    public string LogDirectory { get; init; } = @"D:\Business\Videos\logs";
-    public string ClientSecretPath { get; init; } = "";
-    public string TokenStorePath { get; init; } = "";
-    public string AnthropicApiKey { get; init; } = "";
-    public string ClaudeModel { get; init; } = "claude-sonnet-4-6";
-    public string PrivacyStatus { get; init; } = "private";
-    public int MaxUploadsPerRun { get; init; } = 3;
-    public bool RequireApproval { get; init; } = true;
-    public string[] TrendQueries { get; init; } =
-        ["nursery rhymes for kids", "kids learning songs", "hindi rhymes for children"];
-}
-
-class VideoMetadata
+class GeneratedMetadata
 {
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
     public List<string> Tags { get; set; } = [];
-    public bool? Approved { get; set; }
-}
-
-static class JsonOpts
-{
-    public static readonly JsonSerializerOptions CaseInsensitive =
-        new() { PropertyNameCaseInsensitive = true };
-    public static readonly JsonSerializerOptions Pretty =
-        new() { WriteIndented = true };
-}
-
-class Logger(string dir)
-{
-    private readonly string _file = Path.Combine(
-        Directory.CreateDirectory(dir).FullName,
-        $"upload-{DateTime.Now:yyyy-MM-dd}.log");
-
-    public void Info(string msg) => Write("INFO", msg);
-    public void Error(string msg) => Write("ERROR", msg);
-
-    private void Write(string level, string msg)
-    {
-        var line = $"{DateTime.Now:HH:mm:ss} [{level}] {msg}";
-        Console.WriteLine(line);
-        File.AppendAllText(_file, line + Environment.NewLine);
-    }
 }

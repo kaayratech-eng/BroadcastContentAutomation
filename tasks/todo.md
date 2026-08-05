@@ -75,14 +75,26 @@ Written up separately in `tasks/cost-optimization.md` per your instructions — 
 
 ---
 
-## Review
+## Review (Phase 3 complete)
 
-**What's proposed, not yet done:** everything above. No code has been changed, no files deleted, nothing installed.
+**What changed:**
+- **A2** — OAuth client secret moved to `C:\Secure\GiggleGarden\client_secret.json`; `appsettings.json` updated to match.
+- **B** — stale `UploaderApp\*.dll` build output deleted; `Claude-API\API Key.txt` relocated to `C:\Secure\GiggleGarden\anthropic-api-key.txt`.
+- **C1** — built `YouTubePublisher`, `FacebookPublisher`, `TikTokPublisher` (all `IPublisher`); rewrote `Uploader/Program.cs` to dispatch each video's sidecar `Targets` to the matching publisher, track per-platform `Publications`, respect per-platform run quotas, and only move a video to `\done` once every target is terminal. Removed the old duplicate `AppConfig`/`VideoMetadata`/`Logger` types (superseded by the full rewrite).
+- **C2** — added `GiggleGarden.sln`; all five projects (`Shared`, `VideoGen`, `Uploader`, `TokenCapture`, `TikTokTokenCapture`) build clean as one unit.
+- **Follow-on work requested mid-implementation:** built `TikTokTokenCapture` (one-time OAuth bootstrap, mirrors `TokenCapture`); added `appsettings.Local.json` support to the Uploader (it didn't have it before — only VideoGen did) so real secrets never need to touch tracked config; wired in the one credential already on hand (Anthropic key); flipped `Platforms.Instagram.Enabled` / `Platforms.Facebook.Enabled` to `true` per your instruction.
 
-**What needs your decision before I start:**
-- Confirm you want to proceed with C1 as scoped (it's a real rewrite of the upload path, and steps 2–3 need you to go get API credentials from Meta and TikTok before those publishers can actually publish anything — I can build the code structure without them, but it won't work end-to-end until you have them).
-- Confirm B (delete stale `UploaderApp/*.dll` build output, relocate `Claude-API/API Key.txt`).
-- Confirm A2 (move the client secret or update the README — your call which one is "correct").
-- C2 is a yes/no/skip, low stakes either way.
+**Bugs found and fixed along the way, not in the original plan:**
+1. `Uploader.csproj` never had a `<ProjectReference>` to `Shared` — the pre-existing `Publishing/` folder already used `GiggleGarden.Shared` types, so the project would have failed to build the moment anyone tried it, even before this rewrite touched anything.
+2. `Uploader/appsettings.json` was still the old flat shape after the `AppConfig` rewrite — the new nested `Platforms.*` config silently wasn't being read (`.NET`'s binder ignores unmatched JSON properties rather than erroring). Rewrote it to match the real `AppConfig.cs` shape; my earlier `ClientSecretPath` fix would otherwise have been quietly inert.
 
-**Risks introduced:** none yet — this is still the planning phase. Once C1 starts, the main risk is regressing the one thing that currently works (YouTube upload) while refactoring it into `YouTubePublisher` — mitigated by testing that publisher in isolation before touching the orchestration loop.
+**Verification performed:** full solution builds with 0 warnings/errors. Ran the Uploader against real code paths headlessly — empty-directory handling, the approval-gate hold, and a full approve → dispatch → terminal-state → move-to-`\done` cycle (using a disabled-platform target, so no live network calls) — all behaved correctly. Did **not** attempt a live YouTube/Meta/TikTok publish; that needs your real credentials and live OAuth consent, which the README already designates as a manual step.
+
+**What's still open / needs your action (not something I can do):**
+- Run `TokenCapture` once for YouTube (browser sign-in required).
+- Fill in Azure Speech + OpenAI (or Stability) keys in `VideoGen/appsettings.Local.json`.
+- Fill in Instagram/Facebook Page access token + IDs, and get a background music file at `VideoGen/assets/music.mp3`.
+- If you want TikTok live: register a TikTok Developer app, run `TikTokTokenCapture` once, fill in the client key/secret, flip `Platforms.TikTok.Enabled`.
+- Run the README's own "Test end-to-end" step (drop one test video, approve it, confirm a real upload) before trusting any of this on a schedule.
+
+**Risks:** the multi-platform rewrite is the one thing that could regress YouTube (the only platform that previously worked). Mitigated by wrapping the existing, working upload logic almost unchanged into `YouTubePublisher`, and by testing the orchestration loop's control flow (approval gate, quota tracking, terminal-state detection) before you run it against a real account. The Facebook/TikTok publishers are implemented against my best understanding of Meta's Video Reels API and TikTok's Content Posting API — neither has been exercised against live credentials yet, so treat their first real run as a test, same as the README already prescribes for YouTube.

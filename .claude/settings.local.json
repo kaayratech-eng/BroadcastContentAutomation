@@ -16,7 +16,20 @@
       "Bash(git checkout *)",
       "Bash(graphify query *)",
       "Skill(claude-api)",
-      "Skill(claude-api:*)"
+      "Skill(claude-api:*)",
+      "Bash(echo \"=== C:\\\\Secure exists? ===\" ; ls -la \"C:/Secure\" 2>&1 *)",
+      "Bash(mkdir -p \"C:/Secure/GiggleGarden\")",
+      "Bash(mv \"D:/Business/Youtube/client_secret_desktop.json\" \"C:/Secure/GiggleGarden/client_secret.json\")",
+      "Bash(mv \"D:/Business/Claude-API/API Key.txt\" \"C:/Secure/GiggleGarden/anthropic-api-key.txt\" && echo \"moved \\(contents not printed\\)\" && ls \"C:/Secure/GiggleGarden\" *)",
+      "Bash(rm -rf \"D:/Business/UploaderApp\"/* && ls -la \"D:/Business/UploaderApp\")",
+      "Bash(dotnet build *)",
+      "Bash(dotnet run *)",
+      "Bash(dotnet new *)",
+      "Bash(dotnet sln *)",
+      "Bash(graphify update *)",
+      "Bash(gh auth *)",
+      "PowerShell(gh --version)",
+      "PowerShell(gh auth status 2>&1)"
     ]
   },
   "hooks": {
