@@ -67,6 +67,68 @@ static class VideoAssembler
         }
     }
 
+    // Custom YouTube thumbnail: the base illustration (already generated with the same
+    // "empty lower third" framing used for subtitles) plus a bold, high-contrast overlay
+    // phrase. Thumbnail is the single biggest click-through lever on YouTube, so this is
+    // worth a dedicated pass rather than letting the platform auto-pick a video frame.
+    public static async Task BuildThumbnailAsync(
+        GenConfig cfg, string baseImagePath, string text, string language, string outputPath)
+    {
+        const int w = 1280, h = 720; // YouTube's canonical thumbnail size
+        const int fontSize = 96;
+        var workDir = Path.GetDirectoryName(outputPath)!;
+
+        var perLine = Text.CharsPerLineFor(language, w, fontSize);
+        var lines = Text.WrapLines(text, perLine, maxLines: 2);
+        if (lines.Count == 0) lines = [text];
+
+        var lineHeight = (int)(fontSize * 1.3);
+        var font = FilterPath(cfg.SubtitleFontPath);
+        var vf = new StringBuilder($"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}");
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var textFile = Path.Combine(workDir, $"thumb-text-{i}.txt");
+            File.WriteAllText(textFile, lines[i], new UTF8Encoding(false));
+            var y = h - 70 - (lines.Count - i) * lineHeight;
+
+            vf.Append($",drawtext=textfile='{FilterPath(textFile)}':fontfile='{font}':")
+              .Append($"fontsize={fontSize}:fontcolor=yellow:borderw=6:bordercolor=black:")
+              .Append("box=1:boxcolor=black@0.45:boxborderw=18:")
+              .Append($"x=(w-text_w)/2:y={y}");
+        }
+
+        await RunFfmpegAsync(cfg, $"-y -i \"{baseImagePath}\" -vf \"{vf}\" -frames:v 1 -q:v 2 \"{outputPath}\"");
+    }
+
+    // Real caption file (SRT) alongside the burned-in subtitles: gives platforms and
+    // accessibility tools indexable/toggleable caption text, which drawtext (burned into
+    // the pixels) cannot provide. Uses the same per-scene duration math as the clips
+    // above (DurationSeconds + 0.5s breathing room) so cue timing matches the video.
+    public static async Task WriteSrtAsync(IReadOnlyList<Scene> scenes, string outputPath)
+    {
+        var sb = new StringBuilder();
+        var cursor = TimeSpan.Zero;
+
+        for (var i = 0; i < scenes.Count; i++)
+        {
+            var duration = TimeSpan.FromSeconds(scenes[i].DurationSeconds + 0.5);
+            var end = cursor + duration;
+
+            sb.AppendLine((i + 1).ToString(CultureInfo.InvariantCulture));
+            sb.AppendLine($"{FormatSrtTime(cursor)} --> {FormatSrtTime(end)}");
+            sb.AppendLine(scenes[i].Narration);
+            sb.AppendLine();
+
+            cursor = end;
+        }
+
+        await File.WriteAllTextAsync(outputPath, sb.ToString(), new UTF8Encoding(false));
+    }
+
+    private static string FormatSrtTime(TimeSpan t) =>
+        $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00},{t.Milliseconds:000}";
+
     // drawtext performs no word wrapping of its own, so a full sentence at fontsize 46+
     // runs off both edges of the frame. Wrap into lines and stack one drawtext per line.
     //

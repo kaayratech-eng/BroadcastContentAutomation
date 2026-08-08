@@ -6372,7 +6372,7 @@
       "source_file": "",
       "source_location": "",
       "_origin": "ast",
-      "id": "timespan",
+      "id": "gigglegarden_automation_shared_retryhandler_cs_timespan",
       "community": 131,
       "community_name": "RetryHandler",
       "norm_label": "timespan"
@@ -7314,8 +7314,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_facebookpublisher_gigglegarden_uploader_publishing_facebookpublisher",
-      "community": 2,
-      "community_name": "GiggleGarden.Shared",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "facebookpublisher"
     },
     {
@@ -7325,8 +7325,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_facebookpublisher_cs_int",
-      "community": 2,
-      "community_name": "GiggleGarden.Shared",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "int"
     },
     {
@@ -7342,8 +7342,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_facebookpublisher_gigglegarden_uploader_publishing_facebookpublisher_accepts",
-      "community": 2,
-      "community_name": "GiggleGarden.Shared",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": ".accepts()"
     },
     {
@@ -7392,8 +7392,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_ipublisher",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": "ipublisher.cs"
     },
     {
@@ -7494,8 +7494,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_ipublisher_gigglegarden_uploader_publishing_ipublisher",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "ipublisher"
     },
     {
@@ -7511,8 +7511,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_ipublisher_gigglegarden_uploader_publishing_ipublisher_accepts",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": ".accepts()"
     },
     {
@@ -7528,8 +7528,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_ipublisher_gigglegarden_uploader_publishing_ipublisher_publishasync",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": ".publishasync()"
     },
     {
@@ -7539,8 +7539,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_ipublisher_cs_cancellationtoken",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "cancellationtoken"
     },
     {
@@ -7550,8 +7550,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_ipublisher_cs_task",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "task"
     },
     {
@@ -7578,8 +7578,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_gigglegarden_uploader_publishing_instagrampublisher",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "instagrampublisher"
     },
     {
@@ -7589,8 +7589,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_cs_int",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "int"
     },
     {
@@ -7606,8 +7606,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_gigglegarden_uploader_publishing_instagrampublisher_accepts",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": ".accepts()"
     },
     {
@@ -7634,8 +7634,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_cs_cancellationtoken",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "cancellationtoken"
     },
     {
@@ -7645,8 +7645,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_cs_task",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "task"
     },
     {
@@ -7662,8 +7662,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_gigglegarden_uploader_publishing_instagrampublisher_trypermalinkasync",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": ".trypermalinkasync()"
     },
     {
@@ -7673,8 +7673,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_instagrampublisher_cs_httpclient",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 361,
+      "community_name": "IPublisher",
       "norm_label": "httpclient"
     },
     {
@@ -7903,8 +7903,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_metagraph_gigglegarden_uploader_publishing_metagraph_requirestring",
-      "community": 93,
-      "community_name": ".WaitForStatusAsync",
+      "community": 63,
+      "community_name": ".PublishAsync",
       "norm_label": ".requirestring()"
     },
     {
@@ -8093,8 +8093,8 @@
       },
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_tiktokpublisher_gigglegarden_uploader_publishing_tiktokpublisher_accepts",
-      "community": 63,
-      "community_name": ".PublishAsync",
+      "community": 117,
+      "community_name": "Sidecar",
       "norm_label": ".accepts()"
     },
     {
@@ -8262,8 +8262,8 @@
       "source_location": "L1",
       "_origin": "ast",
       "id": "gigglegarden_automation_uploader_publishing_youtubepublisher",
-      "community": 282,
-      "community_name": "YouTubePublisher",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": "youtubepublisher.cs"
     },
     {
@@ -8351,10 +8351,44 @@
       "norm_label": "task"
     },
     {
+      "label": ".TrySetThumbnailAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L96",
+      "metadata": {
+        "namespace": "GiggleGarden.Uploader.Publishing",
+        "scope_chain": [
+          "s199"
+        ]
+      },
+      "_origin": "ast",
+      "id": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_trysetthumbnailasync",
+      "community": 282,
+      "community_name": "YouTubePublisher",
+      "norm_label": ".trysetthumbnailasync()"
+    },
+    {
+      "label": ".TryUploadCaptionsAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L117",
+      "metadata": {
+        "namespace": "GiggleGarden.Uploader.Publishing",
+        "scope_chain": [
+          "s199"
+        ]
+      },
+      "_origin": "ast",
+      "id": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
+      "community": 282,
+      "community_name": "YouTubePublisher",
+      "norm_label": ".tryuploadcaptionsasync()"
+    },
+    {
       "label": ".FetchTrendingDataAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L91",
+      "source_location": "L150",
       "metadata": {
         "namespace": "GiggleGarden.Uploader.Publishing",
         "scope_chain": [
@@ -8393,7 +8427,7 @@
       "label": ".GetServiceAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L119",
+      "source_location": "L178",
       "metadata": {
         "namespace": "GiggleGarden.Uploader.Publishing",
         "scope_chain": [
@@ -8509,7 +8543,7 @@
       "label": ".Validate()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/GenConfig.cs",
-      "source_location": "L45",
+      "source_location": "L63",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_genconfig_genconfig_validate",
       "community": 3,
@@ -8531,7 +8565,7 @@
       "label": "ImageClient",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L7",
+      "source_location": "L8",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_imageclient_imageclient",
       "community": 7,
@@ -8542,7 +8576,7 @@
       "label": "Orientation",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L9",
+      "source_location": "L10",
       "metadata": {
         "is_nested_type": true
       },
@@ -8556,7 +8590,7 @@
       "label": ".GenerateAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L11",
+      "source_location": "L12",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_imageclient_imageclient_generateasync",
       "community": 7,
@@ -8575,10 +8609,32 @@
       "norm_label": "task"
     },
     {
+      "label": ".GenerateWithReferenceAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L29",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "community": 7,
+      "community_name": ".Tail",
+      "norm_label": ".generatewithreferenceasync()"
+    },
+    {
+      "label": ".BuildPrompt()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L44",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_imageclient_imageclient_buildprompt",
+      "community": 7,
+      "community_name": ".Tail",
+      "norm_label": ".buildprompt()"
+    },
+    {
       "label": ".OpenAiAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L32",
+      "source_location": "L59",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_imageclient_imageclient_openaiasync",
       "community": 7,
@@ -8586,10 +8642,32 @@
       "norm_label": ".openaiasync()"
     },
     {
+      "label": ".OpenAiEditAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L90",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_imageclient_imageclient_openaieditasync",
+      "community": 7,
+      "community_name": ".Tail",
+      "norm_label": ".openaieditasync()"
+    },
+    {
+      "label": ".StabilityImageToImageAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L127",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityimagetoimageasync",
+      "community": 7,
+      "community_name": ".Tail",
+      "norm_label": ".stabilityimagetoimageasync()"
+    },
+    {
       "label": ".StabilityAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L63",
+      "source_location": "L152",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityasync",
       "community": 7,
@@ -8644,7 +8722,7 @@
       "label": "Scene",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L17",
+      "source_location": "L27",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_scriptgenerator_scene",
       "community": 6,
@@ -8655,7 +8733,7 @@
       "label": "ScriptGenerator",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L27",
+      "source_location": "L37",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator",
       "community": 6,
@@ -8666,7 +8744,7 @@
       "label": ".GenerateAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L29",
+      "source_location": "L39",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_generateasync",
       "community": 6,
@@ -8688,7 +8766,7 @@
       "label": ".ExtractJson()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L110",
+      "source_location": "L162",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_extractjson",
       "community": 6,
@@ -8707,14 +8785,58 @@
       "norm_label": "jsonelement"
     },
     {
+      "label": "TrendResearch.cs",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L1",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_trendresearch",
+      "community": 416,
+      "community_name": ".FetchAsync",
+      "norm_label": "trendresearch.cs"
+    },
+    {
+      "label": "TrendResearch",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L8",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_trendresearch_trendresearch",
+      "community": 416,
+      "community_name": ".FetchAsync",
+      "norm_label": "trendresearch"
+    },
+    {
+      "label": ".FetchAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L10",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_trendresearch_trendresearch_fetchasync",
+      "community": 416,
+      "community_name": ".FetchAsync",
+      "norm_label": ".fetchasync()"
+    },
+    {
+      "label": "Task",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_trendresearch_cs_task",
+      "community": 416,
+      "community_name": ".FetchAsync",
+      "norm_label": "task"
+    },
+    {
       "label": "TtsClient.cs",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/TtsClient.cs",
       "source_location": "L1",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_ttsclient",
-      "community": 7,
-      "community_name": ".Tail",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": "ttsclient.cs"
     },
     {
@@ -8724,8 +8846,8 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_ttsclient_ttsclient",
-      "community": 7,
-      "community_name": ".Tail",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": "ttsclient"
     },
     {
@@ -8735,8 +8857,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_ttsclient_cs_dictionary",
-      "community": 7,
-      "community_name": ".Tail",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": "dictionary"
     },
     {
@@ -8746,8 +8868,8 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_ttsclient_ttsclient_synthesizeasync",
-      "community": 7,
-      "community_name": ".Tail",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": ".synthesizeasync()"
     },
     {
@@ -8757,8 +8879,8 @@
       "source_location": "",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_ttsclient_cs_task",
-      "community": 7,
-      "community_name": ".Tail",
+      "community": 2,
+      "community_name": "GiggleGarden.Shared",
       "norm_label": "task"
     },
     {
@@ -8817,10 +8939,54 @@
       "norm_label": "task"
     },
     {
+      "label": ".BuildThumbnailAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L74",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "community": 3,
+      "community_name": "Text",
+      "norm_label": ".buildthumbnailasync()"
+    },
+    {
+      "label": ".WriteSrtAsync()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L108",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_writesrtasync",
+      "community": 3,
+      "community_name": "Text",
+      "norm_label": ".writesrtasync()"
+    },
+    {
+      "label": ".FormatSrtTime()",
+      "file_type": "code",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L129",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_formatsrttime",
+      "community": 3,
+      "community_name": "Text",
+      "norm_label": ".formatsrttime()"
+    },
+    {
+      "label": "TimeSpan",
+      "file_type": "code",
+      "source_file": "",
+      "source_location": "",
+      "_origin": "ast",
+      "id": "gigglegarden_automation_videogen_videoassembler_cs_timespan",
+      "community": 3,
+      "community_name": "Text",
+      "norm_label": "timespan"
+    },
+    {
       "label": ".BuildSubtitleFilter()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L76",
+      "source_location": "L138",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildsubtitlefilter",
       "community": 3,
@@ -8831,7 +8997,7 @@
       "label": ".FilterPath()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L105",
+      "source_location": "L167",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_filterpath",
       "community": 3,
@@ -8842,7 +9008,7 @@
       "label": ".GetAudioDurationAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L107",
+      "source_location": "L169",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_getaudiodurationasync",
       "community": 3,
@@ -8853,7 +9019,7 @@
       "label": ".RunFfmpegAsync()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L130",
+      "source_location": "L192",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_runffmpegasync",
       "community": 3,
@@ -8864,7 +9030,7 @@
       "label": ".StartOrThrow()",
       "file_type": "code",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L143",
+      "source_location": "L205",
       "_origin": "ast",
       "id": "gigglegarden_automation_videogen_videoassembler_videoassembler_startorthrow",
       "community": 3,
@@ -13190,8 +13356,8 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_communication_strategies",
-      "community": 401,
-      "community_name": "Communication Strategies",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "communication strategies"
     },
     {
@@ -13201,8 +13367,8 @@
       "source_location": "L260",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_1_webhook_based_coordination",
-      "community": 401,
-      "community_name": "Communication Strategies",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. webhook-based coordination"
     },
     {
@@ -13212,8 +13378,8 @@
       "source_location": "L281",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_2_graphql_federation",
-      "community": 401,
-      "community_name": "Communication Strategies",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. graphql federation"
     },
     {
@@ -13223,8 +13389,8 @@
       "source_location": "L300",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_3_event_streaming",
-      "community": 401,
-      "community_name": "Communication Strategies",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. event streaming"
     },
     {
@@ -13278,8 +13444,8 @@
       "source_location": "L346",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_monitoring_visualization",
-      "community": 402,
-      "community_name": "Monitoring & Visualization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "monitoring & visualization"
     },
     {
@@ -13289,8 +13455,8 @@
       "source_location": "L348",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_multi_repo_dashboard",
-      "community": 402,
-      "community_name": "Monitoring & Visualization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "multi-repo dashboard"
     },
     {
@@ -13300,8 +13466,8 @@
       "source_location": "L357",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_dependency_graph",
-      "community": 402,
-      "community_name": "Monitoring & Visualization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "dependency graph"
     },
     {
@@ -13311,8 +13477,8 @@
       "source_location": "L366",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_health_monitoring",
-      "community": 402,
-      "community_name": "Monitoring & Visualization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "health monitoring"
     },
     {
@@ -13366,8 +13532,8 @@
       "source_location": "L420",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_use_cases",
-      "community": 395,
-      "community_name": "Use Cases",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "use cases"
     },
     {
@@ -13377,8 +13543,8 @@
       "source_location": "L422",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_1_microservices_coordination",
-      "community": 395,
-      "community_name": "Use Cases",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. microservices coordination"
     },
     {
@@ -13388,8 +13554,8 @@
       "source_location": "L432",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_2_library_updates",
-      "community": 395,
-      "community_name": "Use Cases",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. library updates"
     },
     {
@@ -13399,8 +13565,8 @@
       "source_location": "L443",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_3_organization_wide_changes",
-      "community": 395,
-      "community_name": "Use Cases",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. organization-wide changes"
     },
     {
@@ -13410,8 +13576,8 @@
       "source_location": "L453",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_best_practices",
-      "community": 396,
-      "community_name": "Best Practices",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "best practices"
     },
     {
@@ -13421,8 +13587,8 @@
       "source_location": "L455",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_1_repository_organization",
-      "community": 396,
-      "community_name": "Best Practices",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. repository organization"
     },
     {
@@ -13432,8 +13598,8 @@
       "source_location": "L461",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_2_communication",
-      "community": 396,
-      "community_name": "Best Practices",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. communication"
     },
     {
@@ -13443,8 +13609,8 @@
       "source_location": "L467",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_3_security",
-      "community": 396,
-      "community_name": "Best Practices",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. security"
     },
     {
@@ -13454,8 +13620,8 @@
       "source_location": "L473",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_performance_optimization",
-      "community": 397,
-      "community_name": "Performance Optimization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "performance optimization"
     },
     {
@@ -13465,8 +13631,8 @@
       "source_location": "L475",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_caching_strategy",
-      "community": 397,
-      "community_name": "Performance Optimization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "caching strategy"
     },
     {
@@ -13476,8 +13642,8 @@
       "source_location": "L484",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_parallel_execution",
-      "community": 397,
-      "community_name": "Performance Optimization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "parallel execution"
     },
     {
@@ -13487,8 +13653,8 @@
       "source_location": "L493",
       "_origin": "ast",
       "id": "claude_agents_github_multi_repo_swarm_resource_pooling",
-      "community": 397,
-      "community_name": "Performance Optimization",
+      "community": 86,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "resource pooling"
     },
     {
@@ -15588,8 +15754,8 @@
       "source_location": "L38",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_core_features",
-      "community": 470,
-      "community_name": "Core Features",
+      "community": 24,
+      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
       "norm_label": "core features"
     },
     {
@@ -15599,8 +15765,8 @@
       "source_location": "L40",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_1_issue_to_swarm_conversion",
-      "community": 470,
-      "community_name": "Core Features",
+      "community": 24,
+      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
       "norm_label": "1. issue-to-swarm conversion"
     },
     {
@@ -15610,8 +15776,8 @@
       "source_location": "L64",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_2_issue_comment_commands",
-      "community": 470,
-      "community_name": "Core Features",
+      "community": 24,
+      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
       "norm_label": "2. issue comment commands"
     },
     {
@@ -15621,8 +15787,8 @@
       "source_location": "L76",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_3_issue_templates_for_swarms",
-      "community": 470,
-      "community_name": "Core Features",
+      "community": 24,
+      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
       "norm_label": "3. issue templates for swarms"
     },
     {
@@ -15665,8 +15831,8 @@
       "source_location": "L141",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_issue_swarm_commands",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 396,
+      "community_name": "Issue Swarm Commands",
       "norm_label": "issue swarm commands"
     },
     {
@@ -15676,8 +15842,8 @@
       "source_location": "L143",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_initialize_from_issue",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 396,
+      "community_name": "Issue Swarm Commands",
       "norm_label": "initialize from issue"
     },
     {
@@ -15687,8 +15853,8 @@
       "source_location": "L169",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_task_decomposition",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 396,
+      "community_name": "Issue Swarm Commands",
       "norm_label": "task decomposition"
     },
     {
@@ -15698,8 +15864,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_progress_tracking",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 396,
+      "community_name": "Issue Swarm Commands",
       "norm_label": "progress tracking"
     },
     {
@@ -16006,8 +16172,8 @@
       "source_location": "L482",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_examples",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 395,
+      "community_name": "Examples",
       "norm_label": "examples"
     },
     {
@@ -16017,8 +16183,8 @@
       "source_location": "L484",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_complex_bug_investigation",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 395,
+      "community_name": "Examples",
       "norm_label": "complex bug investigation"
     },
     {
@@ -16028,8 +16194,8 @@
       "source_location": "L494",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_feature_implementation",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 395,
+      "community_name": "Examples",
       "norm_label": "feature implementation"
     },
     {
@@ -16039,8 +16205,8 @@
       "source_location": "L504",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_issue_documentation_update",
-      "community": 24,
-      "community_name": "Swarm Issue - Issue-Based Swarm Coordination",
+      "community": 395,
+      "community_name": "Examples",
       "norm_label": "documentation update"
     },
     {
@@ -16237,8 +16403,8 @@
       "source_location": "L166",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_advanced_features",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 397,
+      "community_name": "Advanced Features",
       "norm_label": "advanced features"
     },
     {
@@ -16248,8 +16414,8 @@
       "source_location": "L168",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_1_multi_pr_swarm_coordination",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 397,
+      "community_name": "Advanced Features",
       "norm_label": "1. multi-pr swarm coordination"
     },
     {
@@ -16259,8 +16425,8 @@
       "source_location": "L177",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_2_pr_dependency_analysis",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 397,
+      "community_name": "Advanced Features",
       "norm_label": "2. pr dependency analysis"
     },
     {
@@ -16270,8 +16436,8 @@
       "source_location": "L185",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_3_automated_pr_fixes",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 397,
+      "community_name": "Advanced Features",
       "norm_label": "3. automated pr fixes"
     },
     {
@@ -16347,8 +16513,8 @@
       "source_location": "L258",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_examples",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 399,
+      "community_name": "Examples",
       "norm_label": "examples"
     },
     {
@@ -16358,8 +16524,8 @@
       "source_location": "L260",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_feature_development_pr",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 399,
+      "community_name": "Examples",
       "norm_label": "feature development pr"
     },
     {
@@ -16369,8 +16535,8 @@
       "source_location": "L269",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_bug_fix_pr",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 399,
+      "community_name": "Examples",
       "norm_label": "bug fix pr"
     },
     {
@@ -16380,8 +16546,8 @@
       "source_location": "L278",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_documentation_pr",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 399,
+      "community_name": "Examples",
       "norm_label": "documentation pr"
     },
     {
@@ -16446,8 +16612,8 @@
       "source_location": "L321",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_advanced_swarm_pr_coordination",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 398,
+      "community_name": "Advanced Swarm PR Coordination",
       "norm_label": "advanced swarm pr coordination"
     },
     {
@@ -16457,8 +16623,8 @@
       "source_location": "L323",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_multi_agent_pr_analysis",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 398,
+      "community_name": "Advanced Swarm PR Coordination",
       "norm_label": "multi-agent pr analysis"
     },
     {
@@ -16468,8 +16634,8 @@
       "source_location": "L354",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_swarm_coordinated_pr_lifecycle",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 398,
+      "community_name": "Advanced Swarm PR Coordination",
       "norm_label": "swarm-coordinated pr lifecycle"
     },
     {
@@ -16479,8 +16645,8 @@
       "source_location": "L403",
       "_origin": "ast",
       "id": "claude_agents_github_swarm_pr_intelligent_pr_merge_coordination",
-      "community": 87,
-      "community_name": "Swarm PR - Managing Swarms through Pull Requests",
+      "community": 398,
+      "community_name": "Advanced Swarm PR Coordination",
       "norm_label": "intelligent pr merge coordination"
     },
     {
@@ -16545,8 +16711,8 @@
       "source_location": "L58",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_usage_patterns",
-      "community": 501,
-      "community_name": "Usage Patterns",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "usage patterns"
     },
     {
@@ -16556,8 +16722,8 @@
       "source_location": "L60",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_1_synchronize_package_dependencies",
-      "community": 501,
-      "community_name": "Usage Patterns",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "1. synchronize package dependencies"
     },
     {
@@ -16567,8 +16733,8 @@
       "source_location": "L93",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_2_documentation_synchronization",
-      "community": 501,
-      "community_name": "Usage Patterns",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "2. documentation synchronization"
     },
     {
@@ -16578,8 +16744,8 @@
       "source_location": "L119",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_3_cross_package_feature_integration",
-      "community": 501,
-      "community_name": "Usage Patterns",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "3. cross-package feature integration"
     },
     {
@@ -16655,8 +16821,8 @@
       "source_location": "L289",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_best_practices",
-      "community": 78,
-      "community_name": "GitHub Sync Coordinator",
+      "community": 378,
+      "community_name": "Best Practices",
       "norm_label": "best practices"
     },
     {
@@ -16666,8 +16832,8 @@
       "source_location": "L291",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_1_atomic_synchronization",
-      "community": 78,
-      "community_name": "GitHub Sync Coordinator",
+      "community": 378,
+      "community_name": "Best Practices",
       "norm_label": "1. **atomic synchronization**"
     },
     {
@@ -16677,8 +16843,8 @@
       "source_location": "L296",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_2_version_management",
-      "community": 78,
-      "community_name": "GitHub Sync Coordinator",
+      "community": 378,
+      "community_name": "Best Practices",
       "norm_label": "2. **version management**"
     },
     {
@@ -16688,8 +16854,8 @@
       "source_location": "L301",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_3_documentation_consistency",
-      "community": 78,
-      "community_name": "GitHub Sync Coordinator",
+      "community": 378,
+      "community_name": "Best Practices",
       "norm_label": "3. **documentation consistency**"
     },
     {
@@ -16699,8 +16865,8 @@
       "source_location": "L306",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_4_testing_integration",
-      "community": 78,
-      "community_name": "GitHub Sync Coordinator",
+      "community": 378,
+      "community_name": "Best Practices",
       "norm_label": "4. **testing integration**"
     },
     {
@@ -16743,8 +16909,8 @@
       "source_location": "L325",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_advanced_swarm_synchronization_features",
-      "community": 403,
-      "community_name": "Advanced Swarm Synchronization Features",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "advanced swarm synchronization features"
     },
     {
@@ -16754,8 +16920,8 @@
       "source_location": "L327",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_multi_agent_coordination_architecture",
-      "community": 403,
-      "community_name": "Advanced Swarm Synchronization Features",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "multi-agent coordination architecture"
     },
     {
@@ -16765,8 +16931,8 @@
       "source_location": "L358",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_intelligent_conflict_resolution",
-      "community": 403,
-      "community_name": "Advanced Swarm Synchronization Features",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "intelligent conflict resolution"
     },
     {
@@ -16776,8 +16942,8 @@
       "source_location": "L390",
       "_origin": "ast",
       "id": "claude_agents_github_sync_coordinator_comprehensive_synchronization_metrics",
-      "community": 403,
-      "community_name": "Advanced Swarm Synchronization Features",
+      "community": 78,
+      "community_name": "GitHub Sync Coordinator",
       "norm_label": "comprehensive synchronization metrics"
     },
     {
@@ -34915,8 +35081,8 @@
       "source_location": "L151",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_orchestration_commands",
-      "community": 418,
-      "community_name": "Orchestration Commands",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "orchestration commands"
     },
     {
@@ -34926,8 +35092,8 @@
       "source_location": "L153",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_dependency_management",
-      "community": 418,
-      "community_name": "Orchestration Commands",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "dependency management"
     },
     {
@@ -34937,8 +35103,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_refactoring_operations",
-      "community": 418,
-      "community_name": "Orchestration Commands",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "refactoring operations"
     },
     {
@@ -34948,8 +35114,8 @@
       "source_location": "L214",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_security_updates",
-      "community": 418,
-      "community_name": "Orchestration Commands",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "security updates"
     },
     {
@@ -34959,8 +35125,8 @@
       "source_location": "L224",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_communication_strategies",
-      "community": 414,
-      "community_name": "Communication Strategies",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "communication strategies"
     },
     {
@@ -34970,8 +35136,8 @@
       "source_location": "L226",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_1_webhook_based_coordination",
-      "community": 414,
-      "community_name": "Communication Strategies",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. webhook-based coordination"
     },
     {
@@ -34981,8 +35147,8 @@
       "source_location": "L247",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_2_graphql_federation",
-      "community": 414,
-      "community_name": "Communication Strategies",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. graphql federation"
     },
     {
@@ -34992,8 +35158,8 @@
       "source_location": "L266",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_3_event_streaming",
-      "community": 414,
-      "community_name": "Communication Strategies",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. event streaming"
     },
     {
@@ -35003,8 +35169,8 @@
       "source_location": "L280",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_advanced_features",
-      "community": 411,
-      "community_name": "Advanced Features",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "advanced features"
     },
     {
@@ -35014,8 +35180,8 @@
       "source_location": "L282",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_1_distributed_task_queue",
-      "community": 411,
-      "community_name": "Advanced Features",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. distributed task queue"
     },
     {
@@ -35025,8 +35191,8 @@
       "source_location": "L292",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_2_cross_repo_testing",
-      "community": 411,
-      "community_name": "Advanced Features",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. cross-repo testing"
     },
     {
@@ -35036,8 +35202,8 @@
       "source_location": "L302",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_3_monorepo_migration",
-      "community": 411,
-      "community_name": "Advanced Features",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. monorepo migration"
     },
     {
@@ -35047,8 +35213,8 @@
       "source_location": "L312",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_monitoring_visualization",
-      "community": 417,
-      "community_name": "Monitoring & Visualization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "monitoring & visualization"
     },
     {
@@ -35058,8 +35224,8 @@
       "source_location": "L314",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_multi_repo_dashboard",
-      "community": 417,
-      "community_name": "Monitoring & Visualization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "multi-repo dashboard"
     },
     {
@@ -35069,8 +35235,8 @@
       "source_location": "L323",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_dependency_graph",
-      "community": 417,
-      "community_name": "Monitoring & Visualization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "dependency graph"
     },
     {
@@ -35080,8 +35246,8 @@
       "source_location": "L332",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_health_monitoring",
-      "community": 417,
-      "community_name": "Monitoring & Visualization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "health monitoring"
     },
     {
@@ -35091,8 +35257,8 @@
       "source_location": "L341",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_synchronization_patterns",
-      "community": 412,
-      "community_name": "Synchronization Patterns",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "synchronization patterns"
     },
     {
@@ -35102,8 +35268,8 @@
       "source_location": "L343",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_1_eventually_consistent",
-      "community": 412,
-      "community_name": "Synchronization Patterns",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. eventually consistent"
     },
     {
@@ -35113,8 +35279,8 @@
       "source_location": "L358",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_2_strong_consistency",
-      "community": 412,
-      "community_name": "Synchronization Patterns",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. strong consistency"
     },
     {
@@ -35124,8 +35290,8 @@
       "source_location": "L371",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_3_hybrid_approach",
-      "community": 412,
-      "community_name": "Synchronization Patterns",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. hybrid approach"
     },
     {
@@ -35135,8 +35301,8 @@
       "source_location": "L386",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_use_cases",
-      "community": 413,
-      "community_name": "Use Cases",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "use cases"
     },
     {
@@ -35146,8 +35312,8 @@
       "source_location": "L388",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_1_microservices_coordination",
-      "community": 413,
-      "community_name": "Use Cases",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "1. microservices coordination"
     },
     {
@@ -35157,8 +35323,8 @@
       "source_location": "L398",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_2_library_updates",
-      "community": 413,
-      "community_name": "Use Cases",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "2. library updates"
     },
     {
@@ -35168,8 +35334,8 @@
       "source_location": "L409",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_3_organization_wide_changes",
-      "community": 413,
-      "community_name": "Use Cases",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "3. organization-wide changes"
     },
     {
@@ -35223,8 +35389,8 @@
       "source_location": "L439",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_performance_optimization",
-      "community": 415,
-      "community_name": "Performance Optimization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "performance optimization"
     },
     {
@@ -35234,8 +35400,8 @@
       "source_location": "L441",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_caching_strategy",
-      "community": 415,
-      "community_name": "Performance Optimization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "caching strategy"
     },
     {
@@ -35245,8 +35411,8 @@
       "source_location": "L450",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_parallel_execution",
-      "community": 415,
-      "community_name": "Performance Optimization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "parallel execution"
     },
     {
@@ -35256,8 +35422,8 @@
       "source_location": "L459",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_resource_pooling",
-      "community": 415,
-      "community_name": "Performance Optimization",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "resource pooling"
     },
     {
@@ -35267,8 +35433,8 @@
       "source_location": "L468",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_troubleshooting",
-      "community": 416,
-      "community_name": "Troubleshooting",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "troubleshooting"
     },
     {
@@ -35278,8 +35444,8 @@
       "source_location": "L470",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_connectivity_issues",
-      "community": 416,
-      "community_name": "Troubleshooting",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "connectivity issues"
     },
     {
@@ -35289,8 +35455,8 @@
       "source_location": "L479",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_memory_synchronization",
-      "community": 416,
-      "community_name": "Troubleshooting",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "memory synchronization"
     },
     {
@@ -35300,8 +35466,8 @@
       "source_location": "L488",
       "_origin": "ast",
       "id": "claude_commands_github_multi_repo_swarm_performance_bottlenecks",
-      "community": 416,
-      "community_name": "Troubleshooting",
+      "community": 136,
+      "community_name": "Multi-Repo Swarm - Cross-Repository Swarm Orchestration",
       "norm_label": "performance bottlenecks"
     },
     {
@@ -35663,8 +35829,8 @@
       "source_location": "L6",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_core_features",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 402,
+      "community_name": "Core Features",
       "norm_label": "core features"
     },
     {
@@ -35674,8 +35840,8 @@
       "source_location": "L8",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_1_board_initialization",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 402,
+      "community_name": "Core Features",
       "norm_label": "1. board initialization"
     },
     {
@@ -35685,8 +35851,8 @@
       "source_location": "L28",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_2_task_synchronization",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 402,
+      "community_name": "Core Features",
       "norm_label": "2. task synchronization"
     },
     {
@@ -35696,8 +35862,8 @@
       "source_location": "L42",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_3_real_time_updates",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 402,
+      "community_name": "Core Features",
       "norm_label": "3. real-time updates"
     },
     {
@@ -35740,8 +35906,8 @@
       "source_location": "L128",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_automation_features",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 401,
+      "community_name": "Automation Features",
       "norm_label": "automation features"
     },
     {
@@ -35751,8 +35917,8 @@
       "source_location": "L130",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_1_auto_assignment",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 401,
+      "community_name": "Automation Features",
       "norm_label": "1. auto-assignment"
     },
     {
@@ -35762,8 +35928,8 @@
       "source_location": "L139",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_2_progress_tracking",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 401,
+      "community_name": "Automation Features",
       "norm_label": "2. progress tracking"
     },
     {
@@ -35773,8 +35939,8 @@
       "source_location": "L148",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_3_smart_card_movement",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 401,
+      "community_name": "Automation Features",
       "norm_label": "3. smart card movement"
     },
     {
@@ -35828,8 +35994,8 @@
       "source_location": "L202",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_advanced_synchronization",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 411,
+      "community_name": "Advanced Synchronization",
       "norm_label": "advanced synchronization"
     },
     {
@@ -35839,8 +36005,8 @@
       "source_location": "L204",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_1_multi_board_sync",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 411,
+      "community_name": "Advanced Synchronization",
       "norm_label": "1. multi-board sync"
     },
     {
@@ -35850,8 +36016,8 @@
       "source_location": "L215",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_2_cross_organization_sync",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 411,
+      "community_name": "Advanced Synchronization",
       "norm_label": "2. cross-organization sync"
     },
     {
@@ -35861,8 +36027,8 @@
       "source_location": "L225",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_3_external_tool_integration",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 411,
+      "community_name": "Advanced Synchronization",
       "norm_label": "3. external tool integration"
     },
     {
@@ -35872,8 +36038,8 @@
       "source_location": "L235",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_visualization_reporting",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 413,
+      "community_name": "Visualization & Reporting",
       "norm_label": "visualization & reporting"
     },
     {
@@ -35883,8 +36049,8 @@
       "source_location": "L237",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_board_analytics",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 413,
+      "community_name": "Visualization & Reporting",
       "norm_label": "board analytics"
     },
     {
@@ -35894,8 +36060,8 @@
       "source_location": "L260",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_custom_dashboards",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 413,
+      "community_name": "Visualization & Reporting",
       "norm_label": "custom dashboards"
     },
     {
@@ -35905,8 +36071,8 @@
       "source_location": "L288",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_reports",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 413,
+      "community_name": "Visualization & Reporting",
       "norm_label": "reports"
     },
     {
@@ -35960,8 +36126,8 @@
       "source_location": "L330",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_team_collaboration",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 415,
+      "community_name": "Team Collaboration",
       "norm_label": "team collaboration"
     },
     {
@@ -35971,8 +36137,8 @@
       "source_location": "L332",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_work_distribution",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 415,
+      "community_name": "Team Collaboration",
       "norm_label": "work distribution"
     },
     {
@@ -35982,8 +36148,8 @@
       "source_location": "L342",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_standup_automation",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 415,
+      "community_name": "Team Collaboration",
       "norm_label": "standup automation"
     },
     {
@@ -35993,8 +36159,8 @@
       "source_location": "L352",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_review_coordination",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 415,
+      "community_name": "Team Collaboration",
       "norm_label": "review coordination"
     },
     {
@@ -36004,8 +36170,8 @@
       "source_location": "L362",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_best_practices",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 403,
+      "community_name": "Best Practices",
       "norm_label": "best practices"
     },
     {
@@ -36015,8 +36181,8 @@
       "source_location": "L364",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_1_board_organization",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 403,
+      "community_name": "Best Practices",
       "norm_label": "1. board organization"
     },
     {
@@ -36026,8 +36192,8 @@
       "source_location": "L370",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_2_data_integrity",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 403,
+      "community_name": "Best Practices",
       "norm_label": "2. data integrity"
     },
     {
@@ -36037,8 +36203,8 @@
       "source_location": "L376",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_3_team_adoption",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 403,
+      "community_name": "Best Practices",
       "norm_label": "3. team adoption"
     },
     {
@@ -36048,8 +36214,8 @@
       "source_location": "L382",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_troubleshooting",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 414,
+      "community_name": "Troubleshooting",
       "norm_label": "troubleshooting"
     },
     {
@@ -36059,8 +36225,8 @@
       "source_location": "L384",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_sync_issues",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 414,
+      "community_name": "Troubleshooting",
       "norm_label": "sync issues"
     },
     {
@@ -36070,8 +36236,8 @@
       "source_location": "L393",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_performance",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 414,
+      "community_name": "Troubleshooting",
       "norm_label": "performance"
     },
     {
@@ -36081,8 +36247,8 @@
       "source_location": "L403",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_data_recovery",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 414,
+      "community_name": "Troubleshooting",
       "norm_label": "data recovery"
     },
     {
@@ -36092,8 +36258,8 @@
       "source_location": "L413",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_examples",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 412,
+      "community_name": "Examples",
       "norm_label": "examples"
     },
     {
@@ -36103,8 +36269,8 @@
       "source_location": "L415",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_agile_development_board",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 412,
+      "community_name": "Examples",
       "norm_label": "agile development board"
     },
     {
@@ -36114,8 +36280,8 @@
       "source_location": "L425",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_kanban_flow_board",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 412,
+      "community_name": "Examples",
       "norm_label": "kanban flow board"
     },
     {
@@ -36125,8 +36291,8 @@
       "source_location": "L437",
       "_origin": "ast",
       "id": "claude_commands_github_project_board_sync_research_project_board",
-      "community": 23,
-      "community_name": "Project Board Sync - GitHub Projects Integration",
+      "community": 412,
+      "community_name": "Examples",
       "norm_label": "research project board"
     },
     {
@@ -41801,8 +41967,8 @@
       "source_location": "L85",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_session_management",
-      "community": 502,
-      "community_name": "Session Management",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "session management"
     },
     {
@@ -41812,8 +41978,8 @@
       "source_location": "L87",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_start_session",
-      "community": 502,
-      "community_name": "Session Management",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "start session"
     },
     {
@@ -41823,8 +41989,8 @@
       "source_location": "L100",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_during_session",
-      "community": 502,
-      "community_name": "Session Management",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "during session"
     },
     {
@@ -41834,8 +42000,8 @@
       "source_location": "L115",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_end_session",
-      "community": 502,
-      "community_name": "Session Management",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "end session"
     },
     {
@@ -41845,8 +42011,8 @@
       "source_location": "L124",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_examples",
-      "community": 106,
-      "community_name": "\ud83d\udc65 Pair Programming Command",
+      "community": 394,
+      "community_name": "Examples",
       "norm_label": "examples"
     },
     {
@@ -41856,8 +42022,8 @@
       "source_location": "L126",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_refactoring_session",
-      "community": 106,
-      "community_name": "\ud83d\udc65 Pair Programming Command",
+      "community": 394,
+      "community_name": "Examples",
       "norm_label": "refactoring session"
     },
     {
@@ -41867,8 +42033,8 @@
       "source_location": "L134",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_test_driven_development",
-      "community": 106,
-      "community_name": "\ud83d\udc65 Pair Programming Command",
+      "community": 394,
+      "community_name": "Examples",
       "norm_label": "test-driven development"
     },
     {
@@ -41878,8 +42044,8 @@
       "source_location": "L142",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_bug_fixing",
-      "community": 106,
-      "community_name": "\ud83d\udc65 Pair Programming Command",
+      "community": 394,
+      "community_name": "Examples",
       "norm_label": "bug fixing"
     },
     {
@@ -41889,8 +42055,8 @@
       "source_location": "L150",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_code_review_session",
-      "community": 106,
-      "community_name": "\ud83d\udc65 Pair Programming Command",
+      "community": 394,
+      "community_name": "Examples",
       "norm_label": "code review session"
     },
     {
@@ -41900,8 +42066,8 @@
       "source_location": "L158",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_integration",
-      "community": 503,
-      "community_name": "Integration",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "integration"
     },
     {
@@ -41911,8 +42077,8 @@
       "source_location": "L160",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_with_git",
-      "community": 503,
-      "community_name": "Integration",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "with git"
     },
     {
@@ -41922,8 +42088,8 @@
       "source_location": "L169",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_with_testing_frameworks",
-      "community": 503,
-      "community_name": "Integration",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "with testing frameworks"
     },
     {
@@ -41933,8 +42099,8 @@
       "source_location": "L178",
       "_origin": "ast",
       "id": "claude_commands_pair_readme_with_ci_cd",
-      "community": 503,
-      "community_name": "Integration",
+      "community": 106,
+      "community_name": "\ud83d\udc65 Pair Programming Command",
       "norm_label": "with ci/cd"
     },
     {
@@ -44089,8 +44255,8 @@
       "source_location": "L5",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_driver_mode",
-      "community": 378,
-      "community_name": "Driver Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "driver mode"
     },
     {
@@ -44100,8 +44266,8 @@
       "source_location": "L9",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_usage",
-      "community": 378,
-      "community_name": "Driver Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "usage"
     },
     {
@@ -44111,8 +44277,8 @@
       "source_location": "L14",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_responsibilities",
-      "community": 378,
-      "community_name": "Driver Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "responsibilities"
     },
     {
@@ -44122,8 +44288,8 @@
       "source_location": "L29",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_best_for",
-      "community": 378,
-      "community_name": "Driver Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "best for"
     },
     {
@@ -44133,8 +44299,8 @@
       "source_location": "L35",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_example_session",
-      "community": 378,
-      "community_name": "Driver Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "example session"
     },
     {
@@ -44144,8 +44310,8 @@
       "source_location": "L44",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_commands_in_driver_mode",
-      "community": 378,
-      "community_name": "Driver Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "commands in driver mode"
     },
     {
@@ -44155,8 +44321,8 @@
       "source_location": "L53",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_navigator_mode",
-      "community": 394,
-      "community_name": "Navigator Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "navigator mode"
     },
     {
@@ -44166,8 +44332,8 @@
       "source_location": "L57",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_usage_57",
-      "community": 394,
-      "community_name": "Navigator Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "usage"
     },
     {
@@ -44177,8 +44343,8 @@
       "source_location": "L62",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_responsibilities_62",
-      "community": 394,
-      "community_name": "Navigator Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "responsibilities"
     },
     {
@@ -44188,8 +44354,8 @@
       "source_location": "L77",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_best_for_77",
-      "community": 394,
-      "community_name": "Navigator Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "best for"
     },
     {
@@ -44199,8 +44365,8 @@
       "source_location": "L83",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_example_session_83",
-      "community": 394,
-      "community_name": "Navigator Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "example session"
     },
     {
@@ -44210,8 +44376,8 @@
       "source_location": "L92",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_commands_in_navigator_mode",
-      "community": 394,
-      "community_name": "Navigator Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "commands in navigator mode"
     },
     {
@@ -44221,8 +44387,8 @@
       "source_location": "L101",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_switch_mode",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "switch mode"
     },
     {
@@ -44232,8 +44398,8 @@
       "source_location": "L105",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_usage_105",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "usage"
     },
     {
@@ -44243,8 +44409,8 @@
       "source_location": "L110",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_default_intervals",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "default intervals"
     },
     {
@@ -44254,8 +44420,8 @@
       "source_location": "L116",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_configuration",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "configuration"
     },
     {
@@ -44265,8 +44431,8 @@
       "source_location": "L128",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_role_transitions",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "role transitions"
     },
     {
@@ -44276,8 +44442,8 @@
       "source_location": "L137",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_best_for_137",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "best for"
     },
     {
@@ -44287,8 +44453,8 @@
       "source_location": "L143",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_example_session_143",
-      "community": 361,
-      "community_name": "Switch Mode",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "example session"
     },
     {
@@ -44298,8 +44464,8 @@
       "source_location": "L152",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_specialized_modes",
-      "community": 399,
-      "community_name": "Specialized Modes",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "specialized modes"
     },
     {
@@ -44309,8 +44475,8 @@
       "source_location": "L154",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_tdd_mode",
-      "community": 399,
-      "community_name": "Specialized Modes",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "tdd mode"
     },
     {
@@ -44320,8 +44486,8 @@
       "source_location": "L170",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_review_mode",
-      "community": 399,
-      "community_name": "Specialized Modes",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "review mode"
     },
     {
@@ -44331,8 +44497,8 @@
       "source_location": "L186",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_mentor_mode",
-      "community": 399,
-      "community_name": "Specialized Modes",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "mentor mode"
     },
     {
@@ -44342,8 +44508,8 @@
       "source_location": "L202",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_debug_mode",
-      "community": 399,
-      "community_name": "Specialized Modes",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "debug mode"
     },
     {
@@ -44353,8 +44519,8 @@
       "source_location": "L218",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_mode_selection_guide",
-      "community": 398,
-      "community_name": "Mode Selection Guide",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "mode selection guide"
     },
     {
@@ -44364,8 +44530,8 @@
       "source_location": "L220",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_choose_driver_mode_when",
-      "community": 398,
-      "community_name": "Mode Selection Guide",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "choose driver mode when:"
     },
     {
@@ -44375,8 +44541,8 @@
       "source_location": "L226",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_choose_navigator_mode_when",
-      "community": 398,
-      "community_name": "Mode Selection Guide",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "choose navigator mode when:"
     },
     {
@@ -44386,8 +44552,8 @@
       "source_location": "L232",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_choose_switch_mode_when",
-      "community": 398,
-      "community_name": "Mode Selection Guide",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "choose switch mode when:"
     },
     {
@@ -44397,8 +44563,8 @@
       "source_location": "L238",
       "_origin": "ast",
       "id": "claude_commands_pair_modes_choose_specialized_modes_when",
-      "community": 398,
-      "community_name": "Mode Selection Guide",
+      "community": 36,
+      "community_name": "Pair Programming Modes",
       "norm_label": "choose specialized modes when:"
     },
     {
@@ -44969,8 +45135,8 @@
       "source_location": "L307",
       "_origin": "ast",
       "id": "claude_commands_pair_session_multi_session_management",
-      "community": 506,
-      "community_name": "Multi-Session Management",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "multi-session management"
     },
     {
@@ -44980,8 +45146,8 @@
       "source_location": "L309",
       "_origin": "ast",
       "id": "claude_commands_pair_session_list_active_sessions",
-      "community": 506,
-      "community_name": "Multi-Session Management",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "list active sessions"
     },
     {
@@ -44991,8 +45157,8 @@
       "source_location": "L314",
       "_origin": "ast",
       "id": "claude_commands_pair_session_switch_between_sessions",
-      "community": 506,
-      "community_name": "Multi-Session Management",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "switch between sessions"
     },
     {
@@ -45002,8 +45168,8 @@
       "source_location": "L319",
       "_origin": "ast",
       "id": "claude_commands_pair_session_merge_sessions",
-      "community": 506,
-      "community_name": "Multi-Session Management",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "merge sessions"
     },
     {
@@ -45013,8 +45179,8 @@
       "source_location": "L324",
       "_origin": "ast",
       "id": "claude_commands_pair_session_session_recovery",
-      "community": 504,
-      "community_name": "Session Recovery",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "session recovery"
     },
     {
@@ -45024,8 +45190,8 @@
       "source_location": "L326",
       "_origin": "ast",
       "id": "claude_commands_pair_session_auto_recovery",
-      "community": 504,
-      "community_name": "Session Recovery",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "auto-recovery"
     },
     {
@@ -45035,8 +45201,8 @@
       "source_location": "L329",
       "_origin": "ast",
       "id": "claude_commands_pair_session_manual_recovery",
-      "community": 504,
-      "community_name": "Session Recovery",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "manual recovery"
     },
     {
@@ -45046,8 +45212,8 @@
       "source_location": "L334",
       "_origin": "ast",
       "id": "claude_commands_pair_session_crash_recovery",
-      "community": 504,
-      "community_name": "Session Recovery",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "crash recovery"
     },
     {
@@ -45057,8 +45223,8 @@
       "source_location": "L339",
       "_origin": "ast",
       "id": "claude_commands_pair_session_session_sharing",
-      "community": 505,
-      "community_name": "Session Sharing",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "session sharing"
     },
     {
@@ -45068,8 +45234,8 @@
       "source_location": "L341",
       "_origin": "ast",
       "id": "claude_commands_pair_session_share_with_team",
-      "community": 505,
-      "community_name": "Session Sharing",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "share with team"
     },
     {
@@ -45079,8 +45245,8 @@
       "source_location": "L347",
       "_origin": "ast",
       "id": "claude_commands_pair_session_export_for_review",
-      "community": 505,
-      "community_name": "Session Sharing",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "export for review"
     },
     {
@@ -45090,8 +45256,8 @@
       "source_location": "L352",
       "_origin": "ast",
       "id": "claude_commands_pair_session_create_learning_material",
-      "community": 505,
-      "community_name": "Session Sharing",
+      "community": 110,
+      "community_name": "Pair Programming Session Management",
       "norm_label": "create learning material"
     },
     {
@@ -45321,8 +45487,8 @@
       "source_location": "L66",
       "_origin": "ast",
       "id": "claude_commands_pair_start_modes_explained",
-      "community": 507,
-      "community_name": "Modes Explained",
+      "community": 111,
+      "community_name": "pair --start",
       "norm_label": "modes explained"
     },
     {
@@ -45332,8 +45498,8 @@
       "source_location": "L68",
       "_origin": "ast",
       "id": "claude_commands_pair_start_driver_mode",
-      "community": 507,
-      "community_name": "Modes Explained",
+      "community": 111,
+      "community_name": "pair --start",
       "norm_label": "driver mode"
     },
     {
@@ -45343,8 +45509,8 @@
       "source_location": "L75",
       "_origin": "ast",
       "id": "claude_commands_pair_start_navigator_mode",
-      "community": 507,
-      "community_name": "Modes Explained",
+      "community": 111,
+      "community_name": "pair --start",
       "norm_label": "navigator mode"
     },
     {
@@ -45354,8 +45520,8 @@
       "source_location": "L82",
       "_origin": "ast",
       "id": "claude_commands_pair_start_switch_mode",
-      "community": 507,
-      "community_name": "Modes Explained",
+      "community": 111,
+      "community_name": "pair --start",
       "norm_label": "switch mode"
     },
     {
@@ -58004,8 +58170,8 @@
       "source_location": "L536",
       "_origin": "ast",
       "id": "claude_skills_github_code_review_skill_intelligent_comment_generation",
-      "community": 212,
-      "community_name": "GitHub Code Review Skill",
+      "community": 417,
+      "community_name": "\ud83d\udcac Intelligent Comment Generation",
       "norm_label": "\ud83d\udcac intelligent comment generation"
     },
     {
@@ -58015,8 +58181,8 @@
       "source_location": "L538",
       "_origin": "ast",
       "id": "claude_skills_github_code_review_skill_generate_contextual_review_comments",
-      "community": 212,
-      "community_name": "GitHub Code Review Skill",
+      "community": 417,
+      "community_name": "\ud83d\udcac Intelligent Comment Generation",
       "norm_label": "generate contextual review comments"
     },
     {
@@ -58026,8 +58192,8 @@
       "source_location": "L572",
       "_origin": "ast",
       "id": "claude_skills_github_code_review_skill_batch_comment_management",
-      "community": 212,
-      "community_name": "GitHub Code Review Skill",
+      "community": 417,
+      "community_name": "\ud83d\udcac Intelligent Comment Generation",
       "norm_label": "batch comment management"
     },
     {
@@ -58851,8 +59017,8 @@
       "source_location": "L443",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_configuration",
-      "community": 509,
-      "community_name": "Configuration",
+      "community": 250,
+      "community_name": "GitHub Multi-Repository Coordination Skill",
       "norm_label": "configuration"
     },
     {
@@ -58862,8 +59028,8 @@
       "source_location": "L445",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_multi_repo_config_file",
-      "community": 509,
-      "community_name": "Configuration",
+      "community": 250,
+      "community_name": "GitHub Multi-Repository Coordination Skill",
       "norm_label": "multi-repo config file"
     },
     {
@@ -58873,8 +59039,8 @@
       "source_location": "L479",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_repository_roles",
-      "community": 509,
-      "community_name": "Configuration",
+      "community": 250,
+      "community_name": "GitHub Multi-Repository Coordination Skill",
       "norm_label": "repository roles"
     },
     {
@@ -58884,8 +59050,8 @@
       "source_location": "L499",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_communication_strategies",
-      "community": 250,
-      "community_name": "GitHub Multi-Repository Coordination Skill",
+      "community": 418,
+      "community_name": "Communication Strategies",
       "norm_label": "communication strategies"
     },
     {
@@ -58895,8 +59061,8 @@
       "source_location": "L501",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_1_webhook_based_coordination",
-      "community": 250,
-      "community_name": "GitHub Multi-Repository Coordination Skill",
+      "community": 418,
+      "community_name": "Communication Strategies",
       "norm_label": "1. webhook-based coordination"
     },
     {
@@ -58906,8 +59072,8 @@
       "source_location": "L520",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_2_event_streaming",
-      "community": 250,
-      "community_name": "GitHub Multi-Repository Coordination Skill",
+      "community": 418,
+      "community_name": "Communication Strategies",
       "norm_label": "2. event streaming"
     },
     {
@@ -59005,8 +59171,8 @@
       "source_location": "L606",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_architecture_patterns",
-      "community": 508,
-      "community_name": "Architecture Patterns",
+      "community": 250,
+      "community_name": "GitHub Multi-Repository Coordination Skill",
       "norm_label": "architecture patterns"
     },
     {
@@ -59016,8 +59182,8 @@
       "source_location": "L608",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_monorepo_structure",
-      "community": 508,
-      "community_name": "Architecture Patterns",
+      "community": 250,
+      "community_name": "GitHub Multi-Repository Coordination Skill",
       "norm_label": "monorepo structure"
     },
     {
@@ -59027,8 +59193,8 @@
       "source_location": "L638",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_command_structure",
-      "community": 508,
-      "community_name": "Architecture Patterns",
+      "community": 250,
+      "community_name": "GitHub Multi-Repository Coordination Skill",
       "norm_label": "command structure"
     },
     {
@@ -59280,8 +59446,8 @@
       "source_location": "L798",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_examples",
-      "community": 250,
-      "community_name": "GitHub Multi-Repository Coordination Skill",
+      "community": 470,
+      "community_name": "Examples",
       "norm_label": "examples"
     },
     {
@@ -59291,8 +59457,8 @@
       "source_location": "L800",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_full_stack_application_update",
-      "community": 250,
-      "community_name": "GitHub Multi-Repository Coordination Skill",
+      "community": 470,
+      "community_name": "Examples",
       "norm_label": "full-stack application update"
     },
     {
@@ -59302,8 +59468,8 @@
       "source_location": "L809",
       "_origin": "ast",
       "id": "claude_skills_github_multi_repo_skill_cross_team_collaboration",
-      "community": 250,
-      "community_name": "GitHub Multi-Repository Coordination Skill",
+      "community": 470,
+      "community_name": "Examples",
       "norm_label": "cross-team collaboration"
     },
     {
@@ -70252,15 +70418,15 @@
       "norm_label": "ranked priority (impact vs. risk)"
     },
     {
-      "label": "Review",
+      "label": "Review (Phase 3 complete)",
       "file_type": "document",
       "source_file": "tasks/todo.md",
       "source_location": "L78",
       "_origin": "ast",
-      "id": "tasks_todo_review",
+      "id": "tasks_todo_review_phase_3_complete",
       "community": 199,
       "community_name": "GiggleGarden Automation \u2014 Cleanup & Overhaul Plan (Phase 2)",
-      "norm_label": "review"
+      "norm_label": "review (phase 3 complete)"
     },
     {
       "label": "understanding.md",
@@ -80741,7 +80907,7 @@
       "context": "import",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L3",
+      "source_location": "L4",
       "weight": 1.0,
       "metadata": {
         "using_kind": "namespace",
@@ -81130,7 +81296,7 @@
       },
       "_origin": "ast",
       "source": "gigglegarden_automation_shared_retryhandler_gigglegarden_shared_retryhandler_retryafter",
-      "target": "timespan",
+      "target": "gigglegarden_automation_shared_retryhandler_cs_timespan",
       "confidence_score": 1.0
     },
     {
@@ -81145,7 +81311,7 @@
       },
       "_origin": "ast",
       "source": "gigglegarden_automation_shared_retryhandler_gigglegarden_shared_retryhandler_backoff",
-      "target": "timespan",
+      "target": "gigglegarden_automation_shared_retryhandler_cs_timespan",
       "confidence_score": 1.0
     },
     {
@@ -81715,7 +81881,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L81",
+      "source_location": "L143",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildsubtitlefilter",
@@ -81727,7 +81893,19 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L80",
+      "source_location": "L82",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "target": "gigglegarden_automation_shared_text_gigglegarden_shared_text_wraplines"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L142",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildsubtitlefilter",
@@ -81738,8 +81916,20 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L81",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "target": "gigglegarden_automation_shared_text_gigglegarden_shared_text_charsperlinefor"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L31",
+      "source_location": "L41",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_generateasync",
@@ -81755,6 +81945,18 @@
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_publishasync",
+      "target": "gigglegarden_automation_shared_text_gigglegarden_shared_text_languagetag"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L129",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
       "target": "gigglegarden_automation_shared_text_gigglegarden_shared_text_languagetag"
     },
     {
@@ -81799,7 +82001,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L52",
+      "source_location": "L79",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient_openaiasync",
@@ -81811,7 +82013,19 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L81",
+      "source_location": "L112",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_openaieditasync",
+      "target": "gigglegarden_automation_shared_text_gigglegarden_shared_text_tail"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L170",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityasync",
@@ -81822,8 +82036,20 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L147",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityimagetoimageasync",
+      "target": "gigglegarden_automation_shared_text_gigglegarden_shared_text_tail"
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L85",
+      "source_location": "L134",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_generateasync",
@@ -81847,7 +82073,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L122",
+      "source_location": "L184",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_getaudiodurationasync",
@@ -81859,7 +82085,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L140",
+      "source_location": "L202",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_runffmpegasync",
@@ -82820,7 +83046,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L72",
+      "source_location": "L76",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_publishasync",
@@ -82916,7 +83142,7 @@
       "confidence": "EXTRACTED",
       "confidence_score": 1.0,
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L78",
+      "source_location": "L82",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_publishasync",
@@ -84309,7 +84535,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L91",
+      "source_location": "L150",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher",
@@ -84320,7 +84546,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L119",
+      "source_location": "L178",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher",
@@ -84336,6 +84562,28 @@
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher",
       "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_publishasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L96",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_trysetthumbnailasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L117",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
       "confidence_score": 1.0
     },
     {
@@ -84357,7 +84605,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L119",
+      "source_location": "L178",
       "weight": 1.0,
       "context": "generic_arg",
       "metadata": {
@@ -84365,6 +84613,36 @@
       },
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_getserviceasync",
+      "target": "youtubeservice",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L96",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "YouTubeService"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_trysetthumbnailasync",
+      "target": "youtubeservice",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L117",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "YouTubeService"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
       "target": "youtubeservice",
       "confidence_score": 1.0
     },
@@ -84411,10 +84689,34 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L73",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_publishasync",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_trysetthumbnailasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L74",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_publishasync",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L91",
+      "source_location": "L150",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84429,7 +84731,37 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L91",
+      "source_location": "L96",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "CancellationToken"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_trysetthumbnailasync",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_cs_cancellationtoken",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L117",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "CancellationToken"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_cs_cancellationtoken",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L150",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -84444,7 +84776,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L119",
+      "source_location": "L178",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -84459,7 +84791,37 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L91",
+      "source_location": "L96",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_trysetthumbnailasync",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L117",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_tryuploadcaptionsasync",
+      "target": "gigglegarden_automation_uploader_publishing_youtubepublisher_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
+      "source_location": "L150",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84474,7 +84836,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L91",
+      "source_location": "L150",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84490,7 +84852,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs",
-      "source_location": "L93",
+      "source_location": "L152",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_uploader_publishing_youtubepublisher_gigglegarden_uploader_publishing_youtubepublisher_fetchtrendingdataasync",
@@ -84512,7 +84874,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/GenConfig.cs",
-      "source_location": "L45",
+      "source_location": "L63",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_genconfig_genconfig",
@@ -84523,7 +84885,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L29",
+      "source_location": "L39",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84531,6 +84893,21 @@
       },
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_generateasync",
+      "target": "gigglegarden_automation_videogen_genconfig_genconfig",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L10",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "GenConfig"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_trendresearch_trendresearch_fetchasync",
       "target": "gigglegarden_automation_videogen_genconfig_genconfig",
       "confidence_score": 1.0
     },
@@ -84553,7 +84930,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L76",
+      "source_location": "L138",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84568,7 +84945,22 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L107",
+      "source_location": "L74",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "GenConfig"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "target": "gigglegarden_automation_videogen_genconfig_genconfig",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L169",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84583,7 +84975,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L130",
+      "source_location": "L192",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84598,7 +84990,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L7",
+      "source_location": "L8",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient",
@@ -84609,7 +85001,18 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L11",
+      "source_location": "L44",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_buildprompt",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L12",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient",
@@ -84620,7 +85023,18 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L32",
+      "source_location": "L29",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L59",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient",
@@ -84631,7 +85045,18 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L63",
+      "source_location": "L90",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_openaieditasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L152",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient",
@@ -84639,10 +85064,21 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L127",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityimagetoimageasync",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L9",
+      "source_location": "L10",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient",
@@ -84653,7 +85089,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L11",
+      "source_location": "L12",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -84669,7 +85105,19 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L25",
+      "source_location": "L14",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_generateasync",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_buildprompt",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L19",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient_generateasync",
@@ -84681,7 +85129,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L24",
+      "source_location": "L18",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_imageclient_imageclient_generateasync",
@@ -84692,7 +85140,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L11",
+      "source_location": "L12",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84707,7 +85155,22 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L32",
+      "source_location": "L29",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "target": "gigglegarden_automation_videogen_imageclient_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L59",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -84722,7 +85185,22 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L63",
+      "source_location": "L90",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_openaieditasync",
+      "target": "gigglegarden_automation_videogen_imageclient_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L152",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -84737,7 +85215,88 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L127",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityimagetoimageasync",
+      "target": "gigglegarden_automation_videogen_imageclient_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
       "source_location": "L32",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_buildprompt",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L37",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_openaieditasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L36",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "target": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityimagetoimageasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L29",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "Orientation"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_generatewithreferenceasync",
+      "target": "orientation",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L44",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "Orientation"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_buildprompt",
+      "target": "orientation",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L59",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84752,7 +85311,37 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
-      "source_location": "L63",
+      "source_location": "L90",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "Orientation"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_openaieditasync",
+      "target": "orientation",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L127",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "Orientation"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_imageclient_imageclient_stabilityimagetoimageasync",
+      "target": "orientation",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/ImageClient.cs",
+      "source_location": "L152",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84767,7 +85356,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L17",
+      "source_location": "L27",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator",
@@ -84778,7 +85367,7 @@
       "relation": "contains",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L27",
+      "source_location": "L37",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator",
@@ -84800,7 +85389,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L29",
+      "source_location": "L39",
       "weight": 1.0,
       "context": "generic_arg",
       "metadata": {
@@ -84857,10 +85446,25 @@
       "confidence_score": 1.0
     },
     {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L108",
+      "weight": 1.0,
+      "context": "generic_arg",
+      "metadata": {
+        "ref_token": "Scene"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_writesrtasync",
+      "target": "gigglegarden_automation_videogen_scriptgenerator_scene",
+      "confidence_score": 1.0
+    },
+    {
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L110",
+      "source_location": "L162",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator",
@@ -84871,7 +85475,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L29",
+      "source_location": "L39",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator",
@@ -84882,7 +85486,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L29",
+      "source_location": "L39",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -84898,7 +85502,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L95",
+      "source_location": "L144",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_generateasync",
@@ -84909,7 +85513,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/ScriptGenerator.cs",
-      "source_location": "L110",
+      "source_location": "L162",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -84918,6 +85522,43 @@
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_scriptgenerator_scriptgenerator_extractjson",
       "target": "gigglegarden_automation_videogen_scriptgenerator_cs_jsonelement",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "contains",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L8",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_trendresearch",
+      "target": "gigglegarden_automation_videogen_trendresearch_trendresearch",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L10",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_trendresearch_trendresearch",
+      "target": "gigglegarden_automation_videogen_trendresearch_trendresearch_fetchasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/TrendResearch.cs",
+      "source_location": "L10",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_trendresearch_trendresearch_fetchasync",
+      "target": "gigglegarden_automation_videogen_trendresearch_cs_task",
       "confidence_score": 1.0
     },
     {
@@ -84998,7 +85639,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L76",
+      "source_location": "L138",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
@@ -85009,7 +85650,18 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L105",
+      "source_location": "L74",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
+      "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L167",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
@@ -85020,7 +85672,18 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L107",
+      "source_location": "L129",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
+      "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_formatsrttime",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L169",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
@@ -85031,7 +85694,7 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L130",
+      "source_location": "L192",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
@@ -85042,11 +85705,22 @@
       "relation": "method",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L143",
+      "source_location": "L205",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
       "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_startorthrow",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "method",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L108",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler",
+      "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_writesrtasync",
       "confidence_score": 1.0
     },
     {
@@ -85107,7 +85781,37 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L107",
+      "source_location": "L108",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "IReadOnlyList"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_writesrtasync",
+      "target": "gigglegarden_automation_videogen_videoassembler_cs_ireadonlylist",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L74",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "target": "gigglegarden_automation_videogen_videoassembler_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L169",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -85122,7 +85826,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L130",
+      "source_location": "L192",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -85130,6 +85834,21 @@
       },
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_runffmpegasync",
+      "target": "gigglegarden_automation_videogen_videoassembler_cs_task",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L108",
+      "weight": 1.0,
+      "context": "return_type",
+      "metadata": {
+        "ref_token": "Task"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_writesrtasync",
       "target": "gigglegarden_automation_videogen_videoassembler_cs_task",
       "confidence_score": 1.0
     },
@@ -85141,6 +85860,57 @@
       "source_location": "L86",
       "weight": 1.0,
       "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_filterpath",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L101",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildthumbnailasync",
+      "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_runffmpegasync",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L119",
+      "weight": 1.0,
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_writesrtasync",
+      "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_formatsrttime",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L129",
+      "weight": 1.0,
+      "context": "parameter_type",
+      "metadata": {
+        "ref_token": "TimeSpan"
+      },
+      "_origin": "ast",
+      "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_formatsrttime",
+      "target": "gigglegarden_automation_videogen_videoassembler_cs_timespan",
+      "confidence_score": 1.0
+    },
+    {
+      "relation": "calls",
+      "context": "call",
+      "confidence": "EXTRACTED",
+      "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
+      "source_location": "L148",
+      "weight": 1.0,
+      "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_buildsubtitlefilter",
       "target": "gigglegarden_automation_videogen_videoassembler_videoassembler_filterpath",
       "confidence_score": 1.0
@@ -85150,7 +85920,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L114",
+      "source_location": "L176",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_getaudiodurationasync",
@@ -85162,7 +85932,7 @@
       "context": "call",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L135",
+      "source_location": "L197",
       "weight": 1.0,
       "_origin": "ast",
       "source": "gigglegarden_automation_videogen_videoassembler_videoassembler_runffmpegasync",
@@ -85173,7 +85943,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L143",
+      "source_location": "L205",
       "weight": 1.0,
       "context": "return_type",
       "metadata": {
@@ -85188,7 +85958,7 @@
       "relation": "references",
       "confidence": "EXTRACTED",
       "source_file": "gigglegarden-automation/VideoGen/VideoAssembler.cs",
-      "source_location": "L143",
+      "source_location": "L205",
       "weight": 1.0,
       "context": "parameter_type",
       "metadata": {
@@ -144389,7 +145159,7 @@
       "weight": 1.0,
       "_origin": "ast",
       "source": "tasks_todo_gigglegarden_automation_cleanup_overhaul_plan_phase_2",
-      "target": "tasks_todo_review",
+      "target": "tasks_todo_review_phase_3_complete",
       "confidence_score": 1.0
     },
     {
@@ -145444,5 +146214,5 @@
       "weight": 1.0
     }
   ],
-  "built_at_commit": "062a8aa754693e644a9dd1cfc375df27b57a1a5e"
+  "built_at_commit": "4c83cb1cf25797edce1505752f8225af89745353"
 }

@@ -69,6 +69,10 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
 
             var id = insert.ResponseBody.Id;
             log.Info($"  [youtube] uploaded https://youtu.be/{id} ({cfg.PrivacyStatus})");
+
+            await TrySetThumbnailAsync(youtube, id, request.VideoPath, ct);
+            await TryUploadCaptionsAsync(youtube, id, request.VideoPath, request.Sidecar.Language, ct);
+
             return PublishResult.Ok(id, $"https://youtu.be/{id}");
         }
         catch (Google.GoogleApiException ex)
@@ -81,6 +85,61 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return PublishResult.Retry($"YouTube transport error: {ex.Message}");
+        }
+    }
+
+    // Custom thumbnail is the single biggest click-through lever on YouTube, so VideoGen
+    // generates one for every landscape render; a failure here must not turn an
+    // otherwise successful video publish into a retry/abandon. Note: custom thumbnails
+    // require a phone-verified channel - Google silently rejects them otherwise, which
+    // is a one-time manual step in YouTube Studio, not a bug in this code.
+    private async Task TrySetThumbnailAsync(YouTubeService youtube, string videoId, string videoPath, CancellationToken ct)
+    {
+        var thumbPath = Path.ChangeExtension(videoPath, ".thumb.jpg");
+        if (!File.Exists(thumbPath)) return;
+
+        try
+        {
+            using var stream = new FileStream(thumbPath, FileMode.Open, FileAccess.Read);
+            var set = youtube.Thumbnails.Set(videoId, stream, "image/jpeg");
+            await set.UploadAsync(ct);
+            log.Info("  [youtube] custom thumbnail set");
+        }
+        catch (Exception ex)
+        {
+            log.Error($"  [youtube] thumbnail upload failed (video still published): {ex.Message}");
+        }
+    }
+
+    // Real caption track alongside the burned-in drawtext subtitles - gives platforms
+    // and accessibility tools indexable/toggleable caption text. Best-effort for the
+    // same reason as the thumbnail above.
+    private async Task TryUploadCaptionsAsync(YouTubeService youtube, string videoId, string videoPath, string language, CancellationToken ct)
+    {
+        var srtPath = Path.ChangeExtension(videoPath, ".srt");
+        if (!File.Exists(srtPath)) return;
+
+        try
+        {
+            var caption = new Caption
+            {
+                Snippet = new CaptionSnippet
+                {
+                    VideoId = videoId,
+                    Language = Text.LanguageTag(language),
+                    Name = "",
+                    IsDraft = false,
+                },
+            };
+
+            using var stream = new FileStream(srtPath, FileMode.Open, FileAccess.Read);
+            var insert = youtube.Captions.Insert(caption, "snippet", stream, "application/octet-stream");
+            await insert.UploadAsync(ct);
+            log.Info("  [youtube] captions uploaded");
+        }
+        catch (Exception ex)
+        {
+            log.Error($"  [youtube] caption upload failed (video still published): {ex.Message}");
         }
     }
 

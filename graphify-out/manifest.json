@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   ".claude/settings.local.json": {
-    "mtime": 1785900487.201964,
-    "ast_hash": "4b43f26279a2ba7d4389f384527b39a3",
+    "mtime": 1786214769.4623573,
+    "ast_hash": "1bb11f3b443aaf1422c5d3f101dfe056",
     "semantic_hash": ""
   },
   "gigglegarden-automation/TokenCapture/Program.cs": {
@@ -30,28 +30,28 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/appsettings.json": {
-    "mtime": 1785900820.9281785,
-    "ast_hash": "57a9bba7ad2f994e5bdb99a8b7d9ccbd",
+    "mtime": 1786215409.0156817,
+    "ast_hash": "66e28cf24d45004ec112b259f76d84f6",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/GenConfig.cs": {
-    "mtime": 1785739266.177345,
-    "ast_hash": "415d9b715fded3d779d7bba897c23f7d",
+    "mtime": 1786222313.317487,
+    "ast_hash": "f1e0679a1e7c3b4c95d48588f7b29832",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/ImageClient.cs": {
-    "mtime": 1785739337.951581,
-    "ast_hash": "0c6b2e0236f2c2cf2a7c8ef312ba7cc7",
+    "mtime": 1786222256.8037548,
+    "ast_hash": "9fe5309ddb09b0c9467a261f3d19d0e9",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/Program.cs": {
-    "mtime": 1785739441.438475,
-    "ast_hash": "4982dae5bebc70092e1d0995996bfd92",
+    "mtime": 1786222324.1296957,
+    "ast_hash": "1b6266353d2b881a60b0d2507285554c",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/ScriptGenerator.cs": {
-    "mtime": 1785739314.5492666,
-    "ast_hash": "151d7848b17862961fee0d787416201d",
+    "mtime": 1786222318.9481502,
+    "ast_hash": "3263121189dbff11302cd3931a9bfa89",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/TtsClient.cs": {
@@ -60,8 +60,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/VideoAssembler.cs": {
-    "mtime": 1785739407.2002954,
-    "ast_hash": "416817692e26bf02033b8458a9f6766a",
+    "mtime": 1786222185.6629233,
+    "ast_hash": "0d43670371c124eefd34fef634bf0911",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/VideoGen.csproj": {
@@ -70,8 +70,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/appsettings.json": {
-    "mtime": 1785739464.6045804,
-    "ast_hash": "f6b582466f7af2acf361f41c9853b947",
+    "mtime": 1786222348.5865412,
+    "ast_hash": "ff68232cf33dfcfbf8c79135d7d48d52",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -90,8 +90,8 @@
     "semantic_hash": "9c0ed5f7d565d538d252e1dffa52b370"
   },
   ".claude-flow/daemon-state.json": {
-    "mtime": 1785900890.4604607,
-    "ast_hash": "b10149ba58da5346c0901cf1a68fddea",
+    "mtime": 1785950241.0482924,
+    "ast_hash": "8652df271c3ca6eaec3dbf5f2fc993d3",
     "semantic_hash": ""
   },
   ".claude-flow/embeddings.json": {
@@ -115,13 +115,13 @@
     "semantic_hash": ""
   },
   ".claude-flow/metrics/codebase-map.json": {
-    "mtime": 1785900650.4604936,
-    "ast_hash": "1d6bba78cab7e6ce5a93186169032742",
+    "mtime": 1785906950.5646157,
+    "ast_hash": "ce41a4b0a9e02de9a24e2b5e42ddd77c",
     "semantic_hash": ""
   },
   ".claude-flow/metrics/consolidation.json": {
-    "mtime": 1785899210.4608138,
-    "ast_hash": "71dfb56b1359b4c6e6a5fcaaeb26dfc1",
+    "mtime": 1785906410.5243537,
+    "ast_hash": "d6240459500dde31091e92c0124d3cff",
     "semantic_hash": ""
   },
   ".claude-flow/metrics/harness-loop.json": {
@@ -135,13 +135,13 @@
     "semantic_hash": ""
   },
   ".claude-flow/metrics/performance.json": {
-    "mtime": 1785900890.4604607,
-    "ast_hash": "e5c6dbf1f236698f9448f16ab671f560",
+    "mtime": 1785906290.5530436,
+    "ast_hash": "4b2f1c4b9d0211deea09aae967afba66",
     "semantic_hash": ""
   },
   ".claude-flow/metrics/security-audit.json": {
-    "mtime": 1785900770.5268507,
-    "ast_hash": "c373d90e1fe1986f591fe0902e5f7697",
+    "mtime": 1785906770.654071,
+    "ast_hash": "b45dec993b433dee1b433fc7071b9a5a",
     "semantic_hash": ""
   },
   ".claude-flow/metrics/swarm-activity.json": {
@@ -150,8 +150,8 @@
     "semantic_hash": ""
   },
   ".claude-flow/metrics/test-gaps.json": {
-    "mtime": 1785899930.4647424,
-    "ast_hash": "2bc82d82e5d4a441246eb473b451c593",
+    "mtime": 1785905930.5537324,
+    "ast_hash": "511099243bc05d3a4391a82485a0e68f",
     "semantic_hash": ""
   },
   ".claude-flow/metrics/v3-progress.json": {
@@ -455,8 +455,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs": {
-    "mtime": 1785900144.899875,
-    "ast_hash": "2e0f5435214afe5676f16001e6737181",
+    "mtime": 1786222148.5855463,
+    "ast_hash": "883ff7ec4cf41f0f391abefe7880e195",
     "semantic_hash": ""
   },
   "package.json": {
@@ -1950,8 +1950,8 @@
     "semantic_hash": ""
   },
   "tasks/todo.md": {
-    "mtime": 1785899079.8774254,
-    "ast_hash": "b665d6168ede482f2a12ec18aa899a64",
+    "mtime": 1785900999.83902,
+    "ast_hash": "0a9e99e18567051b6df4ffde09ec2abe",
     "semantic_hash": ""
   },
   "tasks/understanding.md": {
@@ -1960,13 +1960,23 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/TikTokTokenCapture/Program.cs": {
-    "mtime": 1785900913.1115978,
-    "ast_hash": "e25adf94df44bff170b4f34d4ae456bb",
+    "mtime": 1786215315.337203,
+    "ast_hash": "44dc84eb2977c697c0a4cc3f907b0bfd",
     "semantic_hash": ""
   },
   "gigglegarden-automation/TikTokTokenCapture/TikTokTokenCapture.csproj": {
     "mtime": 1785900897.8686259,
     "ast_hash": "c18c479a47a30949d2f07cce9f0334c9",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/TrendResearch.cs": {
+    "mtime": 1786222308.6209934,
+    "ast_hash": "b97fd4c368c3bae31e4f842b1fab3fba",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/music.mp3": {
+    "mtime": 1785904631.3363924,
+    "ast_hash": "6a29bd95be861088869211eef1fc8cb0",
     "semantic_hash": ""
   }
 }

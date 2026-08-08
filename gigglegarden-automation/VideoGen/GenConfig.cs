@@ -16,10 +16,28 @@ record GenConfig
     public string OpenAiImageModel { get; init; } = "gpt-image-1";
     public string StabilityApiKey { get; init; } = "";
 
+    // Public YouTube Data API key (no OAuth - Google Cloud Console -> Credentials ->
+    // API key, with "YouTube Data API v3" enabled) used to pull real trending kids'
+    // titles as topic inspiration when --topic is not given. Separate from the
+    // Uploader's OAuth client secret, which is a heavier credential for a different job.
+    public string YouTubeApiKey { get; init; } = "";
+    public string[] TrendQueries { get; init; } =
+    [
+        "nursery rhymes for kids", "kids learning songs", "hindi rhymes for children",
+        "punjabi kids songs", "learning with alphabets kids", "learning maths for kids",
+    ];
+
     // Render a second, natively-vertical image set for the 9:16 cut. Without this the
     // vertical render centre-crops a 3:2 landscape frame and reliably decapitates the
     // character. Costs one extra image per scene; set false to trade quality for spend.
     public bool GenerateVerticalImages { get; init; } = true;
+
+    // Generates one reference image of the character first, then uses image-to-image
+    // for every scene so the character's appearance stays consistent instead of
+    // drifting - each independent text-to-image call otherwise has no memory of prior
+    // output. Costs one extra image per orientation per video; set false to trade
+    // consistency for spend (CharacterStyle's text description is the only guardrail then).
+    public bool UseCharacterReference { get; init; } = true;
 
     // Keeps the recurring character consistent across scenes & videos.
     public string CharacterStyle { get; init; } =

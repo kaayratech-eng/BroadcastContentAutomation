@@ -61,7 +61,8 @@ var workDir = Directory.CreateDirectory(
 Console.WriteLine($"Workspace: {workDir}");
 
 // 1. Script
-var script = await ScriptGenerator.GenerateAsync(cfg, topic, language);
+var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
+var script = await ScriptGenerator.GenerateAsync(cfg, topic, language, trendContext);
 await File.WriteAllTextAsync(Path.Combine(workDir, "script.json"),
     System.Text.Json.JsonSerializer.Serialize(script, Sidecar.Options));
 Console.WriteLine($"Script: \"{script.Title}\" — {script.Scenes.Count} scenes");
@@ -79,18 +80,47 @@ for (var i = 0; i < script.Scenes.Count; i++)
 
 // 3. Images per scene
 var img = new ImageClient(cfg);
+
+// Generate one neutral reference image per orientation first, then feed it back into
+// every scene via image-to-image - keeps the character's appearance consistent
+// instead of drifting scene to scene (see GenConfig.UseCharacterReference).
+const string referencePose =
+    "Full-body reference pose, simple neutral standing pose, friendly smile, plain " +
+    "soft-colored background, character reference sheet style.";
+
+string? landscapeRef = null, verticalRef = null;
+if (cfg.UseCharacterReference)
+{
+    landscapeRef = Path.Combine(workDir, "character-ref.png");
+    await img.GenerateAsync(referencePose, cfg.CharacterStyle, landscapeRef, ImageClient.Orientation.Landscape);
+    Console.WriteLine("Character reference generated (landscape).");
+
+    if (cfg.GenerateVerticalImages && !landscapeOnly)
+    {
+        verticalRef = Path.Combine(workDir, "character-ref-v.png");
+        await img.GenerateAsync(referencePose, cfg.CharacterStyle, verticalRef, ImageClient.Orientation.Portrait);
+        Console.WriteLine("Character reference generated (portrait).");
+    }
+}
+
 for (var i = 0; i < script.Scenes.Count; i++)
 {
     var scene = script.Scenes[i];
 
     var imgPath = Path.Combine(workDir, $"scene{i:D2}.png");
-    await img.GenerateAsync(scene.ImagePrompt, cfg.CharacterStyle, imgPath, ImageClient.Orientation.Landscape);
+    if (landscapeRef is not null)
+        await img.GenerateWithReferenceAsync(scene.ImagePrompt, cfg.CharacterStyle, landscapeRef, imgPath, ImageClient.Orientation.Landscape);
+    else
+        await img.GenerateAsync(scene.ImagePrompt, cfg.CharacterStyle, imgPath, ImageClient.Orientation.Landscape);
     scene.ImagePath = imgPath;
 
     if (cfg.GenerateVerticalImages && !landscapeOnly)
     {
         var verticalPath = Path.Combine(workDir, $"scene{i:D2}-v.png");
-        await img.GenerateAsync(scene.ImagePrompt, cfg.CharacterStyle, verticalPath, ImageClient.Orientation.Portrait);
+        if (verticalRef is not null)
+            await img.GenerateWithReferenceAsync(scene.ImagePrompt, cfg.CharacterStyle, verticalRef, verticalPath, ImageClient.Orientation.Portrait);
+        else
+            await img.GenerateAsync(scene.ImagePrompt, cfg.CharacterStyle, verticalPath, ImageClient.Orientation.Portrait);
         scene.VerticalImagePath = verticalPath;
     }
 
@@ -106,7 +136,16 @@ if (!verticalOnly)
 {
     var landscape = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}.mp4");
     await VideoAssembler.AssembleAsync(cfg, script.Scenes, language, workDir, landscape, 1920, 1080, preferVerticalImages: false);
+    await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
+
+    var thumbnailBase = Path.Combine(workDir, "thumbnail-base.png");
+    if (landscapeRef is not null)
+        await img.GenerateWithReferenceAsync(script.ThumbnailPrompt, cfg.CharacterStyle, landscapeRef, thumbnailBase, ImageClient.Orientation.Landscape);
+    else
+        await img.GenerateAsync(script.ThumbnailPrompt, cfg.CharacterStyle, thumbnailBase, ImageClient.Orientation.Landscape);
+    await VideoAssembler.BuildThumbnailAsync(cfg, thumbnailBase, script.ThumbnailText, language, Path.ChangeExtension(landscape, ".thumb.jpg"));
+    Console.WriteLine("Thumbnail generated.");
 
     await new Sidecar
     {
@@ -141,14 +180,18 @@ if (!landscapeOnly)
 
     var vertical = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}-short.mp4");
     await VideoAssembler.AssembleAsync(cfg, shortScenes, language, workDir, vertical, 1080, 1920, preferVerticalImages: true);
+    await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
     // Distinct metadata from the landscape master. Identical title + description on two
     // uploads of the same content is what gets a channel flagged for duplicate uploads.
+    // Instagram/Facebook and TikTok also get their own captions rather than sharing one -
+    // each platform's feed truncates and formats differently, and reusing one caption
+    // verbatim across all three reads as generic on every one of them.
     await new Sidecar
     {
         Title = Text.Fit($"{script.Title} #Shorts", 100),
-        Description = $"{script.ShortCaption}\n\n#Shorts",
+        Description = $"{script.ReelsCaption}\n\n#Shorts",
         Tags = [.. script.Tags.Take(12), "shorts"],
         Approved = false,
         Language = language,
@@ -157,9 +200,9 @@ if (!landscapeOnly)
         CaptionOverrides =
         {
             // YouTube keeps the #Shorts marker; the others must not carry it.
-            [Platforms.Instagram] = script.ShortCaption,
-            [Platforms.Facebook] = script.ShortCaption,
-            [Platforms.TikTok] = script.ShortCaption,
+            [Platforms.Instagram] = script.ReelsCaption,
+            [Platforms.Facebook] = script.ReelsCaption,
+            [Platforms.TikTok] = script.TikTokCaption,
         },
     }.SaveAsync(vertical);
 
