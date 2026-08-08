@@ -14,6 +14,7 @@
 
 using System.Diagnostics;
 using System.Net;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 
@@ -28,13 +29,25 @@ var clientSecret = args[1];
 var tokenStorePath = args.Length > 2 ? args[2] : @"C:\Secure\GiggleGarden\tiktok-token.json";
 
 const string RedirectUri = "http://localhost:53682/callback";
-const string Scope = "user.info.basic,video.upload,video.publish";
+
+// video.publish is only granted to audited production apps with Direct Post
+// approved (see TikTokConfig.DirectPost) — Sandbox apps and unaudited
+// production apps can only request video.upload (draft-to-inbox).
+const string Scope = "user.info.basic,video.upload";
+
+// TikTok's desktop OAuth flow requires PKCE. Unlike the usual RFC 7636 shape
+// (base64url-encoded SHA256), TikTok's own docs specify hex-encoded SHA256 —
+// get this wrong and the authorize call fails with a vague "code_challenge" error.
+const string CodeVerifierChars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~";
+var codeVerifier = RandomNumberGenerator.GetString(CodeVerifierChars, 64);
+var codeChallenge = Convert.ToHexString(SHA256.HashData(Encoding.ASCII.GetBytes(codeVerifier))).ToLowerInvariant();
 
 var state = Guid.NewGuid().ToString("N");
 var authorizeUrl =
     $"https://www.tiktok.com/v2/auth/authorize/?client_key={Uri.EscapeDataString(clientKey)}" +
     $"&response_type=code&scope={Uri.EscapeDataString(Scope)}" +
-    $"&redirect_uri={Uri.EscapeDataString(RedirectUri)}&state={state}";
+    $"&redirect_uri={Uri.EscapeDataString(RedirectUri)}&state={state}" +
+    $"&code_challenge={codeChallenge}&code_challenge_method=S256";
 
 Console.WriteLine("Register this exact redirect URI in your TikTok Developer app first:");
 Console.WriteLine($"  {RedirectUri}");
@@ -89,6 +102,7 @@ using var tokenResp = await http.PostAsync("https://open.tiktokapis.com/v2/oauth
         ["code"] = code,
         ["grant_type"] = "authorization_code",
         ["redirect_uri"] = RedirectUri,
+        ["code_verifier"] = codeVerifier,
     }));
 
 var responseJson = await tokenResp.Content.ReadAsStringAsync();

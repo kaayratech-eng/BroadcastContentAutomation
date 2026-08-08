@@ -60,7 +60,14 @@
       "Bash(node -e ' *)",
       "mcp__claude-in-chrome__tabs_context_mcp",
       "Bash(git ls-remote *)",
-      "Bash(curl.exe -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://kaayratech-eng.github.io/GiggleGarden_Website/tiktokC5aRX4igkWhh4G52a9uJ7fzXTL3eZ2dk.txt\")"
+      "Bash(curl.exe -s -o /dev/null -w \"HTTP %{http_code}\\\\n\" \"https://kaayratech-eng.github.io/GiggleGarden_Website/tiktokC5aRX4igkWhh4G52a9uJ7fzXTL3eZ2dk.txt\")",
+      "Bash(gh pr *)",
+      "Bash(git fetch *)",
+      "Bash(git ls-tree *)",
+      "WebFetch(domain:developers.tiktok.com)",
+      "Bash(powershell.exe -Command \"Get-Process -Id 42648 -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(powershell.exe -Command \"Get-Process -Name TikTokTokenCapture -ErrorAction SilentlyContinue | Select-Object Id,ProcessName\")",
+      "Bash(powershell.exe -Command \"Get-Process -Name TikTokTokenCapture -ErrorAction SilentlyContinue | Stop-Process -Force\")"
     ]
   },
   "hooks": {
