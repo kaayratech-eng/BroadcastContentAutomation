@@ -188,7 +188,7 @@ static void MoveWithSiblings(string videoPath, string destRoot)
 
     MoveIfExists(videoPath);
     MoveIfExists(Sidecar.PathFor(videoPath));
-    foreach (var suffix in new[] { ".srt", ".thumb.jpg" })
+    foreach (var suffix in new[] { ".srt", ".thumb.jpg", ".tiktok-caption.txt" })
         MoveIfExists(Path.ChangeExtension(videoPath, suffix));
 }
 
