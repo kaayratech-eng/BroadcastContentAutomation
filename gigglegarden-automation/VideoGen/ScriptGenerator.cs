@@ -97,9 +97,11 @@ Requirements:
   about 9 seconds per scene once spoken, so 8-9 scenes plus the intro lands the
   finished video around 85 seconds - just inside the 90-second limit Reels
   enforces. More scenes than this and the ending gets cut off.
-- Keep each scene's narration under 140 characters. It is burned into the
-  video as an on-screen subtitle, long lines do not fit the frame, and each
-  scene becomes one animated clip with a hard 10-second ceiling.
+- Keep each scene's narration under 115 characters. It is burned into the video
+  as an on-screen subtitle, and long lines do not fit the frame. The harder
+  limit is that each scene becomes one animated clip and those cap out at 10
+  seconds: a line much past 115 characters takes longer than that to speak, and
+  the picture then freezes on its final frame while the narrator finishes.
 - Write narration in ordinary sentence case. Never put a word in ALL CAPITALS
   for emphasis - the speech synthesizer reads a fully capitalised word as an
   initialism and spells it out letter by letter ("AH-CHOO" becomes "A-H-C-H-O-O").

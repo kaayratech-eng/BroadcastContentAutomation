@@ -42,12 +42,14 @@ for (var i = 0; i < args.Length; i++)
     {
         case "--prep": mode = "prep"; break;
         case "--assemble": mode = "assemble"; break;
+        case "--retts": mode = "retts"; break;
         case "--job" when i + 1 < args.Length: job = args[++i]; break;
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
         case "--help" or "-h":
             Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa]");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
+            Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
             return 0;
     }
 }
@@ -78,9 +80,12 @@ var jsonOptions = Sidecar.Options;
 
 try
 {
-    return mode == "prep"
-        ? await RunPrepAsync()
-        : await RunAssembleAsync();
+    return mode switch
+    {
+        "prep" => await RunPrepAsync(),
+        "retts" => await RunRettsAsync(),
+        _ => await RunAssembleAsync(),
+    };
 }
 catch (Exception ex)
 {
@@ -158,6 +163,40 @@ async Task<int> RunPrepAsync()
         ? "Off-peak: Vidu delivers within 48 hours. Run --assemble later to collect and render."
         : "Peak rate: clips usually land within minutes. Run --assemble to collect and render.");
     Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
+    return 0;
+}
+
+// --------------------------------------------------------------- retts ------
+
+// Re-synthesizes narration for an existing job and re-measures every scene, without
+// touching the clips already paid for. Use after a change to how narration is spoken,
+// or after editing script.json by hand - the generated clips stay valid because they
+// are only ever trimmed or frame-padded to whatever the new durations turn out to be.
+async Task<int> RunRettsAsync()
+{
+    var workDir = ResolveJobDirectory();
+    Console.WriteLine($"Workspace: {workDir}");
+
+    var script = await LoadScriptAsync(workDir);
+    language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
+
+    var tts = new TtsClient(cfg);
+    for (var i = 0; i < script.Scenes.Count; i++)
+    {
+        var scene = script.Scenes[i];
+        var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath);
+        scene.AudioPath = audioPath;
+
+        var before = scene.DurationSeconds;
+        scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
+        Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({before:0.0}s -> {scene.DurationSeconds:0.0}s)");
+    }
+
+    await SaveScriptAsync(workDir, script);
+
+    var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
+    Console.WriteLine($"Narration total: {total:0}s. Run --assemble to re-render.");
     return 0;
 }
 
