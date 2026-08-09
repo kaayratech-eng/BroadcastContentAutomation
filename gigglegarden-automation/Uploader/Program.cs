@@ -157,6 +157,16 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                 File.Move(path, dest, overwrite: true);
                 var sc = Sidecar.PathFor(path);
                 if (File.Exists(sc)) File.Move(sc, Sidecar.PathFor(dest), overwrite: true);
+
+                // Sibling artifacts VideoGen wrote alongside the video (captions, custom
+                // thumbnail) - without this they're orphaned in the watch directory forever,
+                // since only the .mp4 and its sidecar were ever moved.
+                foreach (var suffix in new[] { ".srt", ".thumb.jpg" })
+                {
+                    var src = Path.ChangeExtension(path, suffix);
+                    if (File.Exists(src)) File.Move(src, Path.ChangeExtension(dest, suffix), overwrite: true);
+                }
+
                 log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
             }
             else
