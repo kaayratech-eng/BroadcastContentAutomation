@@ -90,7 +90,23 @@
       "WebFetch(domain:www.viewmax.io)",
       "WebFetch(domain:invideo.io)",
       "WebFetch(domain:help.invideo.io)",
-      "WebFetch(domain:costbench.com)"
+      "WebFetch(domain:costbench.com)",
+      "Bash(mkdir -p \"find-the-circle-learn-shapes-for-toddlers-with-pip-en\" \"find-the-circle-learn-shapes-for-toddlers-with-pip-en-short\" \"gigi-colors-en\")",
+      "Bash(mv find-the-circle-learn-shapes-for-toddlers-with-pip-en.mp4 find-the-circle-learn-shapes-for-toddlers-with-pip-en.json find-the-circle-learn-shapes-for-toddlers-with-pip-en.srt find-the-circle-learn-shapes-for-toddlers-with-pip-en.thumb.jpg \"find-the-circle-learn-shapes-for-toddlers-with-pip-en/\")",
+      "Bash(mv find-the-circle-learn-shapes-for-toddlers-with-pip-en-short.mp4 find-the-circle-learn-shapes-for-toddlers-with-pip-en-short.json find-the-circle-learn-shapes-for-toddlers-with-pip-en-short.srt \"find-the-circle-learn-shapes-for-toddlers-with-pip-en-short/\")",
+      "Bash(mv gigi-colors-en.mp4 gigi-colors-en.json \"gigi-colors-en/\")",
+      "mcp__claude-in-chrome__tabs_create_mcp",
+      "mcp__claude-in-chrome__navigate",
+      "mcp__claude-in-chrome__computer",
+      "mcp__claude-in-chrome__read_page",
+      "mcp__claude-in-chrome__find",
+      "Bash(SCRATCH=\"C:/Users/rishi/AppData/Local/Temp/claude/D--Business/11d9f860-d3bb-47b5-971a-016f84e64cad/scratchpad\" *)",
+      "WebFetch(domain:docs.dev.runwayml.com)",
+      "WebFetch(domain:help.runwayml.com)",
+      "WebFetch(domain:stability.ai)",
+      "WebFetch(domain:app.klingai.com)",
+      "WebFetch(domain:docs.lumalabs.ai)",
+      "PowerShell(Get-CimInstance Win32_VideoController)"
     ]
   },
   "hooks": {

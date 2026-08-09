@@ -72,6 +72,103 @@ static class VideoAssembler
         }
     }
 
+    // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
+    // still with a camera move over it. Same crossfade/subtitle/music treatment as the
+    // image path, so the two produce interchangeable output.
+    public static async Task AssembleFromClipsAsync(
+        GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
+        string workDir, string outputPath, int w, int h)
+    {
+        if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
+
+        var sceneClips = new List<string>();
+        var durations = new List<double>();
+        var tag = $"{w}x{h}";
+
+        for (var i = 0; i < scenes.Count; i++)
+        {
+            var s = scenes[i];
+            if (s.ClipPath is not { } clipPath || !File.Exists(clipPath))
+                throw new InvalidOperationException($"Scene {i + 1} has no downloaded clip.");
+
+            var duration = s.DurationSeconds + 0.5;              // breathing room
+            var fontSize = h > w ? 52 : 46;
+            var subtitle = BuildSubtitleFilter(cfg, s.Narration, language, workDir, i, tag, w, h, fontSize);
+
+            var videoOnly = Path.Combine(workDir, $"clip{i:D2}-{tag}-video.mp4");
+            await BuildVideoClipAsync(cfg, clipPath, duration, w, h, subtitle, videoOnly);
+
+            var clip = Path.Combine(workDir, $"clip{i:D2}-{tag}.mp4");
+            await RunFfmpegAsync(cfg,
+                $"-y -i \"{videoOnly}\" -i \"{s.AudioPath}\" -af \"apad\" -t {Text.Invariant(duration)} " +
+                $"-c:v copy -c:a aac -b:a 128k \"{clip}\"");
+
+            sceneClips.Add(clip);
+            durations.Add(duration);
+        }
+
+        var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
+        await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
+
+        if (!string.IsNullOrEmpty(cfg.BackgroundMusicPath) && File.Exists(cfg.BackgroundMusicPath))
+        {
+            await RunFfmpegAsync(cfg,
+                $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{cfg.BackgroundMusicPath}\" " +
+                "-filter_complex \"[1:a]volume=0.12[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]\" " +
+                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k \"{outputPath}\"");
+        }
+        else
+        {
+            File.Copy(concatPath, outputPath, overwrite: true);
+        }
+    }
+
+    // Fits a generated clip to its scene's exact duration and burns in the subtitle.
+    // tpad clones the final frame when the clip runs marginally short of its narration
+    // (clip length is a whole number of seconds, narration is not), and -t trims the
+    // usual case where it runs over; without the pad, a scene whose narration rounds
+    // just past the clip length ends on a black frame.
+    private static async Task BuildVideoClipAsync(
+        GenConfig cfg, string sourceClip, double duration, int w, int h, string subtitleFilter, string outputPath)
+    {
+        // Vidu renders vertical; the 16:9 master puts that pillar on a blurred blow-up
+        // of itself rather than hard black bars, which reads as deliberate on YouTube.
+        var fit = w > h
+            ? $"split[bg][fg];[bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma=28[bgb];" +
+              $"[fg]scale=-2:{h}[fgs];[bgb][fgs]overlay=(W-w)/2:0"
+            : $"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}";
+
+        var vf = $"{fit},tpad=stop_mode=clone:stop_duration=3{subtitleFilter}";
+
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{sourceClip}\" -t {Text.Invariant(duration)} " +
+            $"-filter_complex \"[0:v]{vf}[v]\" -map \"[v]\" -r 25 -pix_fmt yuv420p " +
+            $"-an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"");
+    }
+
+    // The last frame of scene N seeds scene N+1's generation, which is what keeps the
+    // mascot on-model across a whole video without paying for reference-to-video mode.
+    // JPEG rather than PNG purely to keep the base64 request payload small.
+    public static async Task ExtractLastFrameAsync(GenConfig cfg, string videoPath, string outputPath)
+    {
+        await RunFfmpegAsync(cfg,
+            $"-y -sseof -0.4 -i \"{videoPath}\" -update 1 -frames:v 1 -q:v 3 \"{outputPath}\"");
+
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            throw new Exception($"Could not extract a last frame from {Path.GetFileName(videoPath)}.");
+    }
+
+    // Thumbnail source frame, pulled from the finished render instead of a separately
+    // generated still - the art is already on-model and it costs nothing.
+    public static async Task ExtractThumbnailFrameAsync(GenConfig cfg, string videoPath, double atSeconds, string outputPath)
+    {
+        await RunFfmpegAsync(cfg,
+            $"-y -ss {Text.Invariant(atSeconds)} -i \"{videoPath}\" -update 1 -frames:v 1 -q:v 2 \"{outputPath}\"");
+
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+            throw new Exception($"Could not extract a thumbnail frame from {Path.GetFileName(videoPath)}.");
+    }
+
     // Custom YouTube thumbnail: the base illustration (already generated with the same
     // "empty lower third" framing used for subtitles) plus a bold, high-contrast overlay
     // phrase. Thumbnail is the single biggest click-through lever on YouTube, so this is

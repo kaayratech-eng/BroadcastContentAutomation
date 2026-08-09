@@ -28,6 +28,10 @@ class VideoScript
     // the target language, plus a one-line preview of this video's specific learning
     // objective, so every video opens the same recognizable way before the hook scene.
     public string IntroText { get; set; } = "";
+
+    // Persisted so --assemble renders in the same language --prep was run with,
+    // days later, without the caller having to repeat the flag.
+    public string Language { get; set; } = "en";
 }
 
 class Scene
@@ -43,6 +47,19 @@ class Scene
     public string? ImagePath2 { get; set; }
     public string? VerticalImagePath2 { get; set; }
     public double DurationSeconds { get; set; }
+
+    // Vidu image-to-video state. StartFramePath is the frame this scene animates from
+    // (the canonical mascot reference for scene 1, the previous scene's last frame after
+    // that); ViduTaskId is the async job submitted during --prep; ClipPath is the finished
+    // clip once --assemble has collected it. Persisted in script.json so the two phases,
+    // which may run days apart, share state across process restarts.
+    public string? StartFramePath { get; set; }
+    public string? ViduTaskId { get; set; }
+    public string? ClipPath { get; set; }
+
+    // What Vidu should animate for this scene. Distinct from ImagePrompt (which describes
+    // a still) because a video prompt has to describe motion, not just composition.
+    public string MotionPrompt { get; set; } = "";
 }
 
 static class ScriptGenerator
@@ -75,10 +92,14 @@ mascot across every video on the channel, not a one-off character for this
 topic alone.
 
 Requirements:
-- 6 to 8 scenes. Each scene: 1-2 short, rhythmic, sing-song sentences a
-  narrator reads aloud (simple vocabulary, repetition kids love).
+- Exactly 8 or 9 scenes. Each scene: 1-2 short, rhythmic, sing-song sentences a
+  narrator reads aloud (simple vocabulary, repetition kids love). Narration runs
+  about 9 seconds per scene once spoken, so 8-9 scenes plus the intro lands the
+  finished video around 85 seconds - just inside the 90-second limit Reels
+  enforces. More scenes than this and the ending gets cut off.
 - Keep each scene's narration under 140 characters. It is burned into the
-  video as an on-screen subtitle and long lines do not fit the frame.
+  video as an on-screen subtitle, long lines do not fit the frame, and each
+  scene becomes one animated clip with a hard 10-second ceiling.
 - Scene 1 is the hook: the very first line must grab attention in the first
   couple of seconds (an exciting question, a silly sound, a surprise) - not a
   slow "once upon a time" style opener.
@@ -97,6 +118,14 @@ Requirements:
   same recurring main character across all scenes, bright colors, simple
   composition, no text in the image. Keep the subject centred and clear of the
   top and bottom thirds so the same art works cropped to both 16:9 and 9:16.
+- Each scene ALSO gets a motionPrompt IN ENGLISH describing what actually MOVES
+  in that scene, because every scene is generated as a short animated clip that
+  starts from the previous scene's final frame. Describe the action, not the
+  composition: what the character does (waves, hops, points, counts on a wing,
+  peeks, spins), and any simple scene motion (leaves drifting, bubbles rising).
+  Keep it to one or two sentences, keep the movement small and loopable, and
+  always end with: "2D cartoon animation, flat colors, thick outlines, character
+  design stays consistent." Never describe a camera cut or a change of character.
 - Entirely original - do not copy existing rhymes' lyrics.
 - Title <=90 chars in {{langName}}, written for search (include the concrete
   skill/topic, not just the character name).
@@ -135,7 +164,7 @@ Respond ONLY with JSON, no markdown fences:
   "thumbnailText": "...",
   "introText": "...",
   "tags": ["..."],
-  "scenes": [ { "narration": "...", "imagePrompt": "..." } ]
+  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..." } ]
 }
 """;
 
@@ -180,6 +209,13 @@ Respond ONLY with JSON, no markdown fences:
         if (string.IsNullOrWhiteSpace(script.ThumbnailPrompt)) script.ThumbnailPrompt = script.Scenes[0].ImagePrompt;
         if (string.IsNullOrWhiteSpace(script.ThumbnailText)) script.ThumbnailText = script.Title;
         if (string.IsNullOrWhiteSpace(script.IntroText)) script.IntroText = "Welcome to Giggle World!";
+
+        // A scene with no motion still has to animate - falling back to the still's
+        // description plus idle movement beats submitting an empty prompt to Vidu.
+        foreach (var scene in script.Scenes)
+            if (string.IsNullOrWhiteSpace(scene.MotionPrompt))
+                scene.MotionPrompt = $"{scene.ImagePrompt}. Gentle idle motion, the character breathes and blinks. " +
+                                     "2D cartoon animation, flat colors, thick outlines, character design stays consistent.";
 
         return script;
     }

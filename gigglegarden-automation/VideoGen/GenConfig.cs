@@ -11,6 +11,23 @@ record GenConfig
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
 
+    // Vidu image-to-video (see ViduClient.cs) - the source of every scene's picture.
+    // OffPeak halves the price in exchange for a delivery window of up to 48 hours,
+    // which is why generation (--prep) and assembly (--assemble) are separate phases.
+    public string ViduApiKey { get; init; } = "";
+    public string ViduModel { get; init; } = "viduq2-turbo";
+    public string ViduResolution { get; init; } = "540p";
+    public bool ViduOffPeak { get; init; } = true;
+
+    // The single canonical picture of the mascot, reused for every video forever.
+    // Scene 1 starts from this frame and each later scene starts from the previous
+    // clip's last frame, so the character stays on-model without per-scene art.
+    // Must be 9:16 - Vidu's output aspect ratio follows its input image's.
+    public string CharacterReferencePath { get; init; } = @"D:\Business\gigglegarden-automation\VideoGen\assets\gigi-reference.png";
+
+    // Retained for the static-image fallback path only; the Vidu flow above needs
+    // none of these. Kept until the video pipeline has a few weeks of real runs
+    // behind it, then this and ImageClient.cs can go.
     public string ImageProvider { get; init; } = "openai";   // openai | stability
     public string OpenAiApiKey { get; init; } = "";
     public string OpenAiImageModel { get; init; } = "gpt-image-1";
@@ -72,7 +89,7 @@ record GenConfig
 
     // Hard ceiling for the 9:16 cut. Reels reject >90s; Shorts allow more but the short
     // form is the point. Scenes past the limit are dropped from the vertical render only.
-    public int VerticalMaxSeconds { get; init; } = 85;
+    public int VerticalMaxSeconds { get; init; } = 89;
 
     // Scenes whose narration runs longer than this get a second image generated and
     // shown via an internal crossfade partway through, instead of one static photo
@@ -86,17 +103,19 @@ record GenConfig
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-")) missing.Add(nameof(AnthropicApiKey));
         if (string.IsNullOrWhiteSpace(AzureSpeechKey) || AzureSpeechKey.StartsWith("PUT-")) missing.Add(nameof(AzureSpeechKey));
-
-        var needsOpenAi = ImageProvider.Equals("openai", StringComparison.OrdinalIgnoreCase);
-        if (needsOpenAi && (string.IsNullOrWhiteSpace(OpenAiApiKey) || OpenAiApiKey.StartsWith("PUT-"))) missing.Add(nameof(OpenAiApiKey));
-        if (!needsOpenAi && string.IsNullOrWhiteSpace(StabilityApiKey)) missing.Add(nameof(StabilityApiKey));
+        if (string.IsNullOrWhiteSpace(ViduApiKey) || ViduApiKey.StartsWith("PUT-")) missing.Add(nameof(ViduApiKey));
 
         if (missing.Count > 0)
             throw new InvalidOperationException(
-                $"Missing credentials: {string.Join(", ", missing)}. Set them in appsettings.json " +
+                $"Missing credentials: {string.Join(", ", missing)}. Set them in appsettings.Local.json " +
                 $"or as environment variables (GIGGLE_{missing[0]}=...).");
 
         if (!File.Exists(SubtitleFontPath))
             throw new FileNotFoundException($"Subtitle font not found: {SubtitleFontPath}", SubtitleFontPath);
+
+        if (!File.Exists(CharacterReferencePath))
+            throw new FileNotFoundException(
+                $"Character reference image not found: {CharacterReferencePath}. This is the canonical " +
+                "9:16 picture of the mascot that every video's first scene starts from.", CharacterReferencePath);
     }
 }
