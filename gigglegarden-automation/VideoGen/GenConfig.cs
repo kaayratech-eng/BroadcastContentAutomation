@@ -52,9 +52,15 @@ record GenConfig
 
     // Which platforms each render is offered to. The Uploader still decides whether a
     // platform is enabled and configured; this only declares intent.
-    public string[] LandscapeTargets { get; init; } = [Platforms.YouTube];
-    public string[] VerticalTargets { get; init; } =
-        [Platforms.YouTube, Platforms.Instagram, Platforms.Facebook, Platforms.TikTok];
+    //
+    // Defaults deliberately empty, not pre-populated with the "real" values - .NET's
+    // configuration array binding APPENDS config-file values onto a non-empty default
+    // instead of replacing it, so a default here matching appsettings.json's real
+    // values silently doubled every target (e.g. ["youtube","youtube"]), which meant
+    // every publish ran twice per platform. appsettings.json always defines both keys
+    // (loaded with optional: false), so an empty default here is never actually hit.
+    public string[] LandscapeTargets { get; init; } = [];
+    public string[] VerticalTargets { get; init; } = [];
 
     // Hard ceiling for the 9:16 cut. Reels reject >90s; Shorts allow more but the short
     // form is the point. Scenes past the limit are dropped from the vertical render only.

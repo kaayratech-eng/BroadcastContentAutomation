@@ -86,7 +86,11 @@
       "WebFetch(domain:www.youtube.com)",
       "Bash(curl.exe -s -H 'x-api-key: __CMDSUB_OUTPUT__' -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at=2026-08-01T00:00:00Z -w '\\\\nHTTP %{http_code}\\\\n')",
       "Bash(curl.exe -s -H 'x-api-key: __CMDSUB_OUTPUT__' -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/organizations/cost_report?starting_at=2026-08-01T00:00:00Z -w '\\\\nHTTP %{http_code}\\\\n')",
-      "Bash(curl.exe -s -H 'Authorization: Bearer __TRACKED_VAR__' https://api.openai.com/v1/organization/costs?start_time=1754006400 -w '\\\\nHTTP %{http_code}\\\\n')"
+      "Bash(curl.exe -s -H 'Authorization: Bearer __TRACKED_VAR__' https://api.openai.com/v1/organization/costs?start_time=1754006400 -w '\\\\nHTTP %{http_code}\\\\n')",
+      "WebFetch(domain:www.viewmax.io)",
+      "WebFetch(domain:invideo.io)",
+      "WebFetch(domain:help.invideo.io)",
+      "WebFetch(domain:costbench.com)"
     ]
   },
   "hooks": {

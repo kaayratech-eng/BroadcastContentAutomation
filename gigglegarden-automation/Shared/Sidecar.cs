@@ -101,8 +101,11 @@ public sealed class Sidecar
         return publication;
     }
 
+    // Distinct here, not just at the source that populates Targets - this is the
+    // actual publish dispatch point, and a duplicated platform slipping through
+    // means an actual duplicate live post, not just a cosmetic list glitch.
     public IEnumerable<string> OutstandingTargets() =>
-        Targets.Where(t => !PublicationFor(t).IsTerminal);
+        Targets.Distinct(StringComparer.OrdinalIgnoreCase).Where(t => !PublicationFor(t).IsTerminal);
 
     public bool AllTargetsTerminal() =>
         Targets.Count > 0 && Targets.All(t => PublicationFor(t).IsTerminal);
