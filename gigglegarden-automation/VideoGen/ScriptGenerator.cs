@@ -100,6 +100,10 @@ Requirements:
 - Keep each scene's narration under 140 characters. It is burned into the
   video as an on-screen subtitle, long lines do not fit the frame, and each
   scene becomes one animated clip with a hard 10-second ceiling.
+- Write narration in ordinary sentence case. Never put a word in ALL CAPITALS
+  for emphasis - the speech synthesizer reads a fully capitalised word as an
+  initialism and spells it out letter by letter ("AH-CHOO" becomes "A-H-C-H-O-O").
+  Convey excitement through word choice and punctuation instead.
 - Scene 1 is the hook: the very first line must grab attention in the first
   couple of seconds (an exciting question, a silly sound, a surprise) - not a
   slow "once upon a time" style opener.

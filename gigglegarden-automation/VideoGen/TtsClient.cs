@@ -1,8 +1,9 @@
 using System.Text;
+using System.Text.RegularExpressions;
 using GiggleGarden.Shared;
 
 // Azure Speech REST API — no SDK dependency needed for simple synthesis.
-class TtsClient(GenConfig cfg)
+partial class TtsClient(GenConfig cfg)
 {
     // Style is Azure's per-voice "cheerful"-type express-as tag - verified live against
     // /cognitiveservices/voices/list before picking these (not every voice supports one,
@@ -15,13 +16,27 @@ class TtsClient(GenConfig cfg)
         ["pa"] = ("pa-IN", "pa-IN-VaaniNeural", null),
     };
 
+    // Azure reads an all-caps token as an initialism and spells it out letter by letter,
+    // so a scripted "AH-CHOO!" comes back as "A-H-C-H-O-O". Scripts legitimately use caps
+    // for emphasis and that reads well burned into the frame, so the fix is to soften the
+    // case for speech only - the subtitle keeps the original text.
+    //
+    // Runs of two or more capitals are the trigger; single capitals are left alone so an
+    // ordinary sentence start, "I", or a deliberately spelled-out "A, B, C" still works.
+    private static string SpeakableCase(string text) =>
+        AllCapsRun().Replace(text, m =>
+            m.Value[0] + m.Value[1..].ToLowerInvariant());
+
+    [GeneratedRegex(@"\p{Lu}{2,}")]
+    private static partial Regex AllCapsRun();
+
     public async Task SynthesizeAsync(string text, string language, string outputPath)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
 
         var (locale, voice, style) = Voices.TryGetValue(language, out var v) ? v : Voices["en"];
-        var escaped = System.Security.SecurityElement.Escape(text);
+        var escaped = System.Security.SecurityElement.Escape(SpeakableCase(text));
 
         // Slightly faster/brighter than a flat reading, plus the voice's "cheerful" style
         // where available - a plain rate/pitch nudge alone still reads as flat/robotic,
