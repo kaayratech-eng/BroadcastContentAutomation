@@ -67,7 +67,26 @@
       "WebFetch(domain:developers.tiktok.com)",
       "Bash(powershell.exe -Command \"Get-Process -Id 42648 -ErrorAction SilentlyContinue | Stop-Process -Force\")",
       "Bash(powershell.exe -Command \"Get-Process -Name TikTokTokenCapture -ErrorAction SilentlyContinue | Select-Object Id,ProcessName\")",
-      "Bash(powershell.exe -Command \"Get-Process -Name TikTokTokenCapture -ErrorAction SilentlyContinue | Stop-Process -Force\")"
+      "Bash(powershell.exe -Command \"Get-Process -Name TikTokTokenCapture -ErrorAction SilentlyContinue | Stop-Process -Force\")",
+      "Bash(powershell.exe -Command \"Get-Process -Name TokenCapture -ErrorAction SilentlyContinue | Select-Object Id,ProcessName\")",
+      "Bash(powershell.exe -Command \"Stop-Process -Id 36396 -Force\")",
+      "Bash(curl.exe -s 'https://graph.facebook.com/v21.0/1659850931748059?fields=status,id,permalink_url,published,video_insights.metric\\(total_video_impressions\\)&access_token=__CMDSUB_OUTPUT__')",
+      "Bash(powershell.exe -Command \"Get-ChildItem 'C:\\\\Windows\\\\Fonts' -Filter '*irmala*' | Select-Object Name\")",
+      "Bash(ffmpeg -f lavfi -i color=c=black:s=320x240:d=1 -vf 'drawtext=textfile='\\\\''C\\\\:/Users/rishi/AppData/Local/Temp/claude/D--Business/11d9f860-d3bb-47b5-971a-016f84e64cad/scratchpad/subtest.txt'\\\\'':fontfile='\\\\''C\\\\:/Windows/Fonts/Nirmala.ttc'\\\\'':fontsize=24:fontcolor=white:x=10:y=10' -frames:v 1 -y C:/Users/rishi/AppData/Local/Temp/claude/D--Business/11d9f860-d3bb-47b5-971a-016f84e64cad/scratchpad/subtest.png)",
+      "WebFetch(domain:runwayml.com)",
+      "WebFetch(domain:ai.google.dev)",
+      "WebFetch(domain:lumalabs.ai)",
+      "WebFetch(domain:platform.stability.ai)",
+      "WebFetch(domain:pika.art)",
+      "WebFetch(domain:runway.com)",
+      "WebFetch(domain:dev.runwayml.com)",
+      "WebFetch(domain:klingai.com)",
+      "Bash(grep -E \"scene0[0-2].*\\\\.png$\")",
+      "Bash(ffmpeg -y -i C:/Users/rishi/AppData/Local/Temp/claude/D--Business/11d9f860-d3bb-47b5-971a-016f84e64cad/scratchpad/kbtest/pattern2.mp4 -vf 'select=eq\\(n\\\\,0\\)+eq\\(n\\\\,50\\)+eq\\(n\\\\,99\\)' -vsync 0 C:/Users/rishi/AppData/Local/Temp/claude/D--Business/11d9f860-d3bb-47b5-971a-016f84e64cad/scratchpad/kbtest/p2_%d.png)",
+      "WebFetch(domain:www.youtube.com)",
+      "Bash(curl.exe -s -H 'x-api-key: __CMDSUB_OUTPUT__' -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/organizations/usage_report/messages?starting_at=2026-08-01T00:00:00Z -w '\\\\nHTTP %{http_code}\\\\n')",
+      "Bash(curl.exe -s -H 'x-api-key: __CMDSUB_OUTPUT__' -H 'anthropic-version: 2023-06-01' https://api.anthropic.com/v1/organizations/cost_report?starting_at=2026-08-01T00:00:00Z -w '\\\\nHTTP %{http_code}\\\\n')",
+      "Bash(curl.exe -s -H 'Authorization: Bearer __TRACKED_VAR__' https://api.openai.com/v1/organization/costs?start_time=1754006400 -w '\\\\nHTTP %{http_code}\\\\n')"
     ]
   },
   "hooks": {

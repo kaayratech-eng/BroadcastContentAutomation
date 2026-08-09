@@ -103,6 +103,35 @@ if (cfg.UseCharacterReference)
     }
 }
 
+// Branded intro bumper, prepended to both renders below. Reuses the character
+// reference image directly (same plain pose every video) rather than generating
+// scene-specific art, so the opening is deliberately identical/recognizable video
+// to video instead of varying like the content scenes do. Falls back to a fresh
+// generation only if character-reference images are turned off in config.
+var introImagePath = landscapeRef ?? Path.Combine(workDir, "intro.png");
+if (landscapeRef is null)
+    await img.GenerateAsync(referencePose, cfg.CharacterStyle, introImagePath, ImageClient.Orientation.Landscape);
+
+string? introVerticalImagePath = null;
+if (cfg.GenerateVerticalImages && !landscapeOnly)
+{
+    introVerticalImagePath = verticalRef ?? Path.Combine(workDir, "intro-v.png");
+    if (verticalRef is null)
+        await img.GenerateAsync(referencePose, cfg.CharacterStyle, introVerticalImagePath, ImageClient.Orientation.Portrait);
+}
+
+var introScene = new Scene
+{
+    Narration = script.IntroText,
+    ImagePath = introImagePath,
+    VerticalImagePath = introVerticalImagePath,
+};
+var introAudioPath = Path.Combine(workDir, "intro.mp3");
+await tts.SynthesizeAsync(introScene.Narration, language, introAudioPath);
+introScene.AudioPath = introAudioPath;
+introScene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, introAudioPath);
+Console.WriteLine($"Intro: \"{introScene.Narration}\" ({introScene.DurationSeconds:0.0}s)");
+
 for (var i = 0; i < script.Scenes.Count; i++)
 {
     var scene = script.Scenes[i];
@@ -124,6 +153,31 @@ for (var i = 0; i < script.Scenes.Count; i++)
         scene.VerticalImagePath = verticalPath;
     }
 
+    // Long-narration scenes get a second image so the video isn't one static photo
+    // sitting on screen for the whole line — VideoAssembler crossfades between the two
+    // partway through. Same reference image, a nudged prompt so it isn't a near-duplicate.
+    if (scene.DurationSeconds > cfg.SplitLongSceneAfterSeconds)
+    {
+        var variantPrompt = $"{scene.ImagePrompt}, a different pose or moment within the same scene";
+
+        var imgPath2 = Path.Combine(workDir, $"scene{i:D2}b.png");
+        if (landscapeRef is not null)
+            await img.GenerateWithReferenceAsync(variantPrompt, cfg.CharacterStyle, landscapeRef, imgPath2, ImageClient.Orientation.Landscape);
+        else
+            await img.GenerateAsync(variantPrompt, cfg.CharacterStyle, imgPath2, ImageClient.Orientation.Landscape);
+        scene.ImagePath2 = imgPath2;
+
+        if (cfg.GenerateVerticalImages && !landscapeOnly)
+        {
+            var verticalPath2 = Path.Combine(workDir, $"scene{i:D2}b-v.png");
+            if (verticalRef is not null)
+                await img.GenerateWithReferenceAsync(variantPrompt, cfg.CharacterStyle, verticalRef, verticalPath2, ImageClient.Orientation.Portrait);
+            else
+                await img.GenerateAsync(variantPrompt, cfg.CharacterStyle, verticalPath2, ImageClient.Orientation.Portrait);
+            scene.VerticalImagePath2 = verticalPath2;
+        }
+    }
+
     Console.WriteLine($"Image scene {i + 1}/{script.Scenes.Count}");
 }
 
@@ -132,11 +186,13 @@ var slug = Text.Slug(script.Title);
 Directory.CreateDirectory(cfg.OutputDirectory);
 var rendered = new List<string>();
 
+List<Scene> landscapeScenes = [introScene, .. script.Scenes];
+
 if (!verticalOnly)
 {
     var landscape = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}.mp4");
-    await VideoAssembler.AssembleAsync(cfg, script.Scenes, language, workDir, landscape, 1920, 1080, preferVerticalImages: false);
-    await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
+    await VideoAssembler.AssembleAsync(cfg, landscapeScenes, language, workDir, landscape, 1920, 1080, preferVerticalImages: false);
+    await VideoAssembler.WriteSrtAsync(landscapeScenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 
     var thumbnailBase = Path.Combine(workDir, "thumbnail-base.png");
@@ -165,22 +221,29 @@ if (!landscapeOnly)
 {
     // Reels reject anything over 90s, so the short cut is trimmed to whole scenes that
     // fit the budget rather than shipping a render the platform will refuse outright.
+    // The intro bumper eats into that same budget rather than sitting on top of it,
+    // so intro + content together still land safely under the platform cap.
+    var introBudget = introScene.DurationSeconds + 0.5;
+    var contentBudget = cfg.VerticalMaxSeconds - introBudget;
+
     var shortScenes = new List<Scene>();
     var running = 0.0;
     foreach (var scene in script.Scenes)
     {
         var next = running + scene.DurationSeconds + 0.5;
-        if (shortScenes.Count > 0 && next > cfg.VerticalMaxSeconds) break;
+        if (shortScenes.Count > 0 && next > contentBudget) break;
         shortScenes.Add(scene);
         running = next;
     }
 
     if (shortScenes.Count < script.Scenes.Count)
-        Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
+        Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s content + {introBudget:0.0}s intro) for the {cfg.VerticalMaxSeconds}s cap.");
+
+    List<Scene> verticalScenes = [introScene, .. shortScenes];
 
     var vertical = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}-short.mp4");
-    await VideoAssembler.AssembleAsync(cfg, shortScenes, language, workDir, vertical, 1080, 1920, preferVerticalImages: true);
-    await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
+    await VideoAssembler.AssembleAsync(cfg, verticalScenes, language, workDir, vertical, 1080, 1920, preferVerticalImages: true);
+    await VideoAssembler.WriteSrtAsync(verticalScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
     // Distinct metadata from the landscape master. Identical title + description on two

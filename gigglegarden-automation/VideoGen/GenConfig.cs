@@ -60,6 +60,13 @@ record GenConfig
     // form is the point. Scenes past the limit are dropped from the vertical render only.
     public int VerticalMaxSeconds { get; init; } = 85;
 
+    // Scenes whose narration runs longer than this get a second image generated and
+    // shown via an internal crossfade partway through, instead of one static photo
+    // sitting on screen for the whole line. Costs one extra image (per orientation)
+    // for every scene that qualifies — raise this or set a high value to trade the
+    // extra motion back for lower image spend.
+    public double SplitLongSceneAfterSeconds { get; init; } = 8.0;
+
     public void Validate()
     {
         var missing = new List<string>();

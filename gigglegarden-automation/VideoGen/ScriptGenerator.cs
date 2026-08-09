@@ -22,6 +22,12 @@ class VideoScript
     // not narrative accuracy), plus a 2-4 word overlay phrase burned onto it.
     public string ThumbnailPrompt { get; set; } = "";
     public string ThumbnailText { get; set; } = "";
+
+    // Spoken + burned-in text for the branded intro bumper prepended to every video
+    // (see VideoAssembler/Program.cs) — always "Welcome to Giggle World!" translated into
+    // the target language, plus a one-line preview of this video's specific learning
+    // objective, so every video opens the same recognizable way before the hook scene.
+    public string IntroText { get; set; } = "";
 }
 
 class Scene
@@ -31,6 +37,11 @@ class Scene
     public string? AudioPath { get; set; }
     public string? ImagePath { get; set; }
     public string? VerticalImagePath { get; set; }
+
+    // Second image for scenes whose narration runs long (see GenConfig.SplitLongSceneAfterSeconds) —
+    // shown via an internal crossfade partway through so a long line isn't one static photo start to finish.
+    public string? ImagePath2 { get; set; }
+    public string? VerticalImagePath2 { get; set; }
     public double DurationSeconds { get; set; }
 }
 
@@ -99,6 +110,14 @@ Requirements:
   stop and click.
 - thumbnailText: a 2-4 word punchy phrase in {{langName}} to overlay on the
   thumbnail (e.g. "COUNT WITH ME!"). Short enough to read at a glance.
+- introText: exactly two short sentences in {{langName}}, spoken over the
+  channel's branded opening bumper (plays before scene 1, same character,
+  every video). First sentence: a natural translation of "Welcome to Giggle
+  World!" - keep it an energetic greeting, not a literal word-for-word
+  translation if that would sound stiff. Second sentence: a short, exciting
+  preview of the ONE skill this specific video teaches (e.g. "Today we're
+  learning to count to five!"). Together under 110 characters total - this is
+  a ~4-5 second spoken intro, not another scene.
 
 Respond ONLY with JSON, no markdown fences:
 {
@@ -108,6 +127,7 @@ Respond ONLY with JSON, no markdown fences:
   "reelsCaption": "...",
   "thumbnailPrompt": "...",
   "thumbnailText": "...",
+  "introText": "...",
   "tags": ["..."],
   "scenes": [ { "narration": "...", "imagePrompt": "..." } ]
 }
@@ -153,6 +173,7 @@ Respond ONLY with JSON, no markdown fences:
         if (string.IsNullOrWhiteSpace(script.ReelsCaption)) script.ReelsCaption = script.Description;
         if (string.IsNullOrWhiteSpace(script.ThumbnailPrompt)) script.ThumbnailPrompt = script.Scenes[0].ImagePrompt;
         if (string.IsNullOrWhiteSpace(script.ThumbnailText)) script.ThumbnailText = script.Title;
+        if (string.IsNullOrWhiteSpace(script.IntroText)) script.IntroText = "Welcome to Giggle World!";
 
         return script;
     }

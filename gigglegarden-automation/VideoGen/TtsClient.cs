@@ -4,11 +4,15 @@ using GiggleGarden.Shared;
 // Azure Speech REST API — no SDK dependency needed for simple synthesis.
 class TtsClient(GenConfig cfg)
 {
-    private static readonly Dictionary<string, (string Locale, string Voice)> Voices = new()
+    // Style is Azure's per-voice "cheerful"-type express-as tag - verified live against
+    // /cognitiveservices/voices/list before picking these (not every voice supports one,
+    // and Azure's docs lag behind what's actually deployed for a given locale). Currently
+    // null for pa-IN: neither Punjabi neural voice offers a style at all yet.
+    private static readonly Dictionary<string, (string Locale, string Voice, string? Style)> Voices = new()
     {
-        ["en"] = ("en-US", "en-US-JennyNeural"),
-        ["hi"] = ("hi-IN", "hi-IN-SwaraNeural"),
-        ["pa"] = ("pa-IN", "pa-IN-VaaniNeural"),
+        ["en"] = ("en-US", "en-US-JennyNeural", "cheerful"),
+        ["hi"] = ("hi-IN", "hi-IN-SwaraNeural", "cheerful"),
+        ["pa"] = ("pa-IN", "pa-IN-VaaniNeural", null),
     };
 
     public async Task SynthesizeAsync(string text, string language, string outputPath)
@@ -16,13 +20,21 @@ class TtsClient(GenConfig cfg)
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
 
-        var (locale, voice) = Voices.TryGetValue(language, out var v) ? v : Voices["en"];
+        var (locale, voice, style) = Voices.TryGetValue(language, out var v) ? v : Voices["en"];
+        var escaped = System.Security.SecurityElement.Escape(text);
 
-        // Slightly slower rate + higher pitch reads better for young kids.
+        // Slightly faster/brighter than a flat reading, plus the voice's "cheerful" style
+        // where available - a plain rate/pitch nudge alone still reads as flat/robotic,
+        // not the warm, delighted delivery a kids' show wants.
+        var prosody = $"<prosody rate='-4%' pitch='+6%'>{escaped}</prosody>";
+        var voiceContent = style is null
+            ? prosody
+            : $"<mstts:express-as style='{style}' styledegree='2'>{prosody}</mstts:express-as>";
+
         var ssml = $"""
-<speak version='1.0' xml:lang='{locale}'>
+<speak version='1.0' xml:lang='{locale}' xmlns:mstts='http://www.w3.org/2001/mstts'>
   <voice name='{voice}'>
-    <prosody rate='-8%' pitch='+5%'>{System.Security.SecurityElement.Escape(text)}</prosody>
+    {voiceContent}
   </voice>
 </speak>
 """;

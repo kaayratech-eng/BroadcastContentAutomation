@@ -97,10 +97,19 @@ kids' content need your eyes every time — this gate is deliberate.
 
 ## Cost per video (approx)
 
+Measured from real OpenAI usage data, not estimated - the image count below is
+what actually gets generated per video with the current config, not the
+original 7-images/video design this section was first written for.
+
 - Script (Claude): ~$0.02
 - TTS (Azure): free tier initially, then ~$0.05
-- Images (7 scenes, OpenAI medium): ~$0.30
-- Total: well under $0.50/video
+- Images (OpenAI gpt-image-1, medium, ~$0.13 each): 17-21+ per video -
+  2 character-reference images, 2 per scene (landscape + vertical, via
+  `GenerateVerticalImages`), 1 thumbnail, plus 2 more for every scene whose
+  narration exceeds `SplitLongSceneAfterSeconds` - roughly **$2.25-2.75**
+- Total: roughly **$2.30-2.85/video**, not $0.50 - see `GenConfig.cs` for the
+  toggles (`GenerateVerticalImages`, `UseCharacterReference`,
+  `SplitLongSceneAfterSeconds`) if you want to trade image count for spend
 
 ## Full daily flow once everything is wired
 

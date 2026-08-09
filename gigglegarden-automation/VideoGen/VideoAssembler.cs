@@ -6,7 +6,7 @@ using GiggleGarden.Shared;
 static class VideoAssembler
 {
     // Builds each scene clip (image + zoompan + narration audio + wrapped subtitle),
-    // concats them, then mixes background music under the narration.
+    // crossfades them together, then mixes background music under the narration.
     public static async Task AssembleAsync(
         GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
         string workDir, string outputPath, int w, int h, bool preferVerticalImages)
@@ -14,6 +14,7 @@ static class VideoAssembler
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
         var sceneClips = new List<string>();
+        var durations = new List<double>();
         var tag = $"{w}x{h}";
 
         for (var i = 0; i < scenes.Count; i++)
@@ -26,32 +27,36 @@ static class VideoAssembler
                 ? vertical
                 : s.ImagePath ?? throw new InvalidOperationException($"Scene {i} has no image.");
 
-            // Alternate zoom-in / zoom-out for visual variety.
-            var zoom = i % 2 == 0
-                ? "zoompan=z='min(zoom+0.0012,1.15)':d=125*10:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'"
-                : "zoompan=z='if(lte(zoom,1.0),1.15,max(1.0,zoom-0.0012))':d=125*10:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'";
+            var image2 = preferVerticalImages && s.VerticalImagePath2 is { } vertical2 && File.Exists(vertical2)
+                ? vertical2
+                : s.ImagePath2 is { } landscape2 && File.Exists(landscape2) ? landscape2 : null;
 
             var fontSize = h > w ? 52 : 46;                       // slightly larger on vertical
             var subtitle = BuildSubtitleFilter(cfg, s.Narration, language, workDir, i, tag, w, h, fontSize);
 
-            // scale to cover -> crop -> ken burns -> scale to target -> subtitle block
-            var vf = $"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase," +
-                     $"crop={w * 2}:{h * 2},{zoom},scale={w}:{h}{subtitle}";
+            // Rotate through 4 distinct Ken Burns moves instead of just 2, so adjacent
+            // scenes don't all breathe the same way.
+            var pattern = i % 4;
 
+            var videoOnly = image2 is not null
+                ? await BuildSplitImageClipAsync(cfg, image, image2, duration, w, h, subtitle, pattern, (pattern + 2) % 4, workDir, tag, i)
+                : await BuildImageClipAsync(cfg, image, duration, w, h, subtitle, pattern, Path.Combine(workDir, $"clip{i:D2}-{tag}-video.mp4"));
+
+            // Mux narration audio onto the (video-only, already exactly `duration` long) clip.
+            // apad pads the audio with silence to match — using -shortest here (as before)
+            // would cut the clip the instant narration audio ends, silently discarding the
+            // breathing room and hard-cutting mid-beat into the next scene.
             await RunFfmpegAsync(cfg,
-                $"-y -loop 1 -i \"{image}\" -i \"{s.AudioPath}\" " +
-                $"-t {Text.Invariant(duration)} " +
-                $"-vf \"{vf}\" -r 25 -pix_fmt yuv420p " +
-                $"-c:v libx264 -preset medium -crf 20 -c:a aac -b:a 128k -shortest \"{clip}\"");
+                $"-y -i \"{videoOnly}\" -i \"{s.AudioPath}\" -af \"apad\" -t {Text.Invariant(duration)} " +
+                $"-c:v copy -c:a aac -b:a 128k \"{clip}\"");
 
             sceneClips.Add(clip);
+            durations.Add(duration);
         }
 
-        // Concat scene clips
-        var listFile = Path.Combine(workDir, $"concat-{tag}.txt");
-        await File.WriteAllLinesAsync(listFile, sceneClips.Select(c => $"file '{c.Replace("'", "'\\''")}'"), new UTF8Encoding(false));
+        // Crossfade scene clips together instead of hard-cutting between them.
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
-        await RunFfmpegAsync(cfg, $"-y -f concat -safe 0 -i \"{listFile}\" -c copy \"{concatPath}\"");
+        await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
         // Mix background music (looped, ducked under narration) if provided
         if (!string.IsNullOrEmpty(cfg.BackgroundMusicPath) && File.Exists(cfg.BackgroundMusicPath))
@@ -161,6 +166,99 @@ static class VideoAssembler
         }
 
         return sb.ToString();
+    }
+
+    // 4 distinct moves instead of the original 2 (zoom-in/zoom-out only), so a run of
+    // scenes doesn't all breathe identically. Pan patterns hold zoom constant at a mild
+    // 1.12 and drift the crop window across the frame, clamped to stay in-bounds — d is
+    // a deliberately oversized frame budget (safe up to ~50s of output; real clips are
+    // always shorter) so -t truncates the motion mid-sweep rather than looping it.
+    private static string ZoomPanFilter(int pattern) => pattern switch
+    {
+        0 => "zoompan=z='min(zoom+0.0012,1.15)':d=125*10:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        1 => "zoompan=z='if(lte(zoom,1.0),1.15,max(1.0,zoom-0.0012))':d=125*10:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
+        2 => "zoompan=z='1.12':d=125*10:x='max(0,(iw-iw/zoom)-on*1.5)':y='ih/2-(ih/zoom/2)'",
+        _ => "zoompan=z='1.12':d=125*10:x='min((iw-iw/zoom),on*1.5)':y='ih/2-(ih/zoom/2)'",
+    };
+
+    // Renders one still image into a video-only (no audio) clip of exactly `duration`
+    // seconds with a Ken Burns move and the burned-in subtitle applied.
+    private static async Task<string> BuildImageClipAsync(
+        GenConfig cfg, string image, double duration, int w, int h, string subtitleFilter, int pattern, string outputPath)
+    {
+        var vf = $"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase," +
+                 $"crop={w * 2}:{h * 2},{ZoomPanFilter(pattern)},scale={w}:{h}{subtitleFilter}";
+
+        await RunFfmpegAsync(cfg,
+            $"-y -loop 1 -i \"{image}\" -t {Text.Invariant(duration)} " +
+            $"-vf \"{vf}\" -r 25 -pix_fmt yuv420p -an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"");
+
+        return outputPath;
+    }
+
+    // Long-narration scenes get two images instead of one: build each half as its own
+    // Ken Burns clip, then crossfade between them internally so a single static photo
+    // doesn't have to carry the whole line. Each half runs slightly over duration/2 so
+    // the crossfade's overlap doesn't shorten the combined clip below `duration`.
+    private static async Task<string> BuildSplitImageClipAsync(
+        GenConfig cfg, string imageA, string imageB, double duration, int w, int h, string subtitleFilter,
+        int patternA, int patternB, string workDir, string tag, int sceneIndex)
+    {
+        const double innerFade = 0.35;
+        var half = duration / 2 + innerFade / 2;
+
+        var subA = await BuildImageClipAsync(cfg, imageA, half, w, h, subtitleFilter, patternA,
+            Path.Combine(workDir, $"clip{sceneIndex:D2}-{tag}-a.mp4"));
+        var subB = await BuildImageClipAsync(cfg, imageB, half, w, h, subtitleFilter, patternB,
+            Path.Combine(workDir, $"clip{sceneIndex:D2}-{tag}-b.mp4"));
+
+        var combined = Path.Combine(workDir, $"clip{sceneIndex:D2}-{tag}-combined.mp4");
+        var offset = half - innerFade;
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{subA}\" -i \"{subB}\" " +
+            $"-filter_complex \"[0:v][1:v]xfade=transition=fade:duration={Text.Invariant(innerFade)}:offset={Text.Invariant(offset)}[v]\" " +
+            $"-map \"[v]\" -r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 20 \"{combined}\"");
+
+        return combined;
+    }
+
+    // Replaces a hard-cut concat with a real dissolve between every scene. Each input
+    // clip's exact duration is already known (set by the apad fix above), so the
+    // pairwise xfade/acrossfade offsets can be computed directly instead of probed.
+    private static async Task BuildCrossfadedConcatAsync(
+        GenConfig cfg, IReadOnlyList<string> clips, IReadOnlyList<double> durations, string outputPath)
+    {
+        if (clips.Count == 1)
+        {
+            File.Copy(clips[0], outputPath, overwrite: true);
+            return;
+        }
+
+        const double fade = 0.4;
+        var inputs = string.Join(" ", clips.Select(c => $"-i \"{c}\""));
+        var vLabel = "0:v";
+        var aLabel = "0:a";
+        var cumulative = durations[0];
+        var filters = new List<string>();
+
+        for (var k = 1; k < clips.Count; k++)
+        {
+            var offset = cumulative - fade;
+            var nextV = $"v{k}";
+            var nextA = $"a{k}";
+
+            filters.Add($"[{vLabel}][{k}:v]xfade=transition=fade:duration={Text.Invariant(fade)}:offset={Text.Invariant(offset)}[{nextV}]");
+            filters.Add($"[{aLabel}][{k}:a]acrossfade=d={Text.Invariant(fade)}[{nextA}]");
+
+            vLabel = nextV;
+            aLabel = nextA;
+            cumulative = cumulative + durations[k] - fade;
+        }
+
+        await RunFfmpegAsync(cfg,
+            $"-y {inputs} -filter_complex \"{string.Join(";", filters)}\" " +
+            $"-map \"[{vLabel}]\" -map \"[{aLabel}]\" " +
+            $"-r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 20 -c:a aac -b:a 128k \"{outputPath}\"");
     }
 
     // FFmpeg filter arguments need forward slashes and an escaped drive colon on Windows.
