@@ -153,20 +153,7 @@ static async Task RunAsync(AppConfig cfg, Logger log)
 
             if (sidecar.AllTargetsTerminal())
             {
-                var dest = Path.Combine(cfg.DoneDirectory, Path.GetFileName(path));
-                File.Move(path, dest, overwrite: true);
-                var sc = Sidecar.PathFor(path);
-                if (File.Exists(sc)) File.Move(sc, Sidecar.PathFor(dest), overwrite: true);
-
-                // Sibling artifacts VideoGen wrote alongside the video (captions, custom
-                // thumbnail) - without this they're orphaned in the watch directory forever,
-                // since only the .mp4 and its sidecar were ever moved.
-                foreach (var suffix in new[] { ".srt", ".thumb.jpg" })
-                {
-                    var src = Path.ChangeExtension(path, suffix);
-                    if (File.Exists(src)) File.Move(src, Path.ChangeExtension(dest, suffix), overwrite: true);
-                }
-
+                MoveWithSiblings(path, cfg.DoneDirectory);
                 log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
             }
             else
@@ -177,9 +164,32 @@ static async Task RunAsync(AppConfig cfg, Logger log)
         catch (Exception ex)
         {
             log.Error($"Failed {Path.GetFileName(path)}: {ex.Message}");
-            File.Move(path, Path.Combine(cfg.FailedDirectory, Path.GetFileName(path)), overwrite: true);
+            MoveWithSiblings(path, cfg.FailedDirectory);
         }
     }
+}
+
+// Every file belonging to one video - the .mp4, its sidecar .json, the .srt caption
+// file, the .thumb.jpg custom thumbnail - moves together into its own subfolder
+// (named after the video, e.g. \done\my-video-en\) instead of dumping everything
+// flat into \done or \failed, where dozens of videos' files would otherwise mix
+// together indistinguishably. Landscape and vertical-short renders of the "same"
+// video get separate folders since the pipeline already treats them as independent
+// items (separate sidecar, targets, publications) - this just mirrors that.
+static void MoveWithSiblings(string videoPath, string destRoot)
+{
+    var folder = Directory.CreateDirectory(
+        Path.Combine(destRoot, Path.GetFileNameWithoutExtension(videoPath))).FullName;
+
+    void MoveIfExists(string src)
+    {
+        if (File.Exists(src)) File.Move(src, Path.Combine(folder, Path.GetFileName(src)), overwrite: true);
+    }
+
+    MoveIfExists(videoPath);
+    MoveIfExists(Sidecar.PathFor(videoPath));
+    foreach (var suffix in new[] { ".srt", ".thumb.jpg" })
+        MoveIfExists(Path.ChangeExtension(videoPath, suffix));
 }
 
 static async Task<Sidecar> ResolveSidecarAsync(
