@@ -64,7 +64,8 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
             log.Info($"  [instagram] container {containerId}, uploading {Text.Bytes(request.SizeBytes)}");
 
             // 2. Binary upload
-            await MetaGraph.UploadBinaryAsync(http, uploadUrl, cfg.AccessToken, request.VideoPath, ct);
+            await MetaGraph.UploadBinaryAsync(http, uploadUrl, cfg.AccessToken, request.VideoPath, ct,
+                m => log.Info($"  [instagram] {m}"));
 
             // 3. Wait for transcode
             await MetaGraph.WaitForStatusAsync(http,

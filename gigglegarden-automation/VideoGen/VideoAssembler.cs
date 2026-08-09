@@ -64,7 +64,7 @@ static class VideoAssembler
             await RunFfmpegAsync(cfg,
                 $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{cfg.BackgroundMusicPath}\" " +
                 "-filter_complex \"[1:a]volume=0.12[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]\" " +
-                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k \"{outputPath}\"");
+                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"");
         }
         else
         {
@@ -115,7 +115,7 @@ static class VideoAssembler
             await RunFfmpegAsync(cfg,
                 $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{cfg.BackgroundMusicPath}\" " +
                 "-filter_complex \"[1:a]volume=0.12[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]\" " +
-                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k \"{outputPath}\"");
+                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"");
         }
         else
         {
@@ -352,10 +352,16 @@ static class VideoAssembler
             cumulative = cumulative + durations[k] - fade;
         }
 
+        // Bitrate is deliberately capped here rather than left to CRF alone. The source
+        // is 540p upscaled, so a high bitrate buys no visible quality on flat cartoon
+        // art, and an 80-second render at ~3.8 Mbps came out at 36 MB - large enough
+        // that Instagram's upload endpoint rejected it outright with a bare 400. The
+        // same video at ~1.8 Mbps published without complaint and looks identical.
         await RunFfmpegAsync(cfg,
             $"-y {inputs} -filter_complex \"{string.Join(";", filters)}\" " +
             $"-map \"[{vLabel}]\" -map \"[{aLabel}]\" " +
-            $"-r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 20 -c:a aac -b:a 128k \"{outputPath}\"");
+            $"-r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
+            $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"");
     }
 
     // FFmpeg filter arguments need forward slashes and an escaped drive colon on Windows.

@@ -13,6 +13,7 @@ namespace GiggleGarden.Uploader.Publishing;
 static class MetaGraph
 {
     public const long MaxReelBytes = 1024L * 1024 * 1024;   // 1 GB, both surfaces
+    private const long LargeUploadWarningBytes = 30L * 1024 * 1024;
 
     public sealed record GraphError(int Code, int SubCode, string Message, bool Permanent);
 
@@ -66,9 +67,18 @@ static class MetaGraph
 
         if (!resp.IsSuccessStatusCode)
         {
+            // Meta answers a transcode that fell over with a bare 400 carrying
+            // debug_info.type = ProcessingFailedError and no `error` object, and it
+            // self-reports as retriable:false. Empirically that is wrong: the same
+            // encoder settings that fail one minute upload cleanly the next. Treating
+            // it as permanent abandoned a perfectly valid render after one attempt,
+            // so it is retried like any other transient fault.
+            var processingFailed = body.Contains("ProcessingFailedError", StringComparison.Ordinal);
+
             doc.Dispose();
             throw new MetaGraphException(new GraphError((int)resp.StatusCode, 0,
-                $"HTTP {(int)resp.StatusCode}: {Text.Tail(body, 300)}", Permanent: (int)resp.StatusCode is >= 400 and < 500 and not 429));
+                $"HTTP {(int)resp.StatusCode}: {Text.Tail(body, 300)}",
+                Permanent: !processingFailed && (int)resp.StatusCode is >= 400 and < 500 and not 429));
         }
 
         return doc;
@@ -102,12 +112,22 @@ static class MetaGraph
     // so failures here surface as retryable and the whole publish is re-attempted
     // on the next run.
     public static async Task UploadBinaryAsync(
-        HttpClient http, string uploadUrl, string accessToken, string filePath, CancellationToken ct)
+        HttpClient http, string uploadUrl, string accessToken, string filePath, CancellationToken ct,
+        Action<string>? log = null)
     {
         var info = new FileInfo(filePath);
         if (info.Length > MaxReelBytes)
             throw new MetaGraphException(new GraphError(0, 0,
                 $"File is {Text.Bytes(info.Length)}; Meta's limit is {Text.Bytes(MaxReelBytes)}.", Permanent: true));
+
+        // The whole file goes up in one POST, and in practice the endpoint starts
+        // rejecting well below Meta's documented 1 GB ceiling: a 36 MB reel failed
+        // repeatedly with an opaque 400 where the same video at 18 MB published fine.
+        // Warn rather than block, since the real threshold is undocumented and the
+        // bare 400 gives a caller no clue that size is what it is objecting to.
+        if (info.Length > LargeUploadWarningBytes)
+            log?.Invoke($"{Text.Bytes(info.Length)} is large for a single-shot upload; " +
+                        "a rejection here is most likely the file size, not the encoding.");
 
         await using var stream = File.OpenRead(filePath);
         using var content = new StreamContent(stream);
