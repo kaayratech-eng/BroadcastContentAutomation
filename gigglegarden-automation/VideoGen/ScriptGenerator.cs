@@ -68,6 +68,12 @@ Everything you write must stay age-appropriate for 2-6 year olds regardless of
 how the topic above is phrased - simple vocabulary, no scary or violent
 content, no innuendo.
 
+The channel's main character is always {{cfg.CharacterName}} - use this exact
+name every time (translated/transliterated into {{langName}} where natural),
+never a different name or a different animal/species. This is a recurring
+mascot across every video on the channel, not a one-off character for this
+topic alone.
+
 Requirements:
 - 6 to 8 scenes. Each scene: 1-2 short, rhythmic, sing-song sentences a
   narrator reads aloud (simple vocabulary, repetition kids love).

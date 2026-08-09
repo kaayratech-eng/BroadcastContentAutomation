@@ -39,6 +39,14 @@ record GenConfig
     // consistency for spend (CharacterStyle's text description is the only guardrail then).
     public bool UseCharacterReference { get; init; } = true;
 
+    // The mascot's fixed identity - name and species must stay identical across every
+    // video for a recognizable channel character. Referenced by both the image prompt
+    // (CharacterStyle, below) and the script prompt (ScriptGenerator.cs), which used to
+    // free-invent a different name/species per video (e.g. "Pip the Squirrel" in one,
+    // "Pip the Penguin" in another) while the visuals stayed a duckling regardless -
+    // title/narration and on-screen art were describing two different characters.
+    public string CharacterName { get; init; } = "Gigi the Duckling";
+
     // Keeps the recurring character consistent across scenes & videos.
     public string CharacterStyle { get; init; } =
         "A cheerful little yellow duckling named Gigi with big friendly eyes and a tiny red scarf, " +
