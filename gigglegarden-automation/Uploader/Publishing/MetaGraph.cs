@@ -36,6 +36,13 @@ static class MetaGraph
         return await ReadAsync(resp, ct);
     }
 
+    public static async Task<JsonDocument> PostMultipartAsync(
+        HttpClient http, string url, MultipartFormDataContent content, CancellationToken ct)
+    {
+        var resp = await http.PostAsync(url, content, ct);
+        return await ReadAsync(resp, ct);
+    }
+
     private static async Task<JsonDocument> ReadAsync(HttpResponseMessage resp, CancellationToken ct)
     {
         var body = await resp.Content.ReadAsStringAsync(ct);

@@ -1,15 +1,18 @@
+using System.Net.Http.Headers;
 using GiggleGarden.Shared;
 
 namespace GiggleGarden.Uploader.Publishing;
 
-// Facebook Reels via the Meta Graph API's Video Reels endpoint. Requires a
-// Facebook Page and a Page access token with publish_video permission.
+// Regular Facebook Page video post via the Graph API's /{page-id}/videos endpoint.
 //
-// Unlike Instagram's container-then-publish shape, Reels on a Page use a
-// three-phase flow against the same endpoint: upload_phase=start (returns a
-// video_id + resumable upload_url) -> POST the bytes to upload_url ->
-// upload_phase=finish with video_state=PUBLISHED. No publicly reachable file
-// URL is required, same as Instagram.
+// Originally used the Video Reels endpoint (upload_phase=start/finish), but that
+// requires the Page to be eligible for Meta's Reels processing pipeline — a new
+// or low-activity Page (or certain Page categories) can sit at
+// processing_phase="not_started" indefinitely with no error ever surfacing, which
+// is exactly what happened on this Page. The plain video-post endpoint predates
+// Reels, has no such eligibility gate, and works for any Page with publish_video
+// access — the tradeoff is the post lands on the Videos tab/feed rather than the
+// Reels surface.
 sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
 {
     public const int CaptionLimit = 2200;
@@ -22,12 +25,6 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
 
     public bool Accepts(Sidecar sidecar, out string? reason)
     {
-        if (!sidecar.IsVertical)
-        {
-            reason = "Facebook Reels only accepts the 9:16 render.";
-            return false;
-        }
-
         reason = null;
         return true;
     }
@@ -43,22 +40,24 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
         {
             var caption = request.Sidecar.CaptionFor(Platforms.Facebook, CaptionLimit);
 
-            // 1. Start phase — allocates a video_id and a resumable upload_url.
-            using var start = await MetaGraph.PostFormAsync(http, $"{Base}/{cfg.PageId}/video_reels",
-            [
-                new("upload_phase", "start"),
-                new("access_token", cfg.AccessToken),
-            ], ct);
+            log.Info($"  [facebook] uploading {Text.Bytes(request.SizeBytes)} to Page video post");
 
-            var videoId = MetaGraph.RequireString(start.RootElement, "video_id");
-            var uploadUrl = MetaGraph.RequireString(start.RootElement, "upload_url");
+            await using var stream = File.OpenRead(request.VideoPath);
+            using var fileContent = new StreamContent(stream);
+            fileContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
 
-            log.Info($"  [facebook] video {videoId}, uploading {Text.Bytes(request.SizeBytes)}");
+            using var form = new MultipartFormDataContent
+            {
+                { new StringContent(caption), "description" },
+                { new StringContent(cfg.AccessToken), "access_token" },
+                { fileContent, "source", Path.GetFileName(request.VideoPath) },
+            };
 
-            // 2. Binary upload
-            await MetaGraph.UploadBinaryAsync(http, uploadUrl, cfg.AccessToken, request.VideoPath, ct);
+            using var upload = await MetaGraph.PostMultipartAsync(http, $"{Base}/{cfg.PageId}/videos", form, ct);
+            var videoId = MetaGraph.RequireString(upload.RootElement, "id");
 
-            // 3. Wait for transcode
+            log.Info($"  [facebook] video {videoId} uploaded, waiting for processing");
+
             await MetaGraph.WaitForStatusAsync(http,
                 $"{Base}/{videoId}?fields=status&access_token={Uri.EscapeDataString(cfg.AccessToken)}",
                 root =>
@@ -70,21 +69,6 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
                     return (phase == "ready", phase is "error" or "failed", phase);
                 },
                 cfg.ProcessingTimeoutSeconds, log, "facebook", ct);
-
-            // 4. Finish phase — publishes the reel to the Page.
-            using var finish = await MetaGraph.PostFormAsync(http, $"{Base}/{cfg.PageId}/video_reels",
-            [
-                new("upload_phase", "finish"),
-                new("video_id", videoId),
-                new("video_state", "PUBLISHED"),
-                new("description", caption),
-                new("access_token", cfg.AccessToken),
-            ], ct);
-
-            var success = finish.RootElement.TryGetProperty("success", out var ok) &&
-                          ok.ValueKind != System.Text.Json.JsonValueKind.False;
-            if (!success)
-                return PublishResult.Retry("Facebook finish phase reported success=false.");
 
             return PublishResult.Ok(videoId, $"https://www.facebook.com/{cfg.PageId}/videos/{videoId}");
         }
