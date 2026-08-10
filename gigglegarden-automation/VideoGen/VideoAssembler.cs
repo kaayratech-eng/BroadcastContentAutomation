@@ -279,38 +279,17 @@ static partial class VideoAssembler
             throw new Exception($"Could not extract a thumbnail frame from {Path.GetFileName(videoPath)}.");
     }
 
-    // Custom YouTube thumbnail: the base illustration (already generated with the same
-    // "empty lower third" framing used for subtitles) plus a bold, high-contrast overlay
-    // phrase. Thumbnail is the single biggest click-through lever on YouTube, so this is
-    // worth a dedicated pass rather than letting the platform auto-pick a video frame.
-    public static async Task BuildThumbnailAsync(
-        GenConfig cfg, string baseImagePath, string text, string language, string outputPath)
+    // Custom YouTube thumbnail: a straight crop of the base illustration to YouTube's
+    // canonical size, no overlay text. Every thumbnail sampled from the researched
+    // channels carried none - the enormous face and oversized object the image prompt
+    // already asks for are what get the click, and the audience can't read anyway.
+    public static async Task BuildThumbnailAsync(GenConfig cfg, string baseImagePath, string outputPath)
     {
         const int w = 1280, h = 720; // YouTube's canonical thumbnail size
-        const int fontSize = 96;
-        var workDir = Path.GetDirectoryName(outputPath)!;
 
-        var perLine = Text.CharsPerLineFor(language, w, fontSize);
-        var lines = Text.WrapLines(text, perLine, maxLines: 2);
-        if (lines.Count == 0) lines = [text];
-
-        var lineHeight = (int)(fontSize * 1.3);
-        var font = FilterPath(cfg.SubtitleFontPath);
-        var vf = new StringBuilder($"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}");
-
-        for (var i = 0; i < lines.Count; i++)
-        {
-            var textFile = Path.Combine(workDir, $"thumb-text-{i}.txt");
-            File.WriteAllText(textFile, lines[i], new UTF8Encoding(false));
-            var y = h - 70 - (lines.Count - i) * lineHeight;
-
-            vf.Append($",drawtext=textfile='{FilterPath(textFile)}':fontfile='{font}':")
-              .Append($"fontsize={fontSize}:fontcolor=yellow:borderw=6:bordercolor=black:")
-              .Append("box=1:boxcolor=black@0.45:boxborderw=18:")
-              .Append($"x=(w-text_w)/2:y={y}");
-        }
-
-        await RunFfmpegAsync(cfg, $"-y -i \"{baseImagePath}\" -vf \"{vf}\" -frames:v 1 -q:v 2 \"{outputPath}\"");
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{baseImagePath}\" -vf \"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}\" " +
+            $"-frames:v 1 -q:v 2 \"{outputPath}\"");
     }
 
     // Real caption file (SRT) alongside the burned-in subtitles: gives platforms and
@@ -479,6 +458,24 @@ static partial class VideoAssembler
 
     // FFmpeg filter arguments need forward slashes and an escaped drive colon on Windows.
     private static string FilterPath(string path) => path.Replace('\\', '/').Replace(":", "\\:");
+
+    // Vidu's output aspect ratio follows its input image's, and everything downstream
+    // assumes 9:16. Generated character art comes back 2:3 and pooled art arrives at
+    // whatever size its artist drew it, so both are fitted to 1080x1920 first.
+    //
+    // Fits inside and fills the gap with a blurred copy rather than cropping to fill:
+    // a crop on a full-body character takes the top of its head or its feet off, and
+    // that frame is the one every scene in the video animates from.
+    public static async Task FitToPortraitAsync(GenConfig cfg, string sourcePath, string outputPath)
+    {
+        const string filter =
+            "split[bg][fg];" +
+            "[bg]scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,gblur=sigma=28[bgb];" +
+            "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgs];" +
+            "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
+
+        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+    }
 
     public static async Task<double> GetAudioDurationAsync(GenConfig cfg, string audioPath)
     {

@@ -19,11 +19,32 @@ record GenConfig
     public string ViduResolution { get; init; } = "540p";
     public bool ViduOffPeak { get; init; } = true;
 
-    // The single canonical picture of the mascot, reused for every video forever.
-    // Scene 1 starts from this frame and each later scene starts from the previous
-    // clip's last frame, so the character stays on-model without per-scene art.
-    // Must be 9:16 - Vidu's output aspect ratio follows its input image's.
-    public string CharacterReferencePath { get; init; } = @"D:\Business\gigglegarden-automation\VideoGen\assets\gigi-reference.png";
+    // Where this video's character comes from. Empty (the default) means the script
+    // invents a brand-new one per video and it is drawn on the spot - see
+    // CharacterSource.cs. Otherwise: a single image pins every video to that one
+    // character, or a folder picks one per video the way BackgroundMusicPath picks a
+    // track. Every image in a pool needs a same-named .json beside it giving the
+    // character's name and appearance, because the script has to be written about
+    // whatever is in the picture.
+    //
+    // Nothing here has to be 9:16; images are fitted to 1080x1920 before submission.
+    public string CharacterPoolPath { get; init; } = "";
+
+    // The three below only matter when CharacterPoolPath is a folder - they drive
+    // CharacterSource.Resolve's build-up/mix/reuse policy so the cast grows on its own
+    // instead of staying a stranger every video.
+    //
+    // Below this many characters in the pool, --prep always invents+draws a new one and
+    // adds it to the pool - same as today's behaviour while the pool is still empty.
+    public int CharacterPoolBuildupSize { get; init; } = 15;
+
+    // At or above this many, --prep never invents - the pool is "full" and every video
+    // reuses one of the existing characters.
+    public int CharacterPoolMaxSize { get; init; } = 40;
+
+    // A pooled character can't be picked again until at least this many *other* pool
+    // characters have been used since its last appearance.
+    public int CharacterPoolCooldown { get; init; } = 10;
 
     // Retained for the static-image fallback path only; the Vidu flow above needs
     // none of these. Kept until the video pipeline has a few weeks of real runs
@@ -56,18 +77,22 @@ record GenConfig
     // consistency for spend (CharacterStyle's text description is the only guardrail then).
     public bool UseCharacterReference { get; init; } = true;
 
-    // The mascot's fixed identity - name and species must stay identical across every
-    // video for a recognizable channel character. Referenced by both the image prompt
-    // (CharacterStyle, below) and the script prompt (ScriptGenerator.cs), which used to
-    // free-invent a different name/species per video (e.g. "Pip the Squirrel" in one,
-    // "Pip the Penguin" in another) while the visuals stayed a duckling regardless -
-    // title/narration and on-screen art were describing two different characters.
-    public string CharacterName { get; init; } = "Gigi the Duckling";
+    // The channel itself, not a character. Every video opens "Welcome to Giggle
+    // Garden!" (translated), which is what stays constant across the channel now that
+    // the cast does not.
+    //
+    // This replaced CharacterName, which pinned every video to one mascot. The reason
+    // that setting existed was a real bug - the script used to free-invent a name and
+    // species per video ("Pip the Squirrel", then "Pip the Penguin") while the art
+    // stayed a duckling regardless, so narration and picture described two different
+    // characters. Inventing a character is fine; inventing one the art never saw is
+    // not. That is why the invented description now drives the picture too.
+    public string ChannelName { get; init; } = "Giggle Garden";
 
-    // Keeps the recurring character consistent across scenes & videos.
+    // Art style only - deliberately says nothing about who the character is, since
+    // that changes every video. Applied when drawing the character reference.
     public string CharacterStyle { get; init; } =
-        "A cheerful little yellow duckling named Gigi with big friendly eyes and a tiny red scarf, " +
-        "cute 2D children's cartoon style, flat colors, thick outlines";
+        "Cute 2D children's cartoon style, flat colors, thick outlines, bright cheerful palette";
 
     // A single track, or a folder of them to pick from per video (see
     // VideoAssembler.ResolveBackgroundMusic). Ships with the repo, so the default points
@@ -125,9 +150,19 @@ record GenConfig
         if (!File.Exists(SubtitleFontPath))
             throw new FileNotFoundException($"Subtitle font not found: {SubtitleFontPath}", SubtitleFontPath);
 
-        if (!File.Exists(CharacterReferencePath))
+        // Empty is the normal case (draw a new character per video), so only a path
+        // that was set and then pointed nowhere is an error.
+        if (!string.IsNullOrWhiteSpace(CharacterPoolPath) &&
+            !File.Exists(CharacterPoolPath) && !Directory.Exists(CharacterPoolPath))
             throw new FileNotFoundException(
-                $"Character reference image not found: {CharacterReferencePath}. This is the canonical " +
-                "9:16 picture of the mascot that every video's first scene starts from.", CharacterReferencePath);
+                $"CharacterPoolPath points at \"{CharacterPoolPath}\", which does not exist. Point it at a " +
+                "character image, or at a folder of them, or clear it to draw a new character each video.",
+                CharacterPoolPath);
+
+        if (CharacterPoolBuildupSize > CharacterPoolMaxSize)
+            throw new InvalidOperationException(
+                $"CharacterPoolBuildupSize ({CharacterPoolBuildupSize}) is greater than CharacterPoolMaxSize " +
+                $"({CharacterPoolMaxSize}) - the pool would never reach the mixing zone. Lower the first or " +
+                "raise the second.");
     }
 }

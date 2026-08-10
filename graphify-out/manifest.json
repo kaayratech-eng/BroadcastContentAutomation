@@ -5,8 +5,8 @@
     "semantic_hash": ""
   },
   ".claude/settings.local.json": {
-    "mtime": 1786214769.4623573,
-    "ast_hash": "1bb11f3b443aaf1422c5d3f101dfe056",
+    "mtime": 1786374742.7016668,
+    "ast_hash": "9efffe38bec930361093dc83bf1e7ef7",
     "semantic_hash": ""
   },
   "gigglegarden-automation/TokenCapture/Program.cs": {
@@ -20,8 +20,8 @@
     "semantic_hash": "21e07f12cc316ef096706cc7ce06feea"
   },
   "gigglegarden-automation/Uploader/Program.cs": {
-    "mtime": 1785900526.9825523,
-    "ast_hash": "92524207d22c268b13c27de8cf47d916",
+    "mtime": 1786267552.2081916,
+    "ast_hash": "853248acd89e2a9c74f1a4c2108dbfba",
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Uploader.csproj": {
@@ -35,8 +35,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/GenConfig.cs": {
-    "mtime": 1786222313.317487,
-    "ast_hash": "f1e0679a1e7c3b4c95d48588f7b29832",
+    "mtime": 1786390633.1893961,
+    "ast_hash": "fe4056e5f07855b82fbb45347a04419b",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/ImageClient.cs": {
@@ -45,23 +45,23 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/Program.cs": {
-    "mtime": 1786222324.1296957,
-    "ast_hash": "1b6266353d2b881a60b0d2507285554c",
+    "mtime": 1786390719.110198,
+    "ast_hash": "9167ca41ab8771c4a1cfd9b45fec4a7a",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/ScriptGenerator.cs": {
-    "mtime": 1786222318.9481502,
-    "ast_hash": "3263121189dbff11302cd3931a9bfa89",
+    "mtime": 1786376217.3684227,
+    "ast_hash": "013529dab8985a526b22736e893c49f1",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/TtsClient.cs": {
-    "mtime": 1785739456.583132,
-    "ast_hash": "5c42ddd68de1e82f17907997c89e2176",
+    "mtime": 1786303056.4875288,
+    "ast_hash": "f13d2d3cded22449cd80f887c3d7e787",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/VideoAssembler.cs": {
-    "mtime": 1786222185.6629233,
-    "ast_hash": "0d43670371c124eefd34fef634bf0911",
+    "mtime": 1786376228.7048523,
+    "ast_hash": "7641c97df5b9d8a85ee2d2dc279e5b86",
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/VideoGen.csproj": {
@@ -70,8 +70,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/VideoGen/appsettings.json": {
-    "mtime": 1786222348.5865412,
-    "ast_hash": "ff68232cf33dfcfbf8c79135d7d48d52",
+    "mtime": 1786390639.4399328,
+    "ast_hash": "429d5de9623f3aa1b33317f435d145b4",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -85,9 +85,9 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/README.md": {
-    "mtime": 1783943662.0,
-    "ast_hash": "9c0ed5f7d565d538d252e1dffa52b370",
-    "semantic_hash": "9c0ed5f7d565d538d252e1dffa52b370"
+    "mtime": 1786260659.5830834,
+    "ast_hash": "ae5d4f989aaed7cf06f3b9f510dd376d",
+    "semantic_hash": ""
   },
   ".claude-flow/daemon-state.json": {
     "mtime": 1785950241.0482924,
@@ -410,8 +410,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/Shared/Sidecar.cs": {
-    "mtime": 1785739243.2711644,
-    "ast_hash": "f0dc71fbf52236d39546d349f5111caf",
+    "mtime": 1786261182.418331,
+    "ast_hash": "fa8a81b4784361169feb337f36231a3a",
     "semantic_hash": ""
   },
   "gigglegarden-automation/Shared/Text.cs": {
@@ -430,8 +430,8 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/FacebookPublisher.cs": {
-    "mtime": 1785899971.203724,
-    "ast_hash": "4c1ffd19a41dd11d99ff14a1a62b2c0b",
+    "mtime": 1786253207.7981305,
+    "ast_hash": "bba2101b75bbaf5a9c9c225ae70e196c",
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/IPublisher.cs": {
@@ -440,18 +440,18 @@
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/InstagramPublisher.cs": {
-    "mtime": 1785739695.9025126,
-    "ast_hash": "2e3c2035da591c9cffa82f84ee8e3998",
+    "mtime": 1786304417.5972583,
+    "ast_hash": "ff47cec8d828599958cdad077c77579e",
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/MetaGraph.cs": {
-    "mtime": 1785739653.9958456,
-    "ast_hash": "0a0593c2a44e482b411ae3bb8dcdca30",
+    "mtime": 1786304408.9508784,
+    "ast_hash": "cf5d0370ebfdd0b552e57199e4b54ebc",
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/TikTokPublisher.cs": {
-    "mtime": 1785900001.5643108,
-    "ast_hash": "b7af4e0ab1697d2a84041f0eed8827b2",
+    "mtime": 1786267530.82225,
+    "ast_hash": "1c6c227cd46ebd29da9463ce7f959dd7",
     "semantic_hash": ""
   },
   "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs": {
@@ -1974,9 +1974,114 @@
     "ast_hash": "b97fd4c368c3bae31e4f842b1fab3fba",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/music.mp3": {
-    "mtime": 1785904631.3363924,
-    "ast_hash": "6a29bd95be861088869211eef1fc8cb0",
+  "gigglegarden-automation/VideoGen/CharacterSource.cs": {
+    "mtime": 1786390708.53289,
+    "ast_hash": "e3ba44e9ca56ebdfe96e9f3587a729b0",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/ViduClient.cs": {
+    "mtime": 1786301817.23391,
+    "ast_hash": "eca3a6bcf3c79f6c79b8e19d7ef81336",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/music/README.md": {
+    "mtime": 1786348480.4624934,
+    "ast_hash": "6a123cb593b252f0aec6bc988269c988",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/tasks/lessons.md": {
+    "mtime": 1786349728.6759188,
+    "ast_hash": "bbbfede0421d26bee21051071677e3f8",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/tasks/research-kids-channels.md": {
+    "mtime": 1786350170.2590845,
+    "ast_hash": "3949cf9ec0731888b6ba828cacb248da",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/tasks/todo.md": {
+    "mtime": 1786394350.1538732,
+    "ast_hash": "85a924246f02411ee06ab778519926d7",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/gigi-reference.png": {
+    "mtime": 1786301748.1019554,
+    "ast_hash": "e64988ea18f9ca1bf8cda9756f758f21",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-bear.json": {
+    "mtime": 1786394301.9746559,
+    "ast_hash": "9bd18a965ddfce39b2a9c121d9bf007a",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-elephant.json": {
+    "mtime": 1786394306.314757,
+    "ast_hash": "6691805d5321a1521c8ae5d6cc411d56",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-giraffe.json": {
+    "mtime": 1786394309.541784,
+    "ast_hash": "8ee0d56eb97aa80fdb63e0bfb6d8bd47",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-panda.json": {
+    "mtime": 1786394314.8948808,
+    "ast_hash": "ab4fef2e2d6d6f7792189eb083ac3484",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/gigi-the-duckling.json": {
+    "mtime": 1786393237.7870579,
+    "ast_hash": "885a3f937821dc5315451b2b92f093e5",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/mascot-bunny.json": {
+    "mtime": 1786394159.521755,
+    "ast_hash": "4b67b9d8b032cec8d49c11342498166f",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/teddy-bear.json": {
+    "mtime": 1786394156.3513496,
+    "ast_hash": "0423988e6ae3afed9c246ddd33408e72",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/tasks/character-and-music-sourcing.md": {
+    "mtime": 1786391695.659355,
+    "ast_hash": "f7ba8f2baa48ede4065acc88e170ea93",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-bear.png": {
+    "mtime": 1786394298.366339,
+    "ast_hash": "6ae0254b8a1efd34d25e3eab34a6e041",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-elephant.png": {
+    "mtime": 1786394298.4044905,
+    "ast_hash": "2d6b2da677443c383e51d055e85093f4",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-giraffe.png": {
+    "mtime": 1786394298.4479082,
+    "ast_hash": "0f75efce6bf1cfd9a9c294499f6c9199",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-panda.png": {
+    "mtime": 1786394298.4961627,
+    "ast_hash": "236367413d21d2756bd48ae5d75bad73",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/gigi-the-duckling.png": {
+    "mtime": 1786393235.1763399,
+    "ast_hash": "e64988ea18f9ca1bf8cda9756f758f21",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/mascot-bunny.png": {
+    "mtime": 1786394152.4866397,
+    "ast_hash": "45f7b8a2d6629190c30000396a2936e6",
+    "semantic_hash": ""
+  },
+  "gigglegarden-automation/VideoGen/assets/character-pool/teddy-bear.png": {
+    "mtime": 1786394152.46321,
+    "ast_hash": "7e3b155cb4a66621363794c82d1f5f36",
     "semantic_hash": ""
   }
 }

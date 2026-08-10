@@ -101,20 +101,34 @@ async Task<int> RunPrepAsync()
         Path.Combine(cfg.WorkDirectory, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
     Console.WriteLine($"Workspace: {workDir}");
 
-    // 1. Script
-    var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
-    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext);
-    Console.WriteLine($"Script: \"{script.Title}\" — {script.Scenes.Count} scenes");
+    // 1. Character, then script. A pooled character is resolved first so the script can
+    //    be written about the picture that already exists; an invented one is drawn
+    //    afterwards, from the description the script came up with. Either order ends
+    //    with the words and the artwork describing the same creature, which is the
+    //    whole point - they used to disagree.
+    var (pooled, addToPool) = CharacterSource.Resolve(cfg, workDir);
+    var recentNames = pooled is null ? CharacterSource.RecentNames(cfg, workDir) : [];
 
-    // 2. The branded intro bumper is scene zero: same greeting every video, plus a
-    //    one-line preview of what this one teaches.
+    var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
+    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext, pooled, recentNames);
+
+    var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(cfg, script, workDir);
+    script.CharacterImagePath = characterImage;
+    if (addToPool) CharacterSource.SaveToPool(cfg, script, characterImage);
+
+    Console.WriteLine($"Script: \"{script.Title}\" — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+
+    // 2. The branded intro bumper is scene zero: the same channel greeting every video,
+    //    this video's character introducing itself, and a one-line preview of what it
+    //    teaches. The greeting is the constant now that the cast is not.
     var intro = new Scene
     {
         Narration = script.IntroText,
-        ImagePrompt = "The mascot greeting the viewer.",
+        ImagePrompt = $"{script.CharacterName} greeting the viewer.",
         MotionPrompt =
-            $"{cfg.CharacterName} waves hello to the viewer with one wing and bounces happily on the spot, " +
-            "eyes bright and smiling. 2D cartoon animation, flat colors, thick outlines, character design stays consistent.",
+            $"{script.CharacterName} ({script.CharacterDescription}) waves hello to the viewer and bounces " +
+            "happily on the spot, eyes bright and smiling. 2D cartoon animation, flat colors, thick outlines, " +
+            "character design stays consistent.",
     };
     script.Scenes.Insert(0, intro);
 
@@ -134,20 +148,21 @@ async Task<int> RunPrepAsync()
     var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
     Console.WriteLine($"Narration total: {total:0}s");
 
-    // 4. Submit every clip. All scenes seed from the same canonical mascot art rather
+    // 4. Submit every clip. All scenes seed from this video's one character frame rather
     //    than chaining each clip off the previous one's last frame: chaining is serial,
     //    which cannot work against an off-peak queue that may take 48 hours per clip,
-    //    and it compounds drift over a dozen generations. Seeding from fixed reference
-    //    art is fully parallel and has no drift at all.
+    //    and it compounds drift over a dozen generations. Seeding every scene from a
+    //    single frame is fully parallel, has no drift at all, and still gives one
+    //    consistent character for the length of the video.
     var vidu = new ViduClient(cfg);
     var credits = 0;
 
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
-        scene.StartFramePath = cfg.CharacterReferencePath;
+        scene.StartFramePath = characterImage;
 
-        var submission = await vidu.SubmitAsync(scene.StartFramePath, scene.MotionPrompt, scene.DurationSeconds);
+        var submission = await vidu.SubmitAsync(characterImage, scene.MotionPrompt, scene.DurationSeconds);
         scene.ViduTaskId = submission.TaskId;
         credits += submission.Credits;
 
@@ -240,7 +255,14 @@ async Task<int> RunAssembleAsync()
             // Vidu auto-cancels off-peak work it could not place inside the window and
             // refunds the credits, so the fix is to resubmit this one scene, not the job.
             Console.WriteLine($"  {label} {result.State} — resubmitting ({result.Error ?? "no reason given"})");
-            var resubmit = await vidu.SubmitAsync(cfg.CharacterReferencePath, scene.MotionPrompt, scene.DurationSeconds);
+
+            // Has to be this job's own character frame, not a channel-wide one: a scene
+            // resubmitted from anything else comes back with a different creature in it.
+            var startFrame = scene.StartFramePath ?? script.CharacterImagePath
+                ?? throw new InvalidOperationException(
+                    $"Scene {label} needs resubmitting but the job records no character image. Re-run --prep.");
+
+            var resubmit = await vidu.SubmitAsync(startFrame, scene.MotionPrompt, scene.DurationSeconds);
             scene.ViduTaskId = resubmit.TaskId;
             pending++;
         }
@@ -317,7 +339,7 @@ async Task<int> RunAssembleAsync()
     var thumbFrame = Path.Combine(workDir, "thumbnail-frame.jpg");
     var grabAt = Math.Min(3.0, Math.Max(0.5, script.Scenes[0].DurationSeconds * 0.6));
     await VideoAssembler.ExtractThumbnailFrameAsync(cfg, landscape, grabAt, thumbFrame);
-    await VideoAssembler.BuildThumbnailAsync(cfg, thumbFrame, script.ThumbnailText, language!, Path.ChangeExtension(landscape, ".thumb.jpg"));
+    await VideoAssembler.BuildThumbnailAsync(cfg, thumbFrame, Path.ChangeExtension(landscape, ".thumb.jpg"));
     Console.WriteLine("Thumbnail generated.");
 
     await new Sidecar

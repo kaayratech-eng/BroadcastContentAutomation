@@ -1,16 +1,16 @@
-# Graph Report - Business  (2026-08-08)
+# Graph Report - Business  (2026-08-10)
 
 ## Corpus Check
-- 393 files · ~285,983 words
+- 407 files · ~481,113 words
 - Verdict: corpus is large enough that graph structure adds value.
 
 ## Summary
-- 6341 nodes · 6688 edges · 502 communities (489 shown, 13 thin omitted)
+- 6484 nodes · 6912 edges · 523 communities (508 shown, 15 thin omitted)
 - Extraction: 99% EXTRACTED · 1% INFERRED · 0% AMBIGUOUS · INFERRED: 40 edges (avg confidence: 0.78)
 - Token cost: 0 input · 0 output
 
 ## Graph Freshness
-- Built from commit: `4c83cb1c`
+- Built from commit: `66dbe6a9`
 - Run `git rev-parse HEAD` and compare to check if the graph is stale.
 - Run `graphify update .` after code changes (no API cost).
 
@@ -18,7 +18,7 @@
 - VideoGen project
 - GiggleGardenOfficial Brand Artwork
 - GiggleGarden.Shared
-- Text
+- GenConfig
 - Graphify Knowledge Graph Workflow
 - Uploader.csproj
 - .GenerateAsync
@@ -68,7 +68,7 @@
 - Memory Coordination Specialist Agent
 - bottleneck detect
 - AgentDB Memory Patterns
-- .PublishAsync
+- CharacterSource
 - SPARC Refinement Agent
 - Collective Intelligence Coordinator
 - auto agent
@@ -154,7 +154,7 @@
 - GitHub Release Management Skill
 - skill-builder/SKILL.md
 - V3 Memory Unification
-- AppConfig.cs
+- Logger
 - Consensus Security Manager
 - Machine Learning Model Developer v3.0.0-alpha.1
 - V3 Security Architecture Agent (AIMDS Enhanced)
@@ -287,7 +287,7 @@
 - Pattern 1: Research Swarm
 - Development Workflow
 - Pattern 3: Testing Swarm
-- YouTubePublisher
+- .PublishAsync
 - Byzantine Consensus Coordinator
 - Gossip Protocol Coordinator
 - Implementation Approach
@@ -363,8 +363,8 @@
 - Configuration Commands
 - Learning Commands
 - Metrics Commands
-- IPublisher
-- Features
+- .PublishAsync
+- Kids' YouTube Channel Research — Vlad and Niki, CoComelon, Ryan's World
 - Session Metrics
 - Session Templates
 - Examples
@@ -380,7 +380,7 @@
 - Metrics & Analytics
 - Core Capabilities
 - Troubleshooting & Common Issues
-- Best Practices
+- Plan — new character per video + "Welcome to Giggle Garden!"
 - 🚀 Complete Workflows
 - Configuration
 - Troubleshooting
@@ -396,16 +396,16 @@
 - Available Pipelines
 - Advanced Use Cases
 - Real-World Examples
+- ViduClient
+- Text
+- TtsClient
+- Sourcing free, monetization-safe character art + background music
+- AppConfig.cs
+- Release Agents
 - Examples
-- Examples
-- Issue Swarm Commands
-- Advanced Features
-- Advanced Swarm PR Coordination
-- Examples
+- Features
 - 🔒 Security Best Practices
-- Automation Features
-- Core Features
-- Best Practices
+- Workspace Configuration
 - Integration Examples
 - Advanced Workflows
 - Core Features
@@ -413,18 +413,18 @@
 - Action Commands
 - Advanced Features
 - Monitoring & Insights
-- Advanced Synchronization
-- Examples
-- Visualization & Reporting
-- Troubleshooting
-- Team Collaboration
+- Advanced Features
+- Lessons
+- Core Features
+- Best Practices
+- Monitoring & Rollback
 - .FetchAsync
 - 💬 Intelligent Comment Generation
 - Communication Strategies
-- Advanced Features
-- Best Practices
-- Examples
-- PR Swarm Commands
+- Integration Examples
+- Core Features
+- Usage Patterns
+- Advanced Swarm Synchronization Features
 - Session Lifecycle
 - Advanced Features
 - Background Sessions
@@ -465,20 +465,19 @@
 - Workflow Templates
 - Matrix Strategies
 - statusline-hook.sh
-- Integration Patterns
+- Best Practices
 - 🔐 Security Considerations
 - 🎯 Quick Start
 - ⚙️ Review Configuration
 - 🛠️ Custom Review Agents
 - 🔗 Integration with Claude Code
-- Best Practices
+- TDD Workflows
 - Examples
 - Integration Points
 - Quick Start
 - Custom Hook Creation
 - Examples from the Wild
 - Single command to get started
-- Quick Reference
 - Quick Start
 - Core Concepts
 - Quick Start
@@ -492,19 +491,41 @@
 - update-v3-progress.sh
 - v3.sh
 - v3-quick-status.sh
-- Issue Types & Strategies
+- PR Swarm Commands
+- Advanced Features
+- Best Practices
+- Examples
+- Best Practices
+- Matrix Strategies
+- Release Validation
+- Integration Examples
+- Advanced Features
+- Integration Examples
+- PR Swarm Commands
+- Monitoring & Insights
+- CLI Configuration
+- Mode-Specific Configuration
+- Modes
+- Session Recovery
+- Session Sharing
+- Multi-Session Management
+- Background music pool
+- Quality Features
+- Debugging & Troubleshooting
+- .IntegratedLoudness
+- Language-Specific Settings
 
 ## God Nodes (most connected - your core abstractions)
-1. `Agent Types Reference` - 23 edges
-2. `GitHub Code Review Skill` - 22 edges
-3. `Pair Programming Commands Reference` - 20 edges
-4. `JsonFileBackend` - 19 edges
-5. `swarm-hooks.sh script` - 19 edges
-6. `GitHub Multi-Repository Coordination Skill` - 19 edges
-7. `LearningService` - 18 edges
-8. `Sidecar` - 18 edges
-9. `Pair Programming Session Management` - 18 edges
-10. `Pair Programming Configuration` - 17 edges
+1. `GenConfig` - 27 edges
+2. `VideoAssembler` - 26 edges
+3. `Agent Types Reference` - 23 edges
+4. `GitHub Code Review Skill` - 22 edges
+5. `Pair Programming Commands Reference` - 20 edges
+6. `JsonFileBackend` - 19 edges
+7. `swarm-hooks.sh script` - 19 edges
+8. `GitHub Multi-Repository Coordination Skill` - 19 edges
+9. `LearningService` - 18 edges
+10. `Sidecar` - 18 edges
 
 ## Surprising Connections (you probably didn't know these)
 - `GiggleGarden automation setup guide (project copy)` --semantically_similar_to--> `GiggleGarden YouTube Automation System`  [INFERRED] [semantically similar]
@@ -528,7 +549,7 @@
 - **Kids Channel Visual Identity System** — generated_image_flat_vector_illustration_style, generated_image_warm_pastel_palette, generated_image_square_centered_composition, generated_image_gigglegardenofficial_wordmark, generated_image_kids_content_audience [INFERRED 0.85]
 - **Garden Scene Cast and Environment** — generated_image_two_child_characters, generated_image_anthropomorphic_flowers, generated_image_garden_setting, generated_image_decorative_sparkle_motifs [EXTRACTED 1.00]
 
-## Communities (502 total, 13 thin omitted)
+## Communities (523 total, 15 thin omitted)
 
 ### Community 0 - "VideoGen project"
 Cohesion: 0.16
@@ -539,12 +560,12 @@ Cohesion: 0.29
 Nodes (12): AI-Generated Image Asset, Anthropomorphic Smiling Flowers, Decorative Sparkle and Leaf Motifs, Flat Vector Illustration Style with Thick Outlines, Green Hill Garden Setting, GiggleGarden Channel Brand Identity, GiggleGardenOfficial Brand Artwork, GiggleGardenOfficial Wordmark (+4 more)
 
 ### Community 2 - "GiggleGarden.Shared"
-Cohesion: 0.12
-Nodes (11): GiggleGarden.Shared, GiggleGarden.Uploader.Publishing, Exception, List, GeneratedMetadata, MetaGraphException, TikTokApiException, Dictionary (+3 more)
+Cohesion: 0.10
+Nodes (13): GiggleGarden.Shared, GiggleGarden.Uploader.Publishing, Exception, List, GeneratedMetadata, int, FacebookPublisher, int (+5 more)
 
-### Community 3 - "Text"
-Cohesion: 0.13
-Nodes (9): IReadOnlyList, Text, GenConfig, IReadOnlyList, Task, TimeSpan, VideoAssembler, Process (+1 more)
+### Community 3 - "GenConfig"
+Cohesion: 0.20
+Nodes (10): double, GenConfig, Dictionary, IReadOnlyList, string, Task, TimeSpan, VideoAssembler (+2 more)
 
 ### Community 4 - "Graphify Knowledge Graph Workflow"
 Cohesion: 0.38
@@ -555,8 +576,8 @@ Cohesion: 0.08
 Nodes (20): net8.0, Microsoft.NET.Sdk, net8.0, Microsoft.NET.Sdk, net8.0, Google.Apis.YouTube.v3 (1.68.0.3414), Microsoft.NET.Sdk, net8.0 (+12 more)
 
 ### Community 6 - ".GenerateAsync"
-Cohesion: 0.27
-Nodes (6): JsonElement, List, Task, Scene, ScriptGenerator, VideoScript
+Cohesion: 0.19
+Nodes (9): Task, IReadOnlyList, JsonElement, List, string, Task, Scene, ScriptGenerator (+1 more)
 
 ### Community 7 - ".Tail"
 Cohesion: 0.47
@@ -583,12 +604,12 @@ Cohesion: 0.04
 Nodes (48): 1. Auto-Assignment, 1. Board Initialization, 1. Board Organization, 1. Multi-Board Sync, 2. Cross-Organization Sync, 2. Data Integrity, 2. Progress Tracking, 2. Task Synchronization (+40 more)
 
 ### Community 23 - "Project Board Sync - GitHub Projects Integration"
-Cohesion: 0.12
-Nodes (16): Board Commands, Board Mapping Configuration, Bulk Operations, Card Templates, Configuration, Create Cards from Issues, Metrics & KPIs, Milestone Tracking (+8 more)
+Cohesion: 0.04
+Nodes (48): 1. Auto-Assignment, 1. Board Initialization, 1. Board Organization, 1. Multi-Board Sync, 2. Cross-Organization Sync, 2. Data Integrity, 2. Progress Tracking, 2. Task Synchronization (+40 more)
 
 ### Community 24 - "Swarm Issue - Issue-Based Swarm Coordination"
-Cohesion: 0.07
-Nodes (27): 1. Issue Dependencies, 1. Issue-to-Swarm Conversion, 2. Epic Management, 2. Issue Comment Commands, 3. Issue Templates, 3. Issue Templates for Swarms, Advanced Features, Auto-Close Stale Issues (+19 more)
+Cohesion: 0.04
+Nodes (47): 1. Issue Dependencies, 1. Issue-PR Linking, 1. Issue Templates, 1. Issue-to-Swarm Conversion, 2. Epic Management, 2. Issue Comment Commands, 2. Label Strategy, 2. Milestone Coordination (+39 more)
 
 ### Community 25 - "agent.md"
 Cohesion: 0.04
@@ -627,12 +648,12 @@ Cohesion: 0.05
 Nodes (43): 1. Choose the Right Topology, 1. Multi-Repo Development, 2. Optimize Agent Assignment, 2. Research Projects, 3. DevOps Automation, 3. Implement Proper Error Handling, 4. Code Quality Workflows, 4. Monitor and Scale (+35 more)
 
 ### Community 34 - "Release Swarm - Intelligent Release Automation"
-Cohesion: 0.05
-Nodes (43): 1. Progressive Deployment, 1. Release Planning, 1. Release Planning, 2. Automated Versioning, 2. Automation, 2. Multi-Repo Releases, 3. Documentation, 3. Hotfix Automation (+35 more)
+Cohesion: 0.09
+Nodes (23): Auto-Generated Docs, Build Agent, Changelog Agent, Compatibility Testing, Continuous Deployment, Deploy Agent, Documentation, Emergency Procedures (+15 more)
 
 ### Community 35 - "Release Swarm - Intelligent Release Automation"
-Cohesion: 0.05
-Nodes (43): 1. Progressive Deployment, 1. Release Planning, 1. Release Planning, 2. Automated Versioning, 2. Automation, 2. Multi-Repo Releases, 3. Documentation, 3. Hotfix Automation (+35 more)
+Cohesion: 0.10
+Nodes (21): 1. Release Planning, 2. Automated Versioning, 3. Release Orchestration, Auto-Generated Docs, Automated Rollback, Continuous Deployment, Core Features, Documentation (+13 more)
 
 ### Community 36 - "Pair Programming Modes"
 Cohesion: 0.05
@@ -647,16 +668,16 @@ Cohesion: 0.05
 Nodes (40): 1. Decentralized Coordination, 1. Dynamic Work Distribution, 1. Practical Byzantine Fault Tolerance (pBFT), 1. Work Stealing, 2. Capability-Based Routing, 2. Distributed Hash Table (DHT), 2. Fault Tolerance & Resilience, 2. Raft Consensus (+32 more)
 
 ### Community 39 - "Workflow Automation - GitHub Actions Integration"
-Cohesion: 0.05
-Nodes (41): 1. PR Validation Swarm, 1. Self-Healing CI/CD, 1. Swarm-Powered Actions, 1. Workflow Organization, 2. Dynamic Workflow Generation, 2. Progressive Deployment, 2. Release Automation, 2. Security (+33 more)
+Cohesion: 0.09
+Nodes (23): 1. Self-Healing CI/CD, 1. Swarm-Powered Actions, 2. Dynamic Workflow Generation, 2. Progressive Deployment, 3. Intelligent Test Selection, 3. Performance Regression Detection, Action Commands, Adaptive Security Scanning (+15 more)
 
 ### Community 40 - "Complete Guide"
 Cohesion: 0.05
 Nodes (40): Adding a new guard, Additional Resources, Advanced Workflows, Automatic Rollback, Best Practices, CI/CD Integration, CI Guards — what's actually shipped (current state), Common Issues (+32 more)
 
 ### Community 41 - "Pair Programming Configuration"
-Cohesion: 0.05
-Nodes (39): Agent Configuration, Basic Configuration, Best Practices, Built-in Agents, CLI Configuration, Complete Configuration, Configuration File, Configuration Not Loading (+31 more)
+Cohesion: 0.09
+Nodes (23): Agent Configuration, Basic Configuration, Best Practices, Built-in Agents, Complete Configuration, Configuration File, Configuration Not Loading, Configuration Validation (+15 more)
 
 ### Community 42 - "JsonFileBackend"
 Cohesion: 0.10
@@ -742,9 +763,9 @@ Nodes (28): Analyze specific swarm, Auto-fix detected issues, Automatic Fixes, B
 Cohesion: 0.06
 Nodes (31): 1. Session Memory, 2. Long-Term Memory, 3. Pattern Learning, Advanced Patterns, AgentDB Memory Patterns, Available Algorithms (9 Total), Best Practices, CLI Operations (+23 more)
 
-### Community 63 - ".PublishAsync"
-Cohesion: 0.20
-Nodes (12): CancellationToken, Task, PublishRequest, PublishResult, CancellationToken, HttpClient, HttpResponseMessage, JsonDocument (+4 more)
+### Community 63 - "CharacterSource"
+Cohesion: 0.16
+Nodes (9): AddToPool, CharacterBrief, CharacterSource, List, string, PoolEntry, HashSet, IReadOnlySet (+1 more)
 
 ### Community 64 - "SPARC Refinement Agent"
 Cohesion: 0.06
@@ -803,8 +824,8 @@ Cohesion: 0.08
 Nodes (25): 1. Code Quality Assessment, 1. Continuous Analysis, 2. Actionable Insights, 2. Performance Analysis, 3. Context Awareness, 3. Security Review, 4. Architecture Analysis, 5. Technical Debt Management (+17 more)
 
 ### Community 78 - "GitHub Sync Coordinator"
-Cohesion: 0.08
-Nodes (25): 1. Synchronize Package Dependencies, 1. **Version Alignment Strategy**, 2. **Documentation Sync Pattern**, 2. Documentation Synchronization, 3. Cross-Package Feature Integration, 3. **Integration Testing Matrix**, Advanced Swarm Synchronization Features, Automated Reporting: (+17 more)
+Cohesion: 0.09
+Nodes (22): 1. **Atomic Synchronization**, 1. **Version Alignment Strategy**, 2. **Documentation Sync Pattern**, 2. **Version Management**, 3. **Documentation Consistency**, 3. **Integration Testing Matrix**, 4. **Testing Integration**, Automated Reporting: (+14 more)
 
 ### Community 79 - "GitHub Repository Architect"
 Cohesion: 0.08
@@ -840,7 +861,7 @@ Nodes (48): 1. Cross-Repo Initialization, 1. Distributed Task Queue, 1. Eventual
 
 ### Community 87 - "Swarm PR - Managing Swarms through Pull Requests"
 Cohesion: 0.08
-Nodes (24): 1. PR-Based Swarm Creation, 1. PR Templates, 2. PR Comment Commands, 2. Status Checks, 3. Automated PR Workflows, 3. PR Merge Automation, Automatic Agent Assignment, Best Practices (+16 more)
+Nodes (24): 1. Multi-PR Swarm Coordination, 2. PR Dependency Analysis, 3. Automated PR Fixes, Advanced Features, Advanced Swarm PR Coordination, Automatic Agent Assignment, Bug Fix PR, Dashboard Integration (+16 more)
 
 ### Community 88 - "Load Balancing Coordinator Agent"
 Cohesion: 0.08
@@ -863,8 +884,8 @@ Cohesion: 0.08
 Nodes (23): 1. Mesh (Peer-to-Peer), 2. Hierarchical (Queen-Worker), 3. Adaptive (Dynamic), Adaptive Execution, Advanced Features, Best Practices, Fault Tolerance, Integration with Hooks (+15 more)
 
 ### Community 93 - ".WaitForStatusAsync"
-Cohesion: 0.17
-Nodes (16): Detail, Done, Failed, Func, CancellationToken, HttpClient, HttpResponseMessage, IEnumerable (+8 more)
+Cohesion: 0.16
+Nodes (18): Detail, Done, Failed, Func, Action, CancellationToken, HttpClient, HttpResponseMessage (+10 more)
 
 ### Community 94 - "Strategic Planning Agent"
 Cohesion: 0.09
@@ -915,8 +936,8 @@ Cohesion: 0.09
 Nodes (21): 1. Strategy Pattern, 1. Structure and Syntax, 2. Data Structure Selection, 2. Observer Pattern, 3. Algorithm Patterns, 4. Complex Algorithm Design, 5. Complexity Analysis, After Algorithm Design: Store Learning Patterns (+13 more)
 
 ### Community 106 - "👥 Pair Programming Command"
-Cohesion: 0.09
-Nodes (22): Best Practices, Configuration, Driver Mode, During Session, End Session, Integration, Modes, Navigator Mode (+14 more)
+Cohesion: 0.11
+Nodes (18): Best Practices, Configuration, During Session, End Session, Integration, Options, Overview, 👥 Pair Programming Command (+10 more)
 
 ### Community 107 - "hook-handler.cjs"
 Cohesion: 0.13
@@ -931,12 +952,12 @@ Cohesion: 0.10
 Nodes (20): 1. **Always Use Swarm Coordination**, 1. Create and Manage PR with Swarm Coordination, 2. Automated Multi-File Review, 2. **Batch PR Operations**, 3. **Intelligent Review Strategy**, 3. Merge Coordination with Testing, 4. **Progress Tracking**, Automatic retry logic for: (+12 more)
 
 ### Community 110 - "Pair Programming Session Management"
-Cohesion: 0.10
-Nodes (21): Auto-Recovery, Best Practices, Crash Recovery, Create Learning Material, Default Settings, Export for Review, List Active Sessions, Manual Recovery (+13 more)
+Cohesion: 0.22
+Nodes (9): Best Practices, Default Settings, Pair Programming Session Management, Per-Session Config, Related Commands, Session Configuration, Session History, Session Reports (+1 more)
 
 ### Community 111 - "pair --start"
-Cohesion: 0.10
-Nodes (20): Background Execution, Best Practices, Code Review, Driver Mode, Integration, Modes Explained, Navigator Mode, Options (+12 more)
+Cohesion: 0.12
+Nodes (16): Background Execution, Best Practices, Driver Mode, Integration, Modes Explained, Navigator Mode, Options, pair --start (+8 more)
 
 ### Community 112 - "ReasoningBank Intelligence"
 Cohesion: 0.10
@@ -959,7 +980,7 @@ Cohesion: 0.11
 Nodes (18): Advanced Workflows, Basic Verification, Configuration, Examples, Integration, Metrics, Overview, Performance (+10 more)
 
 ### Community 117 - "Sidecar"
-Cohesion: 0.13
+Cohesion: 0.15
 Nodes (11): DateTimeOffset, Dictionary, IEnumerable, List, string, Task, Platforms, Publication (+3 more)
 
 ### Community 118 - "Technical Implementation"
@@ -1016,7 +1037,7 @@ Nodes (17): Additional Resources, Board Integration Workflow, Complete Workflow 
 
 ### Community 131 - "RetryHandler"
 Cohesion: 0.18
-Nodes (11): Action, DelegatingHandler, CancellationToken, HttpResponseMessage, int, long, Task, TimeSpan (+3 more)
+Nodes (11): DelegatingHandler, Action, CancellationToken, HttpResponseMessage, int, long, Task, TimeSpan (+3 more)
 
 ### Community 132 - "metrics-db.mjs"
 Cohesion: 0.21
@@ -1039,8 +1060,8 @@ Cohesion: 0.04
 Nodes (48): 1. Cross-Repo Initialization, 1. Distributed Task Queue, 1. Eventually Consistent, 1. Microservices Coordination, 1. Repository Organization, 1. Webhook-Based Coordination, 2. Communication, 2. Cross-Repo Testing (+40 more)
 
 ### Community 137 - "Swarm PR - Managing Swarms through Pull Requests"
-Cohesion: 0.12
-Nodes (16): 1. PR-Based Swarm Creation, 2. PR Comment Commands, 3. Automated PR Workflows, Automatic Agent Assignment, Core Features, Dashboard Integration, Integration with Claude Code, Label-Based Topology (+8 more)
+Cohesion: 0.10
+Nodes (20): 1. PR-Based Swarm Creation, 1. PR Templates, 2. PR Comment Commands, 2. Status Checks, 3. Automated PR Workflows, 3. PR Merge Automation, Automatic Agent Assignment, Best Practices (+12 more)
 
 ### Community 138 - "hook post-edit"
 Cohesion: 0.12
@@ -1086,9 +1107,9 @@ Nodes (15): Advanced usage, Answer a few questions, Commands, - Contribution gui
 Cohesion: 0.12
 Nodes (15): HNSW Vector Search, Implementation Architecture, Learning Pattern Storage, Legacy Systems → AgentDB, Migration Strategy, Performance Targets, Phase 1: Foundation, Phase 2: Data Migration (+7 more)
 
-### Community 149 - "AppConfig.cs"
-Cohesion: 0.19
-Nodes (10): GiggleGarden.Uploader, AppConfig, FacebookConfig, InstagramConfig, PlatformsConfig, TikTokConfig, YouTubeConfig, string (+2 more)
+### Community 149 - "Logger"
+Cohesion: 0.31
+Nodes (4): GiggleGarden.Uploader, string, Logger, object
 
 ### Community 150 - "Consensus Security Manager"
 Cohesion: 0.13
@@ -1364,7 +1385,7 @@ Nodes (11): 🛠️ Adding Scripts and Resources, 🔗 File References and Navig
 
 ### Community 218 - "SPARC Methodology - Comprehensive Development Framework"
 Cohesion: 0.18
-Nodes (10): Complete TDD Workflow, Core Philosophy, Key Principles, Overview, Performance Benefits, Red-Green-Refactor Cycle, SPARC Methodology - Comprehensive Development Framework, Support and Resources (+2 more)
+Nodes (10): Core Philosophy, Key Principles, Most Common Commands, Most Common MCP Calls, Overview, Performance Benefits, Quick Reference, SPARC Methodology - Comprehensive Development Framework (+2 more)
 
 ### Community 219 - "claude-flow"
 Cohesion: 0.25
@@ -1614,7 +1635,7 @@ Nodes (9): Architecture, CLI Fallback, Development Workflow, Pattern 2: Developm
 Cohesion: 0.22
 Nodes (9): Architecture, CLI Fallback, Pattern 3: Testing Swarm, Phase 1: Test Planning, Phase 2: Parallel Test Execution, Phase 3: Performance and Security, Phase 4: Monitoring and Reporting, Purpose (+1 more)
 
-### Community 282 - "YouTubePublisher"
+### Community 282 - ".PublishAsync"
 Cohesion: 0.35
 Nodes (6): CancellationToken, IReadOnlyList, Logger, Task, YouTubePublisher, YouTubeService
 
@@ -1918,13 +1939,13 @@ Nodes (5): /example, /learn, Learning Commands, /quiz, /tip
 Cohesion: 0.40
 Nodes (5): /leaderboard, /metrics, Metrics Commands, /productivity, /score
 
-### Community 361 - "IPublisher"
+### Community 361 - ".PublishAsync"
 Cohesion: 0.13
-Nodes (10): int, FacebookPublisher, CancellationToken, HttpClient, int, Task, InstagramPublisher, CancellationToken (+2 more)
+Nodes (17): CancellationToken, Task, CancellationToken, HttpClient, Task, CancellationToken, Task, PublishRequest (+9 more)
 
-### Community 362 - "Features"
-Cohesion: 0.40
-Nodes (5): Code Review, Collaboration Tools, Features, Real-Time Verification, Test Integration
+### Community 362 - "Kids' YouTube Channel Research — Vlad and Niki, CoComelon, Ryan's World"
+Cohesion: 0.06
+Nodes (33): 1. Title formulas, 2. Hook patterns, 3. Topic selection, 4. Thumbnail text conventions, 5. Description and hashtag structure, 6. Pacing and segment structure, 7. What does NOT transfer to a small automated channel, 8. Sources and retrieval notes (+25 more)
 
 ### Community 363 - "Session Metrics"
 Cohesion: 0.40
@@ -1986,9 +2007,9 @@ Nodes (5): 1. Release Planning & Version Management, 2. Automated Testing & Vali
 Cohesion: 0.40
 Nodes (5): Issue: Deployment Rollback Needed, Issue: Failed Release Build, Issue: Test Failures in CI, Issue: Version Conflicts, Troubleshooting & Common Issues
 
-### Community 378 - "Best Practices"
-Cohesion: 0.40
-Nodes (5): 1. **Atomic Synchronization**, 2. **Version Management**, 3. **Documentation Consistency**, 4. **Testing Integration**, Best Practices
+### Community 378 - "Plan — new character per video + "Welcome to Giggle Garden!""
+Cohesion: 0.08
+Nodes (24): Changes if Option 1 is approved, Character-pool build-up/mix/reuse — **implemented and verified (code-level)**, Character pool — first real content — **done**, Decisions taken, against the options above, Intro budget — this needs a decision too, Left for you to decide → both now done, Not done, Not verified (+16 more)
 
 ### Community 379 - "🚀 Complete Workflows"
 Cohesion: 0.40
@@ -2050,45 +2071,41 @@ Nodes (5): Advanced Use Cases, Code Migration Workflow, Data Transformation Pipe
 Cohesion: 0.40
 Nodes (5): Example 1: AI Research Project, Example 2: Full-Stack Application, Example 3: Security Audit, Example 4: Performance Optimization, Real-World Examples
 
-### Community 394 - "Examples"
+### Community 394 - "ViduClient"
+Cohesion: 0.19
+Nodes (10): CancellationToken, HttpClient, int, string, Task, Result, Submission, ViduClient (+2 more)
+
+### Community 396 - "TtsClient"
+Cohesion: 0.28
+Nodes (5): Dictionary, GeneratedRegex, Regex, Task, TtsClient
+
+### Community 397 - "Sourcing free, monetization-safe character art + background music"
+Cohesion: 0.17
+Nodes (11): Candidates, Candidates, For reference — CraftPix's paid set (not free, noted because it's the closest style match found), Full research: background music, Full research: character art, Research method note, Short version, Sourcing free, monetization-safe character art + background music (+3 more)
+
+### Community 398 - "AppConfig.cs"
+Cohesion: 0.52
+Nodes (6): AppConfig, FacebookConfig, InstagramConfig, PlatformsConfig, TikTokConfig, YouTubeConfig
+
+### Community 399 - "Release Agents"
+Cohesion: 0.33
+Nodes (6): Build Agent, Changelog Agent, Deploy Agent, Release Agents, Test Agent, Version Agent
+
+### Community 400 - "Examples"
 Cohesion: 0.40
 Nodes (5): Bug Fixing, Code Review Session, Examples, Refactoring Session, Test-Driven Development
 
-### Community 395 - "Examples"
-Cohesion: 0.50
-Nodes (4): Complex Bug Investigation, Documentation Update, Examples, Feature Implementation
+### Community 401 - "Features"
+Cohesion: 0.40
+Nodes (5): Code Review, Collaboration Tools, Features, Real-Time Verification, Test Integration
 
-### Community 396 - "Issue Swarm Commands"
-Cohesion: 0.50
-Nodes (4): Initialize from Issue, Issue Swarm Commands, Progress Tracking, Task Decomposition
-
-### Community 397 - "Advanced Features"
-Cohesion: 0.50
-Nodes (4): 1. Multi-PR Swarm Coordination, 2. PR Dependency Analysis, 3. Automated PR Fixes, Advanced Features
-
-### Community 398 - "Advanced Swarm PR Coordination"
-Cohesion: 0.50
-Nodes (4): Advanced Swarm PR Coordination, Intelligent PR Merge Coordination, Multi-Agent PR Analysis, Swarm-Coordinated PR Lifecycle
-
-### Community 399 - "Examples"
-Cohesion: 0.50
-Nodes (4): Bug Fix PR, Documentation PR, Examples, Feature Development PR
-
-### Community 400 - "🔒 Security Best Practices"
+### Community 402 - "🔒 Security Best Practices"
 Cohesion: 0.40
 Nodes (5): 1. Store Configurations Securely, 2. Use OIDC Authentication, 3. Implement Least-Privilege, 4. Audit Swarm Operations, 🔒 Security Best Practices
 
-### Community 401 - "Automation Features"
-Cohesion: 0.50
-Nodes (4): 1. Auto-Assignment, 2. Progress Tracking, 3. Smart Card Movement, Automation Features
-
-### Community 402 - "Core Features"
-Cohesion: 0.50
-Nodes (4): 1. Board Initialization, 2. Task Synchronization, 3. Real-time Updates, Core Features
-
-### Community 403 - "Best Practices"
-Cohesion: 0.50
-Nodes (4): 1. Board Organization, 2. Data Integrity, 3. Team Adoption, Best Practices
+### Community 403 - "Workspace Configuration"
+Cohesion: 0.40
+Nodes (5): Global, Priority Order, Project-Specific, User-Specific, Workspace Configuration
 
 ### Community 404 - "Integration Examples"
 Cohesion: 0.50
@@ -2118,25 +2135,25 @@ Nodes (4): Advanced Features, Automated Optimization, Predictive Failures, Workf
 Cohesion: 0.50
 Nodes (4): Cost Optimization, Failure Patterns, Monitoring & Insights, Workflow Analytics
 
-### Community 411 - "Advanced Synchronization"
+### Community 411 - "Advanced Features"
 Cohesion: 0.50
-Nodes (4): 1. Multi-Board Sync, 2. Cross-Organization Sync, 3. External Tool Integration, Advanced Synchronization
+Nodes (4): 1. Progressive Deployment, 2. Multi-Repo Releases, 3. Hotfix Automation, Advanced Features
 
-### Community 412 - "Examples"
-Cohesion: 0.50
-Nodes (4): Agile Development Board, Examples, Kanban Flow Board, Research Project Board
+### Community 412 - "Lessons"
+Cohesion: 0.40
+Nodes (4): Background music, Lessons, Secrets, Workflow
 
-### Community 413 - "Visualization & Reporting"
+### Community 413 - "Core Features"
 Cohesion: 0.50
-Nodes (4): Board Analytics, Custom Dashboards, Reports, Visualization & Reporting
+Nodes (4): 1. Release Planning, 2. Automated Versioning, 3. Release Orchestration, Core Features
 
-### Community 414 - "Troubleshooting"
+### Community 414 - "Best Practices"
 Cohesion: 0.50
-Nodes (4): Data Recovery, Performance, Sync Issues, Troubleshooting
+Nodes (4): 1. Release Planning, 2. Automation, 3. Documentation, Best Practices
 
-### Community 415 - "Team Collaboration"
+### Community 415 - "Monitoring & Rollback"
 Cohesion: 0.50
-Nodes (4): Review Coordination, Standup Automation, Team Collaboration, Work Distribution
+Nodes (4): Automated Rollback, Monitoring & Rollback, Release Analytics, Release Monitoring
 
 ### Community 417 - "💬 Intelligent Comment Generation"
 Cohesion: 0.67
@@ -2146,21 +2163,21 @@ Nodes (3): Batch Comment Management, Generate Contextual Review Comments, 💬 I
 Cohesion: 0.67
 Nodes (3): 1. Webhook-Based Coordination, 2. Event Streaming, Communication Strategies
 
-### Community 419 - "Advanced Features"
+### Community 419 - "Integration Examples"
 Cohesion: 0.50
-Nodes (4): 1. Multi-PR Swarm Coordination, 2. PR Dependency Analysis, 3. Automated PR Fixes, Advanced Features
+Nodes (4): Docker Image Release, Integration Examples, Mobile App Release, NPM Package Release
 
-### Community 420 - "Best Practices"
+### Community 420 - "Core Features"
 Cohesion: 0.50
-Nodes (4): 1. PR Templates, 2. Status Checks, 3. PR Merge Automation, Best Practices
+Nodes (4): 1. PR-Based Swarm Creation, 2. PR Comment Commands, 3. Automated PR Workflows, Core Features
 
-### Community 421 - "Examples"
+### Community 421 - "Usage Patterns"
 Cohesion: 0.50
-Nodes (4): Bug Fix PR, Documentation PR, Examples, Feature Development PR
+Nodes (4): 1. Synchronize Package Dependencies, 2. Documentation Synchronization, 3. Cross-Package Feature Integration, Usage Patterns
 
-### Community 422 - "PR Swarm Commands"
+### Community 422 - "Advanced Swarm Synchronization Features"
 Cohesion: 0.50
-Nodes (4): Code Review Integration, Initialize from PR, PR Swarm Commands, Progress Updates
+Nodes (4): Advanced Swarm Synchronization Features, Comprehensive Synchronization Metrics, Intelligent Conflict Resolution, Multi-Agent Coordination Architecture
 
 ### Community 423 - "Session Lifecycle"
 Cohesion: 0.50
@@ -2318,9 +2335,9 @@ Nodes (3): Adaptive Security Scanning, Multi-Language Detection, Workflow Templa
 Cohesion: 0.67
 Nodes (3): Dynamic Test Matrix, Intelligent Parallelization, Matrix Strategies
 
-### Community 463 - "Integration Patterns"
+### Community 463 - "Best Practices"
 Cohesion: 0.50
-Nodes (4): 1. Issue-PR Linking, 2. Milestone Coordination, 3. Cross-Repo Issues, Integration Patterns
+Nodes (4): 1. PR Templates, 2. Status Checks, 3. PR Merge Automation, Best Practices
 
 ### Community 464 - "🔐 Security Considerations"
 Cohesion: 0.67
@@ -2342,9 +2359,9 @@ Nodes (3): Create Custom Agent, 🛠️ Custom Review Agents, Register Custom Ag
 Cohesion: 0.67
 Nodes (3): Example: Complete PR Management, 🔗 Integration with Claude Code, Workflow Pattern
 
-### Community 469 - "Best Practices"
-Cohesion: 0.50
-Nodes (4): 1. Issue Templates, 2. Label Strategy, 3. Comment Etiquette, Best Practices
+### Community 469 - "TDD Workflows"
+Cohesion: 0.67
+Nodes (3): Complete TDD Workflow, Red-Green-Refactor Cycle, TDD Workflows
 
 ### Community 470 - "Examples"
 Cohesion: 0.67
@@ -2370,10 +2387,6 @@ Nodes (3): Example 1: Simple Documentation Skill, Examples from the Wild, Instal
 Cohesion: 0.67
 Nodes (3): Single command to get started, Template 2: Intermediate Skill (With Scripts), Template 3: Advanced Skill (Full-Featured)
 
-### Community 476 - "Quick Reference"
-Cohesion: 0.67
-Nodes (3): Most Common Commands, Most Common MCP Calls, Quick Reference
-
 ### Community 477 - "Quick Start"
 Cohesion: 0.67
 Nodes (3): Execute a Pipeline, Quick Start, Run a Custom Chain
@@ -2386,9 +2399,93 @@ Nodes (3): Agent Strategies, Core Concepts, Swarm Topologies
 Cohesion: 0.67
 Nodes (3): Basic Pattern, Prerequisites, Quick Start
 
-### Community 500 - "Issue Types & Strategies"
+### Community 501 - "PR Swarm Commands"
 Cohesion: 0.50
-Nodes (4): Bug Reports, Feature Requests, Issue Types & Strategies, Technical Debt
+Nodes (4): Code Review Integration, Initialize from PR, PR Swarm Commands, Progress Updates
+
+### Community 502 - "Advanced Features"
+Cohesion: 0.50
+Nodes (4): 1. Progressive Deployment, 2. Multi-Repo Releases, 3. Hotfix Automation, Advanced Features
+
+### Community 503 - "Best Practices"
+Cohesion: 0.50
+Nodes (4): 1. Release Planning, 2. Automation, 3. Documentation, Best Practices
+
+### Community 504 - "Examples"
+Cohesion: 0.50
+Nodes (4): Bug Fix PR, Documentation PR, Examples, Feature Development PR
+
+### Community 505 - "Best Practices"
+Cohesion: 0.50
+Nodes (4): 1. Workflow Organization, 2. Security, 3. Performance, Best Practices
+
+### Community 506 - "Matrix Strategies"
+Cohesion: 0.67
+Nodes (3): Dynamic Test Matrix, Intelligent Parallelization, Matrix Strategies
+
+### Community 507 - "Release Validation"
+Cohesion: 0.50
+Nodes (4): Compatibility Testing, Pre-Release Checks, Release Validation, Security Scanning
+
+### Community 508 - "Integration Examples"
+Cohesion: 0.50
+Nodes (4): Docker Image Release, Integration Examples, Mobile App Release, NPM Package Release
+
+### Community 509 - "Advanced Features"
+Cohesion: 0.50
+Nodes (4): 1. Multi-PR Swarm Coordination, 2. PR Dependency Analysis, 3. Automated PR Fixes, Advanced Features
+
+### Community 511 - "Integration Examples"
+Cohesion: 0.50
+Nodes (4): 1. PR Validation Swarm, 2. Release Automation, 3. Documentation Updates, Integration Examples
+
+### Community 512 - "PR Swarm Commands"
+Cohesion: 0.50
+Nodes (4): Code Review Integration, Initialize from PR, PR Swarm Commands, Progress Updates
+
+### Community 513 - "Monitoring & Insights"
+Cohesion: 0.50
+Nodes (4): Cost Optimization, Failure Patterns, Monitoring & Insights, Workflow Analytics
+
+### Community 514 - "CLI Configuration"
+Cohesion: 0.50
+Nodes (4): CLI Configuration, Get Configuration, Reset Configuration, Set Configuration
+
+### Community 515 - "Mode-Specific Configuration"
+Cohesion: 0.50
+Nodes (4): Driver Mode, Mode-Specific Configuration, Navigator Mode, Switch Mode
+
+### Community 516 - "Modes"
+Cohesion: 0.50
+Nodes (4): Driver Mode, Modes, Navigator Mode, Switch Mode (Default)
+
+### Community 517 - "Session Recovery"
+Cohesion: 0.50
+Nodes (4): Auto-Recovery, Crash Recovery, Manual Recovery, Session Recovery
+
+### Community 518 - "Session Sharing"
+Cohesion: 0.50
+Nodes (4): Create Learning Material, Export for Review, Session Sharing, Share with Team
+
+### Community 519 - "Multi-Session Management"
+Cohesion: 0.50
+Nodes (4): List Active Sessions, Merge Sessions, Multi-Session Management, Switch Between Sessions
+
+### Community 520 - "Background music pool"
+Cohesion: 0.50
+Nodes (3): Background music pool, Licensing, What belongs here
+
+### Community 522 - "Quality Features"
+Cohesion: 0.50
+Nodes (4): Code Review, Quality Features, Testing, Verification
+
+### Community 523 - "Debugging & Troubleshooting"
+Cohesion: 0.67
+Nodes (3): Debug Mode, Debugging & Troubleshooting, Performance Profiling
+
+### Community 525 - "Language-Specific Settings"
+Cohesion: 0.67
+Nodes (3): JavaScript/TypeScript, Language-Specific Settings, Python
 
 ## Ambiguous Edges - Review These
 - `GiggleGarden YouTube Automation System` → `Gigi the little duckling (channel mascot)`  [AMBIGUOUS]
@@ -2397,9 +2494,9 @@ Nodes (4): Bug Reports, Feature Requests, Issue Types & Strategies, Technical De
   graphify-out/transcripts/gigi-colors-en.txt · relation: conceptually_related_to
 
 ## Knowledge Gaps
-- **4090 isolated node(s):** `ADRS`, `__filename`, `__dirname`, `PROJECT_ROOT`, `DATA_DIR` (+4085 more)
+- **4150 isolated node(s):** `ADRS`, `__filename`, `__dirname`, `PROJECT_ROOT`, `DATA_DIR` (+4145 more)
   These have ≤1 connection - possible missing edges or undocumented components.
-- **13 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
+- **15 thin communities (<3 nodes) omitted from report** — run `graphify query` to explore isolated nodes.
 
 ## Suggested Questions
 _Questions this graph is uniquely positioned to answer:_
@@ -2408,13 +2505,13 @@ _Questions this graph is uniquely positioned to answer:_
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
 - **What is the exact relationship between `Claude script writing and topic selection` and `Gigi Colors (EN) video transcript`?**
   _Edge tagged AMBIGUOUS (relation: conceptually_related_to) - confidence is low._
-- **Why does `Swarm Issue - Issue-Based Swarm Coordination` connect `Swarm Issue - Issue-Based Swarm Coordination` to `Examples`, `Issue Swarm Commands`, `Integration Patterns`, `Issue Types & Strategies`, `Best Practices`, `agents/github/swarm-pr.md`?**
-  _High betweenness centrality (0.002) - this node is a cross-community bridge._
-- **Why does `Pair Programming Commands Reference` connect `Pair Programming Commands Reference` to `Advanced Commands`, `Collaboration Commands`, `Configuration Commands`, `Learning Commands`, `Metrics Commands`, `Code Commands`, `config.md`, `AI Partner Commands`, `Debugging Commands`, `Git Commands`, `Navigation Commands`, `Review Commands`, `Session Control Commands`, `Testing Commands`, `Utility Commands`?**
+- **Why does `Release Swarm - Intelligent Release Automation` connect `Release Swarm - Intelligent Release Automation` to `Integration Examples`, `Monitoring & Rollback`, `Advanced Features`, `Core Features`, `Best Practices`, `agents/github/swarm-pr.md`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
-- **Why does `Code Review Swarm - Automated Code Review with AI Agents` connect `Code Review Swarm - Automated Code Review with AI Agents` to `commands/github/swarm-pr.md`?**
+- **Why does `Workflow Automation - GitHub Actions Integration` connect `Workflow Automation - GitHub Actions Integration` to `Monitoring & Insights`, `commands/github/swarm-pr.md`, `Debugging & Troubleshooting`, `Best Practices`, `Matrix Strategies`, `Integration Examples`?**
+  _High betweenness centrality (0.001) - this node is a cross-community bridge._
+- **Why does `Multi-Repo Swarm - Cross-Repository Swarm Orchestration` connect `Multi-Repo Swarm - Cross-Repository Swarm Orchestration` to `agents/github/swarm-pr.md`?**
   _High betweenness centrality (0.001) - this node is a cross-community bridge._
 - **What connects `ADRS`, `__filename`, `__dirname` to the rest of the system?**
-  _4090 weakly-connected nodes found - possible documentation gaps or missing edges._
+  _4150 weakly-connected nodes found - possible documentation gaps or missing edges._
 - **Should `GiggleGarden.Shared` be split into smaller, more focused modules?**
-  _Cohesion score 0.12121212121212122 - nodes in this community are weakly interconnected._
+  _Cohesion score 0.09971509971509972 - nodes in this community are weakly interconnected._
