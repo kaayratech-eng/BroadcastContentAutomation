@@ -69,7 +69,10 @@ record GenConfig
         "A cheerful little yellow duckling named Gigi with big friendly eyes and a tiny red scarf, " +
         "cute 2D children's cartoon style, flat colors, thick outlines";
 
-    public string BackgroundMusicPath { get; init; } = @"D:\Business\VideoGen\assets\music.mp3";
+    // Ships with the repo, so the default points at the checked-in asset rather than at
+    // the output tree. Empty means render without music; a path that isn't there throws.
+    public string BackgroundMusicPath { get; init; } =
+        @"D:\Business\gigglegarden-automation\VideoGen\assets\music.mp3";
     public string SubtitleFontPath { get; init; } = @"C:\Windows\Fonts\NirmalaB.ttf"; // covers Devanagari + Gurmukhi
     public int SubtitleMaxLines { get; init; } = 3;
     public string FfmpegPath { get; init; } = "";   // empty = use PATH

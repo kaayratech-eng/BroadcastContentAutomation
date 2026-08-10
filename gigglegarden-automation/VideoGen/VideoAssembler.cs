@@ -13,6 +13,10 @@ static class VideoAssembler
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
+        // Resolved up front, not at the mix step several minutes of encoding later, so a
+        // bad path fails before any work is done rather than after all of it.
+        var music = ResolveBackgroundMusic(cfg);
+
         var sceneClips = new List<string>();
         var durations = new List<double>();
         var tag = $"{w}x{h}";
@@ -56,20 +60,9 @@ static class VideoAssembler
 
         // Crossfade scene clips together instead of hard-cutting between them.
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
-        await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
+        var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
-        // Mix background music (looped, ducked under narration) if provided
-        if (!string.IsNullOrEmpty(cfg.BackgroundMusicPath) && File.Exists(cfg.BackgroundMusicPath))
-        {
-            await RunFfmpegAsync(cfg,
-                $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{cfg.BackgroundMusicPath}\" " +
-                "-filter_complex \"[1:a]volume=0.12[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]\" " +
-                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"");
-        }
-        else
-        {
-            File.Copy(concatPath, outputPath, overwrite: true);
-        }
+        await MixBackgroundMusicAsync(cfg, concatPath, music, total, outputPath);
     }
 
     // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
@@ -80,6 +73,8 @@ static class VideoAssembler
         string workDir, string outputPath, int w, int h)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
+
+        var music = ResolveBackgroundMusic(cfg);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -108,19 +103,72 @@ static class VideoAssembler
         }
 
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
-        await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
+        var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
-        if (!string.IsNullOrEmpty(cfg.BackgroundMusicPath) && File.Exists(cfg.BackgroundMusicPath))
-        {
-            await RunFfmpegAsync(cfg,
-                $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{cfg.BackgroundMusicPath}\" " +
-                "-filter_complex \"[1:a]volume=0.12[m];[0:a][m]amix=inputs=2:duration=first:dropout_transition=2[a]\" " +
-                $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"");
-        }
-        else
+        await MixBackgroundMusicAsync(cfg, concatPath, music, total, outputPath);
+    }
+
+    // Music level relative to the narration it sits under, before ducking. Roughly 11 dB
+    // down: audible as a bed on phone speakers without competing with the voice.
+    private const double MusicLevel = 0.28;
+    private const double MusicFadeSeconds = 1.5;
+
+    // Null means "deliberately no music"; a configured path that isn't there is a
+    // mistake and is treated as one.
+    //
+    // This used to fall through to a silent File.Copy, and the configured path had drifted
+    // to a folder that does not exist - so every video ever rendered shipped with no music
+    // at all and nothing in the log said so. A misconfiguration that produces a
+    // plausible-looking output file is the worst kind, hence the throw.
+    private static string? ResolveBackgroundMusic(GenConfig cfg)
+    {
+        if (string.IsNullOrWhiteSpace(cfg.BackgroundMusicPath)) return null;
+
+        if (!File.Exists(cfg.BackgroundMusicPath))
+            throw new Exception(
+                $"BackgroundMusicPath points at \"{cfg.BackgroundMusicPath}\", which does not exist. " +
+                "Fix the path in appsettings.json, or clear it to render without music on purpose.");
+
+        return cfg.BackgroundMusicPath;
+    }
+
+    // Lays the music bed under the finished narration track.
+    //
+    // sidechaincompress does real ducking - the music drops whenever the narrator speaks
+    // and swells back in the gaps - which is what lets the bed be loud enough to hear at
+    // all. The previous fixed volume=0.12 had to be that quiet to stay out of the way,
+    // and at that level it may as well not be there.
+    //
+    // The pan upmix is not cosmetic: Azure returns mono narration, and letting ffmpeg
+    // rematrix mono to stereo on its own applies its usual -3 dB power-preserving gain,
+    // so simply mixing in stereo music made the voice measurably quieter than before.
+    // pan copies the single channel to both at unity instead.
+    private static async Task MixBackgroundMusicAsync(
+        GenConfig cfg, string concatPath, string? musicPath, double totalSeconds, string outputPath)
+    {
+        if (musicPath is null)
         {
             File.Copy(concatPath, outputPath, overwrite: true);
+            return;
         }
+
+        var fadeOutAt = Math.Max(0, totalSeconds - MusicFadeSeconds);
+
+        var filter =
+            "[0:a]aresample=44100,aformat=sample_fmts=fltp,pan=stereo|c0=c0|c1=c0,asplit=2[voice][key];" +
+            "[1:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo," +
+            $"volume={Text.Invariant(MusicLevel)}," +
+            $"afade=t=in:st=0:d={Text.Invariant(MusicFadeSeconds)}," +
+            $"afade=t=out:st={Text.Invariant(fadeOutAt)}:d={Text.Invariant(MusicFadeSeconds)}[music];" +
+            "[music][key]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=350[ducked];" +
+            "[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0," +
+            "alimiter=limit=0.95:level=false[a]";
+
+        // -c:v copy keeps the bitrate cap applied during concat; only audio is re-encoded.
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{musicPath}\" " +
+            $"-filter_complex \"{filter}\" " +
+            $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"");
     }
 
     // Fits a generated clip to its scene's exact duration and burns in the subtitle.
@@ -322,13 +370,14 @@ static class VideoAssembler
     // Replaces a hard-cut concat with a real dissolve between every scene. Each input
     // clip's exact duration is already known (set by the apad fix above), so the
     // pairwise xfade/acrossfade offsets can be computed directly instead of probed.
-    private static async Task BuildCrossfadedConcatAsync(
+    // Returns the finished length, which the caller needs to time the music fade-out.
+    private static async Task<double> BuildCrossfadedConcatAsync(
         GenConfig cfg, IReadOnlyList<string> clips, IReadOnlyList<double> durations, string outputPath)
     {
         if (clips.Count == 1)
         {
             File.Copy(clips[0], outputPath, overwrite: true);
-            return;
+            return durations[0];
         }
 
         const double fade = 0.4;
@@ -362,6 +411,8 @@ static class VideoAssembler
             $"-map \"[{vLabel}]\" -map \"[{aLabel}]\" " +
             $"-r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
             $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"");
+
+        return cumulative;
     }
 
     // FFmpeg filter arguments need forward slashes and an escaped drive colon on Windows.
