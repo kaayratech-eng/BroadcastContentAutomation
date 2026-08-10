@@ -2,6 +2,11 @@
 **/appsettings.Local.json
 **/appsettings.*.Local.json
 *.secrets.json
+API_Keys.txt
+# Scratch notes kept at the repo root; the curl ones carry live access tokens.
+/Questions.txt
+/Claude Commands.txt
+/F Insta Curl Commands.txt
 Claude-API/
 Youtube/
 client_secret*.json

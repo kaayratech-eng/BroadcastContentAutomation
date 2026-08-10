@@ -145,10 +145,17 @@ static partial class VideoAssembler
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
+        // An empty pool is a legitimate waiting state - the folder is there, the tracks
+        // are not sourced yet - so it renders without music rather than failing. Said out
+        // loud, though: silence here is what hid the broken path for every video the
+        // channel has published so far.
         if (tracks.Count == 0)
-            throw new Exception(
-                $"BackgroundMusicPath \"{cfg.BackgroundMusicPath}\" is a folder with no audio in it. " +
-                $"Drop some tracks in ({string.Join(", ", MusicExtensions)}).");
+        {
+            Console.WriteLine(
+                $"  Music: none - \"{cfg.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
+                $"Drop instrumentals in ({string.Join(", ", MusicExtensions)}) to get a bed.");
+            return null;
+        }
 
         var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(key));

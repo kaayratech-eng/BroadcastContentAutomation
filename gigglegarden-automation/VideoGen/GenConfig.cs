@@ -78,9 +78,10 @@ record GenConfig
 
     // Target loudness for the music bed, in LUFS. Every track is normalised to this
     // regardless of how it was mastered, so the bed sits at the same level from video to
-    // video. Narration lands around -19 LUFS, so this is ~13 LU underneath it - present,
-    // but never competing with the voice. Less negative = louder music.
-    public double BackgroundMusicLufs { get; init; } = -32.0;
+    // video. Narration lands around -19 LUFS, so this is ~17 LU underneath it: something
+    // you notice when it stops rather than while it plays, which is the whole job of a
+    // bed under a narrator aimed at 2-6 year olds. Less negative = louder music.
+    public double BackgroundMusicLufs { get; init; } = -36.0;
     public string SubtitleFontPath { get; init; } = @"C:\Windows\Fonts\NirmalaB.ttf"; // covers Devanagari + Gurmukhi
     public int SubtitleMaxLines { get; init; } = 3;
     public string FfmpegPath { get; init; } = "";   // empty = use PATH
