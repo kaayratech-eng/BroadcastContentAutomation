@@ -69,10 +69,18 @@ record GenConfig
         "A cheerful little yellow duckling named Gigi with big friendly eyes and a tiny red scarf, " +
         "cute 2D children's cartoon style, flat colors, thick outlines";
 
-    // Ships with the repo, so the default points at the checked-in asset rather than at
-    // the output tree. Empty means render without music; a path that isn't there throws.
+    // A single track, or a folder of them to pick from per video (see
+    // VideoAssembler.ResolveBackgroundMusic). Ships with the repo, so the default points
+    // at the checked-in assets rather than at the output tree. Empty means render without
+    // music on purpose; a path that isn't there throws.
     public string BackgroundMusicPath { get; init; } =
-        @"D:\Business\gigglegarden-automation\VideoGen\assets\music.mp3";
+        @"D:\Business\gigglegarden-automation\VideoGen\assets\music";
+
+    // Target loudness for the music bed, in LUFS. Every track is normalised to this
+    // regardless of how it was mastered, so the bed sits at the same level from video to
+    // video. Narration lands around -19 LUFS, so this is ~13 LU underneath it - present,
+    // but never competing with the voice. Less negative = louder music.
+    public double BackgroundMusicLufs { get; init; } = -32.0;
     public string SubtitleFontPath { get; init; } = @"C:\Windows\Fonts\NirmalaB.ttf"; // covers Devanagari + Gurmukhi
     public int SubtitleMaxLines { get; init; } = 3;
     public string FfmpegPath { get; init; } = "";   // empty = use PATH

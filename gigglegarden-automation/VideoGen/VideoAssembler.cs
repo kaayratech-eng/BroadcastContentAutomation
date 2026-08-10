@@ -1,9 +1,11 @@
 using System.Diagnostics;
 using System.Globalization;
+using System.Security.Cryptography;
 using System.Text;
+using System.Text.RegularExpressions;
 using GiggleGarden.Shared;
 
-static class VideoAssembler
+static partial class VideoAssembler
 {
     // Builds each scene clip (image + zoompan + narration audio + wrapped subtitle),
     // crossfades them together, then mixes background music under the narration.
@@ -15,7 +17,7 @@ static class VideoAssembler
 
         // Resolved up front, not at the mix step several minutes of encoding later, so a
         // bad path fails before any work is done rather than after all of it.
-        var music = ResolveBackgroundMusic(cfg);
+        var music = ResolveBackgroundMusic(cfg, workDir);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -74,7 +76,7 @@ static class VideoAssembler
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
-        var music = ResolveBackgroundMusic(cfg);
+        var music = ResolveBackgroundMusic(cfg, workDir);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -108,10 +110,10 @@ static class VideoAssembler
         await MixBackgroundMusicAsync(cfg, concatPath, music, total, outputPath);
     }
 
-    // Music level relative to the narration it sits under, before ducking. Roughly 11 dB
-    // down: audible as a bed on phone speakers without competing with the voice.
-    private const double MusicLevel = 0.28;
     private const double MusicFadeSeconds = 1.5;
+
+    private static readonly string[] MusicExtensions =
+        [".mp3", ".m4a", ".wav", ".ogg", ".flac", ".aac", ".opus"];
 
     // Null means "deliberately no music"; a configured path that isn't there is a
     // mistake and is treated as one.
@@ -120,24 +122,74 @@ static class VideoAssembler
     // to a folder that does not exist - so every video ever rendered shipped with no music
     // at all and nothing in the log said so. A misconfiguration that produces a
     // plausible-looking output file is the worst kind, hence the throw.
-    private static string? ResolveBackgroundMusic(GenConfig cfg)
+    //
+    // BackgroundMusicPath is a single file or a folder of them; a folder is the useful
+    // case, since the same bed under every video on the channel gets old fast.
+    //
+    // Which track a video gets is a stable hash of its job folder - deliberately not
+    // Random, and deliberately not string.GetHashCode, which .NET seeds per process. The
+    // 16:9 and 9:16 cuts are rendered by two separate calls and have to land on the same
+    // track, and re-running --assemble days later has to reproduce the earlier render.
+    private static string? ResolveBackgroundMusic(GenConfig cfg, string workDir)
     {
         if (string.IsNullOrWhiteSpace(cfg.BackgroundMusicPath)) return null;
+        if (File.Exists(cfg.BackgroundMusicPath)) return cfg.BackgroundMusicPath;
 
-        if (!File.Exists(cfg.BackgroundMusicPath))
+        if (!Directory.Exists(cfg.BackgroundMusicPath))
             throw new Exception(
                 $"BackgroundMusicPath points at \"{cfg.BackgroundMusicPath}\", which does not exist. " +
-                "Fix the path in appsettings.json, or clear it to render without music on purpose.");
+                "Point it at a track, or at a folder of tracks, or clear it to render without music.");
 
-        return cfg.BackgroundMusicPath;
+        var tracks = Directory.EnumerateFiles(cfg.BackgroundMusicPath)
+            .Where(f => MusicExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (tracks.Count == 0)
+            throw new Exception(
+                $"BackgroundMusicPath \"{cfg.BackgroundMusicPath}\" is a folder with no audio in it. " +
+                $"Drop some tracks in ({string.Join(", ", MusicExtensions)}).");
+
+        var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+        return tracks[(int)(BitConverter.ToUInt32(digest, 0) % (uint)tracks.Count)];
     }
+
+    // Measured once per track per process: both orientations of a video mix the same
+    // track, and there is no sense paying for the scan twice.
+    private static readonly Dictionary<string, double> LoudnessCache = new(StringComparer.OrdinalIgnoreCase);
+
+    // Tracks arrive at whatever level whoever mastered them felt like. The starter track
+    // measures -8.6 LUFS; library instrumentals commonly sit nearer -20. A fixed volume
+    // multiplier tuned against one of those makes the other either inaudible or intrusive,
+    // which is exactly the failure mode a folder full of mixed-provenance downloads
+    // invites. So each track is measured and given the precise gain that puts it on the
+    // configured bed level, whatever it started at.
+    private static async Task<double> MeasureLoudnessAsync(GenConfig cfg, string path)
+    {
+        if (LoudnessCache.TryGetValue(path, out var cached)) return cached;
+
+        var stderr = await RunFfmpegAsync(cfg, $"-hide_banner -i \"{path}\" -af ebur128=framelog=quiet -f null -");
+
+        // The summary block prints as "  I:         -8.6 LUFS".
+        var match = IntegratedLoudness().Match(stderr);
+        if (!match.Success ||
+            !double.TryParse(match.Groups[1].Value, NumberStyles.Float, CultureInfo.InvariantCulture, out var lufs))
+            throw new Exception(
+                $"Could not read the loudness of {Path.GetFileName(path)}. " +
+                $"It may not be a valid audio file:\n{Text.Tail(stderr, 500)}");
+
+        return LoudnessCache[path] = lufs;
+    }
+
+    [GeneratedRegex(@"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS")]
+    private static partial Regex IntegratedLoudness();
 
     // Lays the music bed under the finished narration track.
     //
-    // sidechaincompress does real ducking - the music drops whenever the narrator speaks
-    // and swells back in the gaps - which is what lets the bed be loud enough to hear at
-    // all. The previous fixed volume=0.12 had to be that quiet to stay out of the way,
-    // and at that level it may as well not be there.
+    // sidechaincompress does real ducking - the music dips whenever the narrator speaks
+    // and comes back in the gaps - so the bed can stay soft without disappearing entirely
+    // underneath the voice.
     //
     // The pan upmix is not cosmetic: Azure returns mono narration, and letting ffmpeg
     // rematrix mono to stereo on its own applies its usual -3 dB power-preserving gain,
@@ -152,15 +204,18 @@ static class VideoAssembler
             return;
         }
 
+        var gainDb = cfg.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, musicPath);
         var fadeOutAt = Math.Max(0, totalSeconds - MusicFadeSeconds);
+
+        Console.WriteLine($"  Music: {Path.GetFileName(musicPath)} at {cfg.BackgroundMusicLufs:0.#} LUFS ({gainDb:+0.#;-0.#} dB)");
 
         var filter =
             "[0:a]aresample=44100,aformat=sample_fmts=fltp,pan=stereo|c0=c0|c1=c0,asplit=2[voice][key];" +
             "[1:a]aresample=44100,aformat=sample_fmts=fltp:channel_layouts=stereo," +
-            $"volume={Text.Invariant(MusicLevel)}," +
+            $"volume={Text.Invariant(gainDb)}dB," +
             $"afade=t=in:st=0:d={Text.Invariant(MusicFadeSeconds)}," +
             $"afade=t=out:st={Text.Invariant(fadeOutAt)}:d={Text.Invariant(MusicFadeSeconds)}[music];" +
-            "[music][key]sidechaincompress=threshold=0.03:ratio=12:attack=15:release=350[ducked];" +
+            "[music][key]sidechaincompress=threshold=0.05:ratio=6:attack=20:release=400[ducked];" +
             "[voice][ducked]amix=inputs=2:duration=first:dropout_transition=0:normalize=0," +
             "alimiter=limit=0.95:level=false[a]";
 
@@ -441,7 +496,9 @@ static class VideoAssembler
         return seconds;
     }
 
-    private static async Task RunFfmpegAsync(GenConfig cfg, string arguments)
+    // Returns stderr, which is where ffmpeg puts everything interesting - including the
+    // ebur128 loudness summary the music mix reads back.
+    private static async Task<string> RunFfmpegAsync(GenConfig cfg, string arguments)
     {
         var ffmpeg = string.IsNullOrEmpty(cfg.FfmpegPath) ? "ffmpeg" : cfg.FfmpegPath;
         var psi = new ProcessStartInfo(ffmpeg, arguments) { RedirectStandardError = true, UseShellExecute = false };
@@ -452,6 +509,8 @@ static class VideoAssembler
 
         if (p.ExitCode != 0)
             throw new Exception($"ffmpeg failed (exit {p.ExitCode}):\n{Text.Tail(err, 2000)}");
+
+        return err;
     }
 
     private static Process StartOrThrow(ProcessStartInfo psi, string exe)
