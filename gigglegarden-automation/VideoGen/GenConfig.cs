@@ -8,6 +8,14 @@ record GenConfig
     public string AnthropicApiKey { get; init; } = "";
     public string ClaudeModel { get; init; } = "claude-opus-5";
 
+    // claude (default, zero risk) or groq (free tier - 30 RPM/6,000 TPM/14,400
+    // req/day, no card required, and unlike NVIDIA NIM's free tier Groq's own terms
+    // allow real low-volume production use, not just prototyping). See
+    // GroqScriptProvider/ScriptProviderFactory.
+    public string ScriptProvider { get; init; } = "claude";
+    public string GroqApiKey { get; init; } = "";
+    public string GroqModel { get; init; } = "llama-3.3-70b-versatile";
+
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
 
@@ -182,6 +190,12 @@ record GenConfig
         var googleReachable = !TtsProvider.Equals("azure", StringComparison.OrdinalIgnoreCase);
         if (googleReachable && (string.IsNullOrWhiteSpace(GoogleCloudTtsApiKey) || GoogleCloudTtsApiKey.StartsWith("PUT-")))
             missing.Add(nameof(GoogleCloudTtsApiKey));
+
+        // "claude" (the default) never touches Groq, so only require the key when
+        // ScriptProvider can actually route there.
+        var groqReachable = ScriptProvider.Equals("groq", StringComparison.OrdinalIgnoreCase);
+        if (groqReachable && (string.IsNullOrWhiteSpace(GroqApiKey) || GroqApiKey.StartsWith("PUT-")))
+            missing.Add(nameof(GroqApiKey));
 
         if (missing.Count > 0)
             throw new InvalidOperationException(

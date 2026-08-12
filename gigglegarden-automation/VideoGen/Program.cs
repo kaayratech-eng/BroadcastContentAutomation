@@ -125,7 +125,8 @@ async Task<int> RunPrepAsync()
     var recentNames = pooled is null ? CharacterSource.RecentNames(cfg, workDir) : [];
 
     var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
-    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext, pooled, recentNames, formatOverride);
+    var scriptProvider = ScriptProviderFactory.Create(cfg);
+    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride);
 
     var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(cfg, script, workDir);
     script.CharacterImagePath = characterImage;
@@ -287,7 +288,8 @@ async Task<int> RunTestTtsAsync()
 async Task<int> RunDryScriptAsync()
 {
     var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
-    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext, null, null, formatOverride);
+    var scriptProvider = ScriptProviderFactory.Create(cfg);
+    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, scriptProvider, trendContext, null, null, formatOverride);
 
     Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"");
     Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
