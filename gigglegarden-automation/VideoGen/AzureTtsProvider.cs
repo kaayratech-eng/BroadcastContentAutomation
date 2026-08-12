@@ -2,8 +2,11 @@ using System.Text;
 using System.Text.RegularExpressions;
 using GiggleGarden.Shared;
 
-// Azure Speech REST API — no SDK dependency needed for simple synthesis.
-partial class TtsClient(GenConfig cfg)
+// Azure Speech REST API — no SDK dependency needed for simple synthesis. Kept as the
+// mandatory fallback: it is the only provider covering pa-IN (no free Standard/WaveNet
+// Punjabi voice exists anywhere), and the forced-fallback path for en/hi via
+// GenConfig.TtsProvider = "azure". See TtsProviderFactory for routing.
+partial class AzureTtsProvider(GenConfig cfg) : ITtsProvider
 {
     // Style is Azure's per-voice "cheerful"-type express-as tag - verified live against
     // /cognitiveservices/voices/list before picking these (not every voice supports one,
@@ -30,7 +33,7 @@ partial class TtsClient(GenConfig cfg)
     [GeneratedRegex(@"\p{Lu}{2,}")]
     private static partial Regex AllCapsRun();
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, ContentFormat format = ContentFormat.Educational)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
@@ -38,10 +41,13 @@ partial class TtsClient(GenConfig cfg)
         var (locale, voice, style) = Voices.TryGetValue(language, out var v) ? v : Voices["en"];
         var escaped = System.Security.SecurityElement.Escape(SpeakableCase(text));
 
-        // Slightly faster/brighter than a flat reading, plus the voice's "cheerful" style
-        // where available - a plain rate/pitch nudge alone still reads as flat/robotic,
-        // not the warm, delighted delivery a kids' show wants.
-        var prosody = $"<prosody rate='-4%' pitch='+6%'>{escaped}</prosody>";
+        // Rate/pitch come from ScriptGenerator.FormatVoiceProfile - one shared table so a
+        // format's pacing can't drift between what the script says (NarrationStyle) and
+        // what actually gets spoken. The voice's "cheerful" express-as style (below) is
+        // deliberately left untouched by format - only "cheerful" is verified live for
+        // these voices, and an unverified style value risks a failed Azure call outright.
+        var (rate, pitch, _) = ScriptGenerator.FormatVoiceProfile[format];
+        var prosody = $"<prosody rate='{rate}' pitch='{pitch}'>{escaped}</prosody>";
         var voiceContent = style is null
             ? prosody
             : $"<mstts:express-as style='{style}' styledegree='2'>{prosody}</mstts:express-as>";

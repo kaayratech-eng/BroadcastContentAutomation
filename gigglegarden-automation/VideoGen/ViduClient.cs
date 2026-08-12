@@ -14,7 +14,7 @@ using GiggleGarden.Shared;
 // pipeline phases - see Program.cs --prep / --assemble. Tasks that miss the
 // window are auto-cancelled by Vidu and the credits refunded, so a lost task
 // costs latency rather than money.
-class ViduClient(GenConfig cfg)
+class ViduClient(GenConfig cfg) : IVideoProvider
 {
     private const string SubmitUrl = "https://api.vidu.com/ent/v2/img2video";
     private static string TaskUrl(string taskId) => $"https://api.vidu.com/ent/v2/tasks/{taskId}/creations";

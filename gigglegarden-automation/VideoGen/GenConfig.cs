@@ -11,6 +11,19 @@ record GenConfig
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
 
+    // Google Cloud Text-to-Speech: Standard voices are free to 4M chars/mo, WaveNet to
+    // 1M chars/mo (resets monthly, doesn't expire) - see TtsProviderFactory for the
+    // per-language routing this key enables. Restricted API key from GCP Console,
+    // scoped to "Cloud Text-to-Speech API" (same auth shape as YouTubeApiKey above).
+    public string GoogleCloudTtsApiKey { get; init; } = "";
+
+    // auto (default) = route by language via TtsProviderFactory (en/hi -> Google,
+    // pa -> Azure, since no free Punjabi voice exists on any provider). azure/google
+    // force every language onto one provider - azure is the zero-risk safety switch,
+    // google is for testing only and will hard-fail on pa rather than silently
+    // degrading to a paid/unintended voice.
+    public string TtsProvider { get; init; } = "auto";
+
     // Vidu image-to-video (see ViduClient.cs) - the source of every scene's picture.
     // OffPeak halves the price in exchange for a delivery window of up to 48 hours,
     // which is why generation (--prep) and assembly (--assemble) are separate phases.
@@ -143,12 +156,32 @@ record GenConfig
     // extra motion back for lower image spend.
     public double SplitLongSceneAfterSeconds { get; init; } = 8.0;
 
+    // Weighted random draw for ScriptGenerator.PickFormat - keys are ContentFormat member
+    // names (case-insensitive). Editing this (or overriding it from appsettings.json, the
+    // same way every other tunable here works) is how the content mix gets biased later
+    // without a rebuild. A --format flag/override always wins over this draw.
+    public Dictionary<string, int> ContentFormatWeights { get; init; } = new()
+    {
+        ["Educational"] = 30,
+        ["Rhyme"] = 20,
+        ["Poem"] = 10,
+        ["Bedtime"] = 15,
+        ["SingAlong"] = 15,
+        ["CountingSong"] = 10,
+    };
+
     public void Validate()
     {
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-")) missing.Add(nameof(AnthropicApiKey));
         if (string.IsNullOrWhiteSpace(AzureSpeechKey) || AzureSpeechKey.StartsWith("PUT-")) missing.Add(nameof(AzureSpeechKey));
         if (string.IsNullOrWhiteSpace(ViduApiKey) || ViduApiKey.StartsWith("PUT-")) missing.Add(nameof(ViduApiKey));
+
+        // "azure" forces every language onto Azure, so Google's key is genuinely unused
+        // in that mode - only require it when routing can actually reach Google.
+        var googleReachable = !TtsProvider.Equals("azure", StringComparison.OrdinalIgnoreCase);
+        if (googleReachable && (string.IsNullOrWhiteSpace(GoogleCloudTtsApiKey) || GoogleCloudTtsApiKey.StartsWith("PUT-")))
+            missing.Add(nameof(GoogleCloudTtsApiKey));
 
         if (missing.Count > 0)
             throw new InvalidOperationException(

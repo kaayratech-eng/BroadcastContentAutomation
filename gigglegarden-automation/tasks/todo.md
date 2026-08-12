@@ -547,3 +547,494 @@ synthetic data:
   look) versus the other 3 full-body characters — accepted per your call, not
   a defect, but worth knowing if a rendered video looks visually inconsistent
   when one of those 4 gets picked.
+
+---
+
+## Content formats (educational / rhyme / poem / bedtime / sing-along / counting song) — zero added cost
+
+Plan: `C:\Users\rishi\.claude\plans\gentle-gliding-breeze.md`, approved before
+coding. Full brief: expand `ScriptGenerator.cs` beyond the single hardcoded
+"educational" prompt into a randomized (weighted, overridable), format-aware
+generator — at no added cost (same one Claude call, no music-gen API, no new
+TTS provider, no more than 8-9 scenes).
+
+**Research before designing, all read directly:**
+- `TtsClient.cs` confirmed Azure SSML supports per-call `rate`/`pitch` (safe,
+  voice-agnostic) and `<mstts:express-as style=...>` (voice/language-gated —
+  only "cheerful" confirmed live for en/hi, pa has none). Decision: vary
+  rate/pitch by format only; leave the existing per-language `style` value
+  untouched, since the task's own wording authorizes "voice id, slower rate,
+  softer pitch" and an unverified style value risks a failed Azure call.
+- `assets/music/` holds only a README today — zero real tracks. This pass adds
+  the mood-folder convention + safe fallback, not real sourced audio.
+- **Confirmed the delivered YouTube thumbnail is a cropped frame extracted from
+  `script.Scenes[0]` (the intro bumper), not from `ThumbnailPrompt`**
+  (`Program.cs:339-341`: `ExtractThumbnailFrameAsync(cfg, landscape, grabAt,
+  thumbFrame)` where `grabAt` sits inside `Scenes[0]`'s duration).
+  `ThumbnailPrompt` re-confirmed dead for image generation, consistent with the
+  finding already logged above in this file — it only affects the persisted
+  `script.json` text. So the format-aware "calm/cozy bedtime-or-poem thumbnail"
+  requirement is actually delivered by making the **intro bumper's** prompt
+  format-aware, not by touching `ThumbnailPrompt`.
+- `research-kids-channels.md:199` evidences Bedtime/Lullaby directly;
+  Sing-Along and Counting Song both independently evidenced in the same doc
+  (recurring "Sing-Along" titles; "Ten in the Bed | Count and Sing..." at 10M
+  views) and are the task's own suggested extra niches.
+
+### Plan being implemented
+
+- `ContentFormat` enum (`Educational, Rhyme, Poem, Bedtime, SingAlong,
+  CountingSong`) in `ScriptGenerator.cs`.
+- `VideoScript` gains `Format`, `MusicMood` (model output, closed menu per
+  energy class), `NarrationStyle` (set by us from a shared
+  `FormatVoiceProfile` table, not model text).
+- `GenConfig.ContentFormatWeights` (weighted random pick, overridable via
+  `appsettings.json`); `ScriptGenerator.PickFormat` supports a deterministic
+  override; `Program.cs` gets `--format <name>`.
+- The single hardcoded prompt splits into a base block (universal rules,
+  including the Part 5 "always colourful" requirement) plus a per-format
+  block with genuinely divergent rules (bedtime explicitly drops hook/joke/
+  call-and-response).
+- `VideoAssembler.ResolveBackgroundMusic` gets an optional mood-folder lookup
+  with fallback to today's flat-folder behaviour, unchanged when no mood
+  folder exists.
+- `TtsClient.SynthesizeAsync` takes `ContentFormat` and looks up rate/pitch
+  from `FormatVoiceProfile`; `style` logic untouched.
+- Intro bumper in `Program.cs` becomes format-aware (energetic vs. calm
+  phrasing + colour cue) — this is also what fixes the delivered thumbnail's
+  mood per format, since it's the source frame.
+- Format-aware hashtag/caption examples added to the metadata prompt section;
+  `BaseTags` channel-identity block untouched.
+
+Verification section (build, `script.json` round-trip incl. old-shape
+compatibility, ~6 dry-run generations spanning formats with explicit
+override tests, per-format rule checks, explicit zero-new-external-calls
+confirmation) will be appended as a Review here once implemented.
+
+### Review
+
+### Decisions taken, against the plan above
+
+Implemented exactly as planned in all five files (`ScriptGenerator.cs`,
+`GenConfig.cs`, `VideoAssembler.cs`, `TtsClient.cs`, `Program.cs`) with one
+judgment call not spelled out in the plan:
+
+**Poem and Bedtime got a tighter per-scene character budget than the
+115-char default (Poem 70-95, Bedtime 55-80), baked into their prompt
+blocks.** Reason: `FormatVoiceProfile` gives Poem `-12%` rate and Bedtime
+`-22%` rate versus the baseline `-4%` — slower speech at the same 115-char
+budget would push total narration past `VerticalMaxSeconds` (85s) and the
+90s Reels ceiling, silently truncating the ending on exactly the two formats
+where a soft wind-down line matters most. Fixing pacing/text instead of
+adding scenes keeps the change inside the task's own hard constraint
+("if a format wants to feel longer, do it with pacing/voice, not more
+clips"). Confirmed in the dry run below: Bedtime scenes landed at 57-63
+chars, comfortably inside budget.
+
+### Old vs new
+
+| | Before | After |
+|---|---|---|
+| Format | always "educational", hardcoded in one prompt | `ContentFormat` enum (6 values), weighted-random per run, `--format` override for deterministic runs |
+| Prompt | single hardcoded block | base (universal rules) + per-format block with genuinely divergent rules — Bedtime explicitly forbids hook/joke/call-and-response |
+| Voice | fixed `-4%`/`+6%` SSML rate/pitch for every video | looked up per-format from one shared `FormatVoiceProfile` table (`ScriptGenerator.cs`, consumed by `TtsClient.cs`) — Bedtime `-22%/-6%`, Poem `-12%/+2%`, energetic formats unchanged at `-4%/+6%` |
+| Music | one flat folder, stable-hash pick | model outputs a closed-menu `MusicMood`; `ResolveBackgroundMusic` tries `{BackgroundMusicPath}/{slug(mood)}/` first, falls back to the flat folder unchanged if the mood folder doesn't exist — no real tracks added, folder convention only |
+| Intro bumper (also the thumbnail source frame) | one hard-coded "waves hello… bounces happily" phrasing | format-aware: energetic keeps that phrasing, Poem/Bedtime get "waves hello softly… sways gently", both with an explicit colour clause |
+| Scene/thumbnail colour | not required by the prompt | every format's base rules require an explicit colourful background phrase in every `imagePrompt`/`motionPrompt`; energetic formats get bright/saturated language, Poem/Bedtime get soft-pastel/warm-dim language — never dull, never monochrome |
+| Hashtags | one generic set | per-format examples layered onto the same fixed 12-tag base block (e.g. Bedtime → `#lullaby #bedtimestories`, Rhyme → `#nurseryrhymes #kidssongs`) |
+| `script.json` | no format/mood/style fields | `Format`, `MusicMood`, `NarrationStyle` persisted; an old file missing them still deserializes, defaulting to `Format = Educational` (today's exact behaviour) |
+
+### Verification — what was actually run
+
+1. **`dotnet build`** — succeeded, 0 warnings, 0 errors, across all five
+   edited files together.
+
+2. **`script.json` round-trip**, reflection harness against the built
+   `VideoGen.dll`/`GiggleGarden.Shared.dll` (isolated into its own
+   `formattest/` mini-project after the older scratch harness folder turned
+   out to have three stale, mutually-conflicting `Program.cs` files left
+   over from earlier sessions — fixed by isolating rather than by touching
+   that pre-existing scratch structure). All checks pass:
+   - `job-20260809-150322/script.json`, written before these fields
+     existed, still deserializes; `Format` defaults to `Educational`,
+     `MusicMood`/`NarrationStyle` default to `""`.
+   - A script with `Format = Bedtime` round-trips `Format`/`MusicMood`/
+     `NarrationStyle` intact through `Sidecar.Options`.
+   - All 6 `ContentFormat` members round-trip individually.
+   - **One assumption in the test itself was wrong, not the code**: I
+     expected the enum to serialize under a camelCase *property* name
+     (`"format": "bedtime"`), but `Sidecar.Options` only camelCases enum
+     *values* (`JsonStringEnumConverter(JsonNamingPolicy.CamelCase)`) —
+     there's no `PropertyNamingPolicy`, so property names stay PascalCase
+     (`"Format": "bedtime"`), matching every other field in a real
+     `script.json` (`"Title"`, `"Description"`, …). Fixed the test's
+     expectation, not the production code, once confirmed against a real
+     job file.
+
+3. **Dry-run — 6 real `ScriptGenerator.GenerateAsync` calls** (one Claude
+   call each, same model/`max_tokens` the pipeline already uses — no new
+   cost category), via a reflection harness that also binds the real
+   `GenConfig` from `appsettings.json`/`appsettings.Local.json` the same
+   way `Program.cs` does. 2 forced via `formatOverride` (Bedtime, Rhyme —
+   the two flagged highest-risk), 4 left to the weighted random draw.
+   Results: **Bedtime, Rhyme, Rhyme, Educational, Rhyme, Educational** — 3
+   distinct formats across 6 runs, both forced overrides landed exactly as
+   requested, confirming the override path works independently of the
+   weighted draw.
+
+   Per-script checks, all passed:
+   - Every one of the 48 scenes across all 6 scripts named an explicit
+     colourful background in both `imagePrompt` and `motionPrompt` — bright/
+     saturated palettes for Educational and Rhyme runs, soft-pastel/warm-dim
+     ("dusty blue", "lavender", "warm amber") for the Bedtime run. No plain,
+     dull, or monochrome backgrounds anywhere.
+   - **Bedtime** ("a sleepy firefly saying goodnight to the garden"): no
+     hook, no joke, no call-and-response anywhere in its 8 scenes; explicit
+     wind-down ending ("Lumi closes her eyes. Goodnight, little garden.
+     Goodnight, you."); scene narration 57-63 chars, inside the tightened
+     55-80 budget; `MusicMood = "soft piano lullaby"`, `NarrationStyle =
+     "calm, slow, soft"` — matches `FormatVoiceProfile[Bedtime].Label`
+     exactly.
+   - **Rhyme** (3 runs, forced + 2 random): every scene is an actual rhyming
+     couplet ("waddling by / up in the sky", "shore / one more", "Kip / dip",
+     "sea / with me"), repeated chorus line across scenes in the forced run
+     ("Quack, quack, quack, five ducks at the beach!"); `NarrationStyle =
+     "bright, playful"` every time.
+   - **Educational** (2 random runs): both kept the current hook / one funny
+     beat / call-and-response shape ("Oh no! Where is my toothbrush?" …
+     "Blub, blub, blub! … So silly!" … "Can you brush with me?");
+     `NarrationStyle = "bright, lively"`.
+   - `MusicMood` stayed inside the intended closed menu for the format's
+     energy class in all 6 (calm: `soft piano lullaby`; energetic: `upbeat
+     playful`).
+   - Scene count was 8 in every run — no format pushed past the existing
+     8-9 bound.
+
+4. **Zero new external calls/providers, confirmed explicitly**: the dry run
+   made exactly one Claude API call per script (6 calls total for 6 scripts
+   — the same ratio production uses), the same model and `max_tokens` as
+   before this change. No music-generation API exists in the code path —
+   `ResolveBackgroundMusic` only ever reads local files. No new TTS
+   provider — `TtsClient.SynthesizeAsync` still calls the same Azure
+   endpoint, only the `rate`/`pitch` SSML values it sends now vary by
+   format via a lookup table; the `style`/express-as attribute (the one
+   piece confirmed live only for "cheerful" on en/hi) is untouched by
+   format, exactly per the plan's risk-avoidance decision.
+
+### Not verified
+
+- **TTS and assembly were not exercised in this pass.** The dry run calls
+  `GenerateAsync` directly, so `TtsClient.SynthesizeAsync`'s new
+  `ContentFormat` parameter and `VideoAssembler`'s new mood-folder lookup
+  were verified by build + code inspection, not by a live run — running
+  either spends Azure/Vidu credit and needs a separate go-ahead, consistent
+  with how every prior phase in this file treated `--prep`/`--assemble`.
+- **No real mood-subfolder music tracks exist.** `assets/music/` is still
+  empty apart from its README, so `ResolveBackgroundMusic`'s mood-folder
+  path has never actually been taken end to end — only its safe fallback
+  to the flat folder (unchanged from before) is reachable today.
+- ~~SingAlong and CountingSong were not drawn in the 6-run sample~~ — **closed.**
+  Added `--dry-script [--topic] [--language] [--format]` (`Program.cs`,
+  `RunDryScriptAsync`): one `ScriptGenerator.GenerateAsync` call and nothing
+  else — no character draw, no TTS, no Vidu — same zero-spend pattern as
+  `--test-tts`, writes to `work/dry-script/` so it can never collide with a
+  real `job-*` folder. Ran both forced formats live:
+  - **SingAlong** ("five little ducks counting"): repeated chorus line
+    ("quack, quack, quack" / "quack, quack, clap, clap"), explicit
+    call-and-response ("Can you quack and clap along with me?"), 8 scenes
+    60-85 chars, `NarrationStyle = "bright, singable"`.
+  - **CountingSong** ("counting balloons at a party"): correct sequential
+    count-up 1→8 across the 8 scenes ("that makes one" → … → "hooray for
+    eight"), 73-91 chars, `NarrationStyle = "bright, playful"`.
+  - Both: 10 hashtags on description line 2, zero ALL-CAPS words, no
+    `#Shorts`, character named throughout, `MusicMood` inside the energetic
+    menu (`upbeat playful`). All 6 `ContentFormat` members now confirmed
+    live end-to-end (script-generation stage).
+
+---
+
+## Part D — Free audio migration + free video/music/character research
+
+Full plan: `C:\Users\rishi\.claude\plans\gentle-gliding-breeze.md` (7 parts,
+approved). Goal: stop paying for narration if a free tier/local option covers
+it, get an honest sourced answer on free video/music/character-art options,
+without adding cost, adding a paid provider, or automating a consumer UI.
+
+### Part 1 — Cost surface map (research, no code)
+
+**Azure TTS** — `TtsClient.SynthesizeAsync` (`VideoGen/TtsClient.cs:33-78`), raw
+REST POST to `https://{region}.tts.speech.microsoft.com/cognitiveservices/v1`
+with an `Ocp-Apim-Subscription-Key` header and an SSML body. No SDK, no
+interface prior to this change — concretely `new`'d at `Program.cs:156`
+(`RunPrepAsync`) and `Program.cs:217` (`RunRettsAsync`). 3 languages only
+(en/hi/pa, one per run via `--language`), voice/locale table hardcoded at
+`TtsClient.cs:12-17`. **9 billable calls/video** (8 script scenes + 1 intro
+bumper), every run, on every language.
+
+**Vidu I2V** — `ViduClient` (`VideoGen/ViduClient.cs`), raw REST to
+`api.vidu.com/ent/v2/img2video` + `/tasks/{id}/creations` polling + a plain GET
+download. No interface prior to this change — `new`'d at `Program.cs:176` and
+`Program.cs:247`. Billed per submit-call credits (`ViduClient.cs:93`). **9
+billable calls/video**, same cadence as TTS.
+
+**Character consistency** — one fixed reference image per video, reused as
+every scene's Vidu start frame (`Program.cs:179-189`), deliberately *not*
+frame-chained (the `Program.cs:170-176` comment explains why: parallel-safe
+against Vidu's up-to-48h off-peak queue, no compounding drift across scenes).
+`VideoAssembler.ExtractLastFrameAsync` exists in the codebase but is dead code
+— nothing calls it.
+
+**ffmpeg** — already local-only via `Process.Start` (`VideoAssembler.cs`,
+`RunFfmpegAsync` at line 531) for concat/crossfade, audio mux + sidechain
+ducking + loudness normalization, portrait-fit, thumbnail extraction. No API
+involved, zero marginal cost regardless of how much stitching a future design
+needs.
+
+**Net: every video today costs 9 Azure TTS calls + 9 Vidu calls, unconditionally.**
+Parts 2/4/6/7 below target the TTS half (fully addressable for free) and survey
+the video/music half (not addressable for free without new hardware cost, so
+Vidu stays as-is).
+
+### Part 2 — Free audio migration (implemented)
+
+- `ITtsProvider.cs` — new interface, `SynthesizeAsync(text, language, outputPath,
+  format)`, matching the old `TtsClient` signature so call sites barely changed.
+- `TtsClient.cs` → `AzureTtsProvider.cs` (`git mv`), class renamed to
+  `AzureTtsProvider` implementing `ITtsProvider`. **Zero logic changes** — same
+  SSML, same endpoint, same voice table. This is what keeps Azure fully
+  functional as the mandatory `pa` provider and the forced-fallback path.
+- `GoogleTtsProvider.cs` — new. REST POST to
+  `https://texttospeech.googleapis.com/v1/text:synthesize`, API-key auth (`?key=`,
+  same shape as `GenConfig.YouTubeApiKey`), Standard voices only (`en-US-Standard-C`,
+  `hi-IN-Standard-A` — pick a different name in `GoogleTtsProvider.cs:20-21` if
+  those don't sound right once you can hear real output; not verified live yet,
+  see Part 2 verification note below). SSML `<prosody rate/pitch>` built from the
+  same `ScriptGenerator.FormatVoiceProfile` table `AzureTtsProvider` already uses,
+  so a format's pacing can't drift between providers. No Google equivalent to
+  Azure's `<mstts:express-as style='cheerful'>` — that dimension is simply absent
+  on the Google path rather than approximated.
+- `TtsProviderFactory.cs` — new. Per-language routing, not a single global switch:
+  `en`/`hi` → `GoogleTtsProvider`, `pa` → `AzureTtsProvider` always (no free
+  Punjabi voice exists anywhere). `GenConfig.TtsProvider` (`"auto"` default /
+  `"azure"` / `"google"`) overrides this — `"azure"` is the zero-risk safety
+  switch; `"google"` is testing-only and throws on `pa` rather than silently
+  degrading.
+- `GenConfig.cs` — added `GoogleCloudTtsApiKey` and `TtsProvider`.
+  `Validate()` now requires `GoogleCloudTtsApiKey` whenever routing can reach
+  Google (i.e. whenever `TtsProvider` isn't forced to `"azure"`) — **this is a
+  real behavior change worth flagging**: since `TtsProvider` defaults to
+  `"auto"`, the app will refuse to start on the next run until either a Google
+  Cloud TTS API key is added to `appsettings.Local.json`/env, or
+  `GIGGLE_TtsProvider=azure` is set to keep running Azure-only exactly like
+  before. Azure/Vidu/Anthropic keys already fail this same way today (fail-fast
+  at startup with a clear message) — this follows that existing convention
+  rather than silently substituting a provider.
+- `Program.cs:156` and `Program.cs:217` — swapped `new TtsClient(cfg)` for
+  `TtsProviderFactory.Create(cfg, language!)`; the surrounding loops are
+  untouched.
+
+### Part 3 — Free video feasibility (report only)
+
+Written to `tasks/free-video-feasibility.md`. Headline: **no-go for now** — Vidu
+stays exactly as-is, no code path changed for this part beyond the inert
+`IVideoProvider` seam (Part 4). Covers Qwen Chat (disqualified — consumer UI, no
+durable free API), Meta AI/Movie Gen/Vibes (disqualified — same reason, see Part 7),
+self-hosted Wan 2.2 (the one credible free path, but real GPU-rental cost + ops
+burden), LTX-Video, SVD/AnimateDiff, and the bifurcate-to-5s-and-stitch strategy
+(worse on consistency and generation count, only wins on being free). Full sourced
+recommendation table and explicit go/no-go with revisit triggers in that file.
+
+### Part 4 — `IVideoProvider` seam (implemented, zero behavior change)
+
+`IVideoProvider.cs` — new interface capturing `ViduClient`'s existing
+`SubmitAsync`/`PollAsync`/`DownloadAsync` contract verbatim (reuses
+`ViduClient.Submission`/`ViduClient.Result` rather than duplicating them).
+`ViduClient` now implements it (`ViduClient.cs:17`); `Program.cs:176`/`247`
+construct it as `IVideoProvider vidu = new ViduClient(cfg)` instead of the bare
+concrete type. No new class, no behavior change — purely a type-level seam so a
+future provider (see Part 3's revisit triggers) could be dropped in later without
+touching orchestration logic.
+
+### Part 5 — Head-only pool fix + free character-tool research
+
+**Fix (done):** deleted the 4 Kenney.nl "face badge" assets
+(`animal-pack-bear/elephant/giraffe/panda`, `.png` + `.json` each) from
+`assets/character-pool/` — root cause of the "just heads" bug you flagged. Their
+sidecar `.json` descriptions literally said things like *"a round brown bear face
+badge... framing the face,"* and that text gets injected into every scene's image
+prompt (`ScriptGenerator.cs:610-611,636`), so picking one wouldn't just have reused
+a bad image — it would have asked the image model for a face-badge crop on every
+subsequent scene too. Not live yet in practice (`CharacterPoolBuildupSize` = 15 >
+pool size 7, so `Program.cs:118` was still always inventing new characters) — this
+removes the landmine before it would have detonated at video #15. Pool now holds 3
+full-body assets: `gigi-the-duckling`, `teddy-bear`, `mascot-bunny` (all verified
+full-body/standing by reading their `.json` sidecars).
+
+**Research (report only):** written to `tasks/free-character-tool-shortlist.md`.
+Shortlisted Canva, OpenArt, Adobe Firefly, and Picsart (all usable, none default to
+full-body output — all require explicit "full body, standing" prompting, same
+discipline the invented-character path already follows); ToonyTool ruled out as a
+category mismatch (it's a comic-panel composer, not a character generator).
+Recommendation: OpenArt first (daily-refreshing free quota, style-reference
+support), Canva second. **Nothing generated, downloaded, or added to the pool** —
+that shortlist is pending your sign-off on a specific tool before any art is
+sourced.
+
+### Part 6 — Google AI (Lyria RealTime) for free background music: research + recommendation
+
+**Findings (sourced, dated Aug 2026):**
+- Google DeepMind's **Lyria RealTime** (model id `lyria-realtime-exp`) is a genuine
+  programmatic API — a WebSocket session, not a consumer-UI-only tool. Input is
+  text "weighted prompts" (mood/genre/instrument descriptors, several blendable at
+  once); output is raw 16-bit PCM, 48kHz stereo, **instrumental-only** (no vocals —
+  matches the "instrumental-only, very soft" bar already set for this channel's
+  music), with up to ~2s control latency for steering prompts live mid-stream.
+  ([Model card](https://ai.google.dev/gemini-api/docs/models/lyria-realtime-exp),
+  [Realtime music generation guide](https://ai.google.dev/gemini-api/docs/realtime-music-generation).)
+- **Free access**: [MusicFX](https://www.geminimusic.org/tools/music-fx), the
+  consumer tool built on this same model, is confirmed free with no caps, and the
+  [pricing page](https://ai.google.dev/gemini-api/docs/pricing) lists no charge for
+  `lyria-realtime-exp` at all — only the separate *batch* "Lyria 3" model is paid
+  ($0.04-0.08/song) and explicitly free-tier-inaccessible. `lyria-realtime-exp` is
+  labeled "experimental," which in Google's convention means free during preview
+  but **not a durable SLA** — could change or be paywalled without notice.
+- **Quota is unpublished.** No RPM or session-length ceiling appears on the static
+  docs pages; it's only visible in a live AI Studio dashboard once a GCP project
+  exists. This can share the same one-time GCP-project-with-billing-enabled setup
+  Part 2's Google TTS key already needs — it's a single account-setup step, not two.
+- Output carries an inaudible SynthID watermark (Google's standard Responsible AI
+  policy) — a non-issue for an ambient background bed.
+- **Shape mismatch to solve before this is usable in the pipeline:** Lyria RealTime
+  is a *live/interactive* API (steer a continuous stream), not a "POST text, get an
+  MP3 back" batch call like the TTS providers. Turning it into a fixed-length
+  background track needs a small WebSocket client: open a session, send the mood
+  prompt (reusing the same mood vocabulary `VideoAssembler.ResolveBackgroundMusic`
+  already derives per format), buffer the PCM stream for the render's duration,
+  close the session, hand the buffer to ffmpeg (already in the pipeline) for
+  encoding + the existing `-36 LUFS` normalization pass. It would become one more
+  input option feeding the existing `BackgroundMusicPath` resolution point, not a
+  new pipeline stage.
+
+**Recommendation:** promising enough to prototype, not to commit to blindly — the
+free-but-unpublished-quota status needs verifying against a live key before it's
+trustworthy, the same way Part 2's Google TTS auth approach needs a first live call
+to confirm. Per the standing instruction not to pick/source music unilaterally,
+**this stays a recommendation + a proposed prototype step, not shipped code in this
+pass.** No `BackgroundMusicPath` behavior has changed. Proposed next step, pending
+your go-ahead: a ~15s Lyria RealTime session against a real API key, to confirm
+audio quality/mood-steerability and see the actual quota in the AI Studio
+dashboard — then decide together whether to build the WebSocket→ffmpeg bridge as a
+new source alongside the existing static-track-folder option (additive, not a
+replacement — already-licensed/curated tracks stay available).
+
+**Dropped (done).** Built a `--test-lyria` diagnostic (`Program.cs`, `RunTestLyriaAsync`)
+that shelled out to a small Node helper (`tools/lyria-test/lyria-fetch.js`, using
+Google's official `@google/genai` SDK — no .NET SDK exists for this, and the raw
+WebSocket wire format isn't publicly documented) to fetch a short clip and wrap it
+into a `.wav`. Ran it against a real Gemini API key: the WebSocket connected fine,
+then closed immediately with **code 1011**: *"Your prepayment credits are depleted.
+Please go to AI Studio at https://ai.studio/projects to manage your project and
+billing."* This directly contradicted the pricing-page research above (no charge
+listed for `lyria-realtime-exp`) — in practice the project needs **prepaid billing
+credits enabled** before the experimental model will run at all, regardless of
+whether per-call usage is later billed. No billing was ever enabled and nothing was
+purchased. After review, the call was to **not** enable billing — same disqualified
+category as Adobe Firefly's enterprise minimum and Canva's no-API finding, per this
+task's "no new paid provider" hard constraint. The entire integration has since been
+**fully removed**: `LyriaApiKey` out of `GenConfig.cs`/`appsettings.json`/
+`appsettings.Local.json`, `tools/lyria-test/` deleted, and every `--test-lyria`/
+`RunTestLyriaAsync` code path pulled out of `Program.cs`. No `BackgroundMusicPath`/
+`VideoAssembler` code ever changed — the existing static track-folder remains the
+only background-music source. This closes Part 6 with no viable free/agent-safe
+option found this pass.
+
+### Part 7 — Meta AI for free 5-10s video clips: research (no code)
+
+Meta's video model, **Movie Gen**, has [no public developer API — Meta has stated
+this explicitly](https://ai.meta.com/research/movie-gen/). The only access point is
+**Vibes**, a consumer feed inside the Meta AI app/meta.ai (launched 2026). Same
+shape as the Qwen Chat finding in Part 3: free to a human, zero programmatic
+access — automating it means scripting a consumer UI, which the task's hard
+constraint and the standing "no consumer UI automation" rule both forbid. **Verdict:
+not usable in an automated pipeline**, same category and reason as Qwen Chat.
+Recorded in `tasks/free-video-feasibility.md` alongside the Qwen finding rather
+than duplicated in full here; not evaluated further on consistency/hardware axes
+since the ToS/automation gate alone is disqualifying.
+
+### Verification (done)
+
+1. **`dotnet build` clean** with `ITtsProvider`/`AzureTtsProvider`/`GoogleTtsProvider`/
+   `TtsProviderFactory`/`IVideoProvider` all present — 0 warnings, 0 errors.
+2. **Real TTS calls, no Vidu/Claude spend.** Added a small diagnostic command,
+   `--test-tts [--language en|hi|pa]` (`Program.cs`, `RunTestTtsAsync`), that
+   synthesizes one fixed sample line on every provider reachable for that language
+   and writes both outputs to `work/tts-test/` — deliberately skips script
+   generation and Vidu submission entirely, so it costs nothing beyond a couple of
+   free-tier TTS calls. Ran all three languages against the real APIs:
+   - `en`: Azure and Google both succeeded (`azure-en.mp3` 89,856 bytes,
+     `google-en.mp3` 51,456 bytes) — sent to you for a side-by-side listen.
+   - `hi`: Azure and Google both succeeded (`azure-hi.mp3` 80,352 bytes,
+     `google-hi.mp3` 38,208 bytes) — also sent for comparison.
+   - `pa`: Azure succeeded (`azure-pa.mp3` 76,320 bytes); Google correctly threw
+     `NotSupportedException` ("no free Standard voice for language 'pa'") instead
+     of silently producing wrong/degraded audio — confirms the per-language
+     routing gap is enforced, not just documented.
+3. **Monthly character volume vs. Google's free tier.** Measured real narration
+   length from 3 existing `script.json` files (`work/job-20260809-*`): 614, 599,
+   and 816 characters per video (7-9 scenes each, intro included) — averaging
+   ~677 chars/video, in line with the ~1,000 chars/video estimate in the original
+   plan. At that rate, Google's 4M-char/mo Standard-voice free ceiling covers
+   roughly **5,900 videos/month** before any charge — several orders of magnitude
+   above any realistic publish cadence for this channel. Headroom is not a
+   practical constraint.
+4. **`pa` routing confirmed** to stay on Azure end-to-end (see #2) — the one
+   language that had to keep working exactly as before this change.
+5. `tasks/free-video-feasibility.md` and `tasks/free-character-tool-shortlist.md`
+   both exist with sourced, dated findings and explicit verdicts (no-go for video;
+   OpenArt/Canva shortlisted, nothing sourced without approval, for characters).
+6. `IVideoProvider` compiles; `ViduClient` unchanged behaviorally (only the
+   interface implementation was added — no method bodies touched).
+7. 4 head-only pool assets confirmed gone from `assets/character-pool/`
+   (`animal-pack-bear/elephant/giraffe/panda`, 8 files) — pool holds 3 verified
+   full-body assets (`gigi-the-duckling`, `teddy-bear`, `mascot-bunny`).
+
+### Not yet done / deferred by design
+
+- **A real `--prep`/`--assemble` run through the full pipeline** (script → TTS →
+  Vidu → ffmpeg) was deliberately not run in this pass — that spends real Vidu
+  credits, and `--test-tts` already isolates and verifies the actual change (TTS
+  routing) without that cost. Worth running once you're ready to greenlight a real
+  video and want to see the free-audio path in a finished render.
+- **`TtsProvider` set to `"azure"` — your call after listening.** You compared
+  `azure-en.mp3` against `google-en.mp3` and preferred Azure. `appsettings.json`
+  now has `"TtsProvider": "azure"` explicitly (previously absent, defaulting to
+  `"auto"` in code). `TtsProviderFactory.Create` forces `AzureTtsProvider` for
+  every language when this is set, regardless of `en`/`hi`/`pa` — same behavior
+  as before Part 2 started, just reached through the new interface. Google is
+  wired, tested, and free-tier-headroom-verified (~5,900 videos/mo) if you ever
+  want to flip `TtsProvider` back to `"auto"` or `"google"` later — no code
+  change needed, just the one config value. `dotnet build` clean after the
+  change; `TtsProviderFactory`'s `"azure"` branch was already exercised live via
+  `--test-tts`'s direct `AzureTtsProvider` calls in the verification above, so
+  this is a config flip onto an already-verified path, not new code.
+- **Lyria RealTime and the character-tool shortlist stay at the report stage**,
+  per the standing instruction not to source music/art unilaterally — no
+  `BackgroundMusicPath` or `assets/character-pool/` changes beyond the 4-asset
+  deletion.
+
+### Summary — zero new paid providers, no consumer UI automated
+
+- **No new paid provider added.** Google Cloud TTS is used strictly within its
+  free tier (Standard voices, ~5,900 videos/month of headroom at current usage);
+  the only other new dependency is the inert `IVideoProvider` interface around
+  the existing (unchanged) Vidu client.
+- **No consumer chat/web UI automated.** Qwen Chat and Meta AI/Vibes were both
+  evaluated and explicitly ruled out for exactly this reason.
+- **Azure kept fully functional** — `AzureTtsProvider` is a pure rename of the
+  old `TtsClient` with zero logic changes, remains the mandatory `pa` provider,
+  and is one config flag (`TtsProvider=azure`) away from being the provider for
+  every language again if needed.
+- **Character pool landmine removed** before it could reach production (4
+  head-only assets deleted; the 3 remaining are all verified full-body).
+- **Vidu untouched behaviorally** — Parts 3/4 add a report and an interface seam
+  only; no video-generation code path changed.

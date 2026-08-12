@@ -11,13 +11,14 @@ static partial class VideoAssembler
     // crossfades them together, then mixes background music under the narration.
     public static async Task AssembleAsync(
         GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
-        string workDir, string outputPath, int w, int h, bool preferVerticalImages)
+        string workDir, string outputPath, int w, int h, bool preferVerticalImages,
+        string? musicMood = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
         // Resolved up front, not at the mix step several minutes of encoding later, so a
         // bad path fails before any work is done rather than after all of it.
-        var music = ResolveBackgroundMusic(cfg, workDir);
+        var music = ResolveBackgroundMusic(cfg, workDir, musicMood);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -72,11 +73,11 @@ static partial class VideoAssembler
     // image path, so the two produce interchangeable output.
     public static async Task AssembleFromClipsAsync(
         GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
-        string workDir, string outputPath, int w, int h)
+        string workDir, string outputPath, int w, int h, string? musicMood = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
-        var music = ResolveBackgroundMusic(cfg, workDir);
+        var music = ResolveBackgroundMusic(cfg, workDir, musicMood);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -130,7 +131,14 @@ static partial class VideoAssembler
     // Random, and deliberately not string.GetHashCode, which .NET seeds per process. The
     // 16:9 and 9:16 cuts are rendered by two separate calls and have to land on the same
     // track, and re-running --assemble days later has to reproduce the earlier render.
-    private static string? ResolveBackgroundMusic(GenConfig cfg, string workDir)
+    //
+    // mood (script.MusicMood, e.g. "soft piano lullaby") is tried as a subfolder of
+    // BackgroundMusicPath first - {BackgroundMusicPath}/{slugified-mood}/ - so a channel
+    // that eventually sources separate calm/energetic pools gets format-appropriate music
+    // for free. Until that subfolder exists (or while it's empty), this falls straight
+    // through to today's flat-folder behaviour unchanged - no mood pools exist yet, so
+    // this is currently a no-op in practice.
+    private static string? ResolveBackgroundMusic(GenConfig cfg, string workDir, string? mood = null)
     {
         if (string.IsNullOrWhiteSpace(cfg.BackgroundMusicPath)) return null;
         if (File.Exists(cfg.BackgroundMusicPath)) return cfg.BackgroundMusicPath;
@@ -140,25 +148,43 @@ static partial class VideoAssembler
                 $"BackgroundMusicPath points at \"{cfg.BackgroundMusicPath}\", which does not exist. " +
                 "Point it at a track, or at a folder of tracks, or clear it to render without music.");
 
-        var tracks = Directory.EnumerateFiles(cfg.BackgroundMusicPath)
+        var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+        if (!string.IsNullOrWhiteSpace(mood))
+        {
+            var moodDir = Path.Combine(cfg.BackgroundMusicPath, Slugify(mood));
+            if (Directory.Exists(moodDir))
+            {
+                var moodTrack = PickTrack(moodDir, key);
+                if (moodTrack is not null) return moodTrack;
+            }
+        }
+
+        var track = PickTrack(cfg.BackgroundMusicPath, key);
+        if (track is null)
+            Console.WriteLine(
+                $"  Music: none - \"{cfg.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
+                $"Drop instrumentals in ({string.Join(", ", MusicExtensions)}) to get a bed.");
+        return track;
+    }
+
+    private static string Slugify(string text) =>
+        Regex.Replace(text.Trim().ToLowerInvariant(), @"[^a-z0-9]+", "-").Trim('-');
+
+    // An empty pool is a legitimate waiting state - the folder is there, the tracks are
+    // not sourced yet - so the caller renders without music rather than failing. Said out
+    // loud, though: silence here once hid a genuinely broken path for every video the
+    // channel had published.
+    private static string? PickTrack(string folder, string stableKey)
+    {
+        var tracks = Directory.EnumerateFiles(folder)
             .Where(f => MusicExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
             .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        // An empty pool is a legitimate waiting state - the folder is there, the tracks
-        // are not sourced yet - so it renders without music rather than failing. Said out
-        // loud, though: silence here is what hid the broken path for every video the
-        // channel has published so far.
-        if (tracks.Count == 0)
-        {
-            Console.WriteLine(
-                $"  Music: none - \"{cfg.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
-                $"Drop instrumentals in ({string.Join(", ", MusicExtensions)}) to get a bed.");
-            return null;
-        }
+        if (tracks.Count == 0) return null;
 
-        var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(key));
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(stableKey));
         return tracks[(int)(BitConverter.ToUInt32(digest, 0) % (uint)tracks.Count)];
     }
 

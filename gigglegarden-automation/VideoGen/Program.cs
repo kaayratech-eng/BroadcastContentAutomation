@@ -35,6 +35,7 @@ var cfg = config.Get<GenConfig>() ?? throw new InvalidOperationException("appset
 
 string? topic = null, language = "en", job = null;
 var mode = "";
+ContentFormat? formatOverride = null;
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -43,13 +44,25 @@ for (var i = 0; i < args.Length; i++)
         case "--prep": mode = "prep"; break;
         case "--assemble": mode = "assemble"; break;
         case "--retts": mode = "retts"; break;
+        case "--test-tts": mode = "test-tts"; break;
+        case "--dry-script": mode = "dry-script"; break;
         case "--job" when i + 1 < args.Length: job = args[++i]; break;
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
+        case "--format" when i + 1 < args.Length:
+            if (!Enum.TryParse<ContentFormat>(args[++i], ignoreCase: true, out var parsedFormat))
+            {
+                Console.Error.WriteLine($"Unknown --format '{args[i]}'. Use one of: {string.Join(", ", Enum.GetNames<ContentFormat>())}.");
+                return 1;
+            }
+            formatOverride = parsedFormat;
+            break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa]");
+            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--format Educational|Rhyme|Poem|Bedtime|SingAlong|CountingSong]");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
             Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
+            Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
+            Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...]   one script-generation call only, no TTS/character-draw/Vidu spend");
             return 0;
     }
 }
@@ -84,6 +97,8 @@ try
     {
         "prep" => await RunPrepAsync(),
         "retts" => await RunRettsAsync(),
+        "test-tts" => await RunTestTtsAsync(),
+        "dry-script" => await RunDryScriptAsync(),
         _ => await RunAssembleAsync(),
     };
 }
@@ -110,36 +125,46 @@ async Task<int> RunPrepAsync()
     var recentNames = pooled is null ? CharacterSource.RecentNames(cfg, workDir) : [];
 
     var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
-    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext, pooled, recentNames);
+    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext, pooled, recentNames, formatOverride);
 
     var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(cfg, script, workDir);
     script.CharacterImagePath = characterImage;
     if (addToPool) CharacterSource.SaveToPool(cfg, script, characterImage);
 
-    Console.WriteLine($"Script: \"{script.Title}\" — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+    Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
 
     // 2. The branded intro bumper is scene zero: the same channel greeting every video,
     //    this video's character introducing itself, and a one-line preview of what it
-    //    teaches. The greeting is the constant now that the cast is not.
+    //    teaches. The greeting is the constant now that the cast is not. This clip is also
+    //    what the YouTube thumbnail is cropped from (see ExtractThumbnailFrameAsync below),
+    //    so its wording/motion is what actually delivers a format-appropriate thumbnail -
+    //    calm formats get a gentler wave and a soft-pastel-but-colourful setting instead of
+    //    the energetic bounce every format used to get.
+    var calmIntro = script.Format is ContentFormat.Poem or ContentFormat.Bedtime;
     var intro = new Scene
     {
         Narration = script.IntroText,
-        ImagePrompt = $"{script.CharacterName} greeting the viewer.",
-        MotionPrompt =
-            $"{script.CharacterName} ({script.CharacterDescription}) waves hello to the viewer and bounces " +
-            "happily on the spot, eyes bright and smiling. 2D cartoon animation, flat colors, thick outlines, " +
-            "character design stays consistent.",
+        ImagePrompt = calmIntro
+            ? $"{script.CharacterName} greeting the viewer softly, colourful soft pastel background, warm cosy palette."
+            : $"{script.CharacterName} greeting the viewer, colourful bright background, cheerful palette.",
+        MotionPrompt = calmIntro
+            ? $"{script.CharacterName} ({script.CharacterDescription}) waves hello softly to the viewer and sways " +
+              "gently on the spot, eyes soft and calm. Colourful soft pastel background, warm cosy palette. " +
+              "2D cartoon animation, flat colors, thick outlines, character design stays consistent."
+            : $"{script.CharacterName} ({script.CharacterDescription}) waves hello to the viewer and bounces " +
+              "happily on the spot, eyes bright and smiling. Colourful bright background, cheerful palette. " +
+              "2D cartoon animation, flat colors, thick outlines, character design stays consistent.",
     };
     script.Scenes.Insert(0, intro);
 
     // 3. Narration first: every clip is generated to the length of the line it has to
     //    carry, so the audio has to exist before anything is submitted.
-    var tts = new TtsClient(cfg);
+    var tts = TtsProviderFactory.Create(cfg, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, script.Format);
         scene.AudioPath = audioPath;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
@@ -154,7 +179,7 @@ async Task<int> RunPrepAsync()
     //    and it compounds drift over a dozen generations. Seeding every scene from a
     //    single frame is fully parallel, has no drift at all, and still gives one
     //    consistent character for the length of the video.
-    var vidu = new ViduClient(cfg);
+    IVideoProvider vidu = new ViduClient(cfg);
     var credits = 0;
 
     for (var i = 0; i < script.Scenes.Count; i++)
@@ -195,12 +220,12 @@ async Task<int> RunRettsAsync()
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
 
-    var tts = new TtsClient(cfg);
+    var tts = TtsProviderFactory.Create(cfg, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, script.Format);
         scene.AudioPath = audioPath;
 
         var before = scene.DurationSeconds;
@@ -215,6 +240,71 @@ async Task<int> RunRettsAsync()
     return 0;
 }
 
+// ------------------------------------------------------------ test-tts ------
+
+// Synthesizes one fixed sample line on every TTS provider reachable for --language,
+// so Google's free output can be listened to side by side with Azure's before
+// deciding TtsProvider's default. Deliberately skips Claude/Vidu entirely - no
+// script generation, no clip submission, zero risk to Vidu spend.
+async Task<int> RunTestTtsAsync()
+{
+    var samples = new Dictionary<string, string>
+    {
+        ["en"] = "Hello little duckling! Let's count to five together: one, two, three, four, five!",
+        ["hi"] = "नमस्ते छोटी बत्तख! चलो साथ में एक से पांच तक गिनती सीखते हैं।",
+        ["pa"] = "ਸਤ ਸ੍ਰੀ ਅਕਾਲ ਛੋਟੀ ਬੱਤਖ! ਆਓ ਇਕੱਠੇ ਇੱਕ ਤੋਂ ਪੰਜ ਤੱਕ ਗਿਣਤੀ ਸਿੱਖੀਏ।",
+    };
+    var text = samples[language!];
+
+    var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "tts-test")).FullName;
+    Console.WriteLine($"Comparing TTS providers for \"{language}\" -> {outDir}");
+
+    var azurePath = Path.Combine(outDir, $"azure-{language}.mp3");
+    await new AzureTtsProvider(cfg).SynthesizeAsync(text, language!, azurePath, ContentFormat.Educational);
+    Console.WriteLine($"  Azure  -> {azurePath}");
+
+    try
+    {
+        var googlePath = Path.Combine(outDir, $"google-{language}.mp3");
+        await new GoogleTtsProvider(cfg).SynthesizeAsync(text, language!, googlePath, ContentFormat.Educational);
+        Console.WriteLine($"  Google -> {googlePath}");
+    }
+    catch (NotSupportedException ex)
+    {
+        Console.WriteLine($"  Google -> skipped ({ex.Message})");
+    }
+
+    return 0;
+}
+
+// ---------------------------------------------------------- dry-script ------
+
+// One ScriptGenerator.GenerateAsync call (one Claude call) and nothing else - no
+// character draw, no TTS, no Vidu submission. For checking a specific --format
+// (or the weighted random pick) produces the right shape before spending anything
+// on the rest of the pipeline. Writes the script next to tts-test's sibling folder
+// so it never collides with a real job- folder --assemble would look for.
+async Task<int> RunDryScriptAsync()
+{
+    var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
+    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, trendContext, null, null, formatOverride);
+
+    Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"");
+    Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
+    Console.WriteLine($"MusicMood: {script.MusicMood}   NarrationStyle: {script.NarrationStyle}");
+    Console.WriteLine($"Intro: {script.IntroText}");
+    for (var i = 0; i < script.Scenes.Count; i++)
+        Console.WriteLine($"  Scene {i + 1} ({script.Scenes[i].Narration.Length} chars): {script.Scenes[i].Narration}");
+    Console.WriteLine($"Hashtags: {string.Join(" ", script.Tags.Where(t => t.StartsWith('#')))}");
+
+    var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script")).FullName;
+    var outPath = Path.Combine(outDir, $"{script.Format}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
+    await File.WriteAllTextAsync(outPath, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
+    Console.WriteLine($"Saved -> {outPath}");
+
+    return 0;
+}
+
 // ------------------------------------------------------------ assemble ------
 
 async Task<int> RunAssembleAsync()
@@ -225,7 +315,7 @@ async Task<int> RunAssembleAsync()
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
 
-    var vidu = new ViduClient(cfg);
+    IVideoProvider vidu = new ViduClient(cfg);
     var pending = 0;
 
     // 5. Collect. Each scene is independent, so a clip that is still queued only holds
@@ -304,7 +394,7 @@ async Task<int> RunAssembleAsync()
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
 
     var vertical = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}-short.mp4");
-    await VideoAssembler.AssembleFromClipsAsync(cfg, shortScenes, language!, workDir, vertical, 1080, 1920);
+    await VideoAssembler.AssembleFromClipsAsync(cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
@@ -330,7 +420,7 @@ async Task<int> RunAssembleAsync()
     // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
     // than generating a second orientation, which would double the per-video spend.
     var landscape = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}.mp4");
-    await VideoAssembler.AssembleFromClipsAsync(cfg, script.Scenes, language!, workDir, landscape, 1920, 1080);
+    await VideoAssembler.AssembleFromClipsAsync(cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 
