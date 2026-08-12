@@ -27,6 +27,14 @@ record GenConfig
     // character's name and appearance, because the script has to be written about
     // whatever is in the picture.
     //
+    // Pool art must have a transparent background - the character alone, no scene or
+    // flat backdrop baked in - so Vidu generates the scene behind it instead of
+    // animating a flat backdrop. Run VideoGen/tools/remove-background.py on any
+    // source image before adding it here (see tasks/free-character-tool-shortlist.md).
+    // This does not apply to the invented-character path above: CharacterSource.DrawAsync
+    // draws its own opaque backdrop because VideoAssembler.FitToPortraitAsync fills the
+    // frame by blurring a copy of the source image itself.
+    //
     // Nothing here has to be 9:16; images are fitted to 1080x1920 before submission.
     public string CharacterPoolPath { get; init; } = "";
 
