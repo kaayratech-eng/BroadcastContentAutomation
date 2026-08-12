@@ -33,7 +33,7 @@ var config = new ConfigurationBuilder()
 
 var cfg = config.Get<GenConfig>() ?? throw new InvalidOperationException("appsettings.json invalid");
 
-string? topic = null, language = "en", job = null;
+string? topic = null, language = "en", job = null, profileId = null;
 var mode = "";
 ContentFormat? formatOverride = null;
 
@@ -49,6 +49,7 @@ for (var i = 0; i < args.Length; i++)
         case "--job" when i + 1 < args.Length: job = args[++i]; break;
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
+        case "--profile" when i + 1 < args.Length: profileId = args[++i]; break;
         case "--format" when i + 1 < args.Length:
             if (!Enum.TryParse<ContentFormat>(args[++i], ignoreCase: true, out var parsedFormat))
             {
@@ -58,7 +59,7 @@ for (var i = 0; i < args.Length; i++)
             formatOverride = parsedFormat;
             break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--format Educational|Rhyme|Poem|Bedtime|SingAlong|CountingSong]");
+            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format Educational|Rhyme|Poem|Bedtime|SingAlong|CountingSong]");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
             Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
             Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
@@ -79,9 +80,12 @@ if (language is not ("en" or "hi" or "pa"))
     return 1;
 }
 
+ContentProfile profile;
 try
 {
+    profile = ContentProfileRegistry.Get(profileId ?? cfg.Profile);
     cfg.Validate();
+    profile.Validate();
 }
 catch (Exception ex)
 {
@@ -121,16 +125,19 @@ async Task<int> RunPrepAsync()
     //    afterwards, from the description the script came up with. Either order ends
     //    with the words and the artwork describing the same creature, which is the
     //    whole point - they used to disagree.
-    var (pooled, addToPool) = CharacterSource.Resolve(cfg, workDir);
-    var recentNames = pooled is null ? CharacterSource.RecentNames(cfg, workDir) : [];
+    var (pooled, addToPool) = profile.UsesCharacterMascot
+        ? CharacterSource.Resolve(profile, cfg, workDir)
+        : (null, false);
+    var recentNames = profile.UsesCharacterMascot && pooled is null
+        ? CharacterSource.RecentNames(cfg, workDir) : [];
 
-    var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
+    var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride);
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride);
 
-    var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(cfg, script, workDir);
+    var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(profile, cfg, script, workDir);
     script.CharacterImagePath = characterImage;
-    if (addToPool) CharacterSource.SaveToPool(cfg, script, characterImage);
+    if (addToPool) CharacterSource.SaveToPool(profile, script, characterImage);
 
     Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
 
@@ -196,6 +203,7 @@ async Task<int> RunPrepAsync()
     }
 
     script.Language = language!;
+    script.Profile = profile.Id;
     await SaveScriptAsync(workDir, script);
 
     Console.WriteLine();
@@ -220,6 +228,7 @@ async Task<int> RunRettsAsync()
 
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
+    profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
 
     var tts = TtsProviderFactory.Create(cfg, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
@@ -287,9 +296,9 @@ async Task<int> RunTestTtsAsync()
 // so it never collides with a real job- folder --assemble would look for.
 async Task<int> RunDryScriptAsync()
 {
-    var trendContext = topic is null ? await TrendResearch.FetchAsync(cfg) : null;
+    var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(cfg, topic, language!, scriptProvider, trendContext, null, null, formatOverride);
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride);
 
     Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"");
     Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
@@ -316,6 +325,7 @@ async Task<int> RunAssembleAsync()
 
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
+    profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
 
     IVideoProvider vidu = new ViduClient(cfg);
     var pending = 0;
@@ -396,7 +406,7 @@ async Task<int> RunAssembleAsync()
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
 
     var vertical = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}-short.mp4");
-    await VideoAssembler.AssembleFromClipsAsync(cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
+    await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
@@ -422,7 +432,7 @@ async Task<int> RunAssembleAsync()
     // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
     // than generating a second orientation, which would double the per-video spend.
     var landscape = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}.mp4");
-    await VideoAssembler.AssembleFromClipsAsync(cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
+    await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 

@@ -7,16 +7,16 @@ using System.Text.Json;
 // prompt so topic selection isn't just Claude picking from a generic static list.
 static class TrendResearch
 {
-    public static async Task<string?> FetchAsync(GenConfig cfg)
+    public static async Task<string?> FetchAsync(ContentProfile profile, GenConfig cfg)
     {
         if (string.IsNullOrWhiteSpace(cfg.YouTubeApiKey) || cfg.YouTubeApiKey.StartsWith("PUT-"))
             return null;
-        if (cfg.TrendQueries.Length == 0) return null;
+        if (profile.TrendQueries.Length == 0) return null;
 
         // One query per run, not all of them - unlike the Uploader's rare no-sidecar
         // fallback, this runs on every single video generation, so quota use needs to
         // stay frugal. Rotating a random query still surfaces fresh material over time.
-        var query = cfg.TrendQueries[Random.Shared.Next(cfg.TrendQueries.Length)];
+        var query = profile.TrendQueries[Random.Shared.Next(profile.TrendQueries.Length)];
 
         try
         {

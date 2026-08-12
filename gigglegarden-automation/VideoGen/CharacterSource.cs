@@ -29,13 +29,13 @@ static class CharacterSource
     // background music is picked: --assemble may run days after --prep and has to
     // reproduce the same choice, and a resubmitted scene must not come back as a
     // different character.
-    public static CharacterBrief? FromPool(GenConfig cfg, string workDir, IReadOnlySet<string>? exclude = null)
+    public static CharacterBrief? FromPool(ContentProfile profile, string workDir, IReadOnlySet<string>? exclude = null)
     {
-        if (string.IsNullOrWhiteSpace(cfg.CharacterPoolPath)) return null;
+        if (string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return null;
 
-        var images = File.Exists(cfg.CharacterPoolPath)
-            ? [cfg.CharacterPoolPath]
-            : Directory.EnumerateFiles(cfg.CharacterPoolPath)
+        var images = File.Exists(profile.CharacterPoolPath)
+            ? [profile.CharacterPoolPath]
+            : Directory.EnumerateFiles(profile.CharacterPoolPath)
                 .Where(f => ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
                 .ToList();
@@ -45,7 +45,7 @@ static class CharacterSource
         if (images.Count == 0)
         {
             Console.WriteLine(
-                $"  Character: \"{cfg.CharacterPoolPath}\" has no images in it, drawing one instead. " +
+                $"  Character: \"{profile.CharacterPoolPath}\" has no images in it, drawing one instead. " +
                 $"Drop character art in ({string.Join(", ", ImageExtensions)}) with a matching .json to use a pool.");
             return null;
         }
@@ -84,7 +84,7 @@ static class CharacterSource
 
     // Draws the character the script just invented, so the picture matches the words
     // rather than the other way round.
-    public static async Task<string> DrawAsync(GenConfig cfg, VideoScript script, string workDir)
+    public static async Task<string> DrawAsync(ContentProfile profile, GenConfig cfg, VideoScript script, string workDir)
     {
         if (string.IsNullOrWhiteSpace(cfg.OpenAiApiKey) || cfg.OpenAiApiKey.StartsWith("PUT-"))
             throw new InvalidOperationException(
@@ -105,7 +105,7 @@ static class CharacterSource
             $"{script.CharacterName}: {script.CharacterDescription}. Full body, standing, facing the viewer " +
             "with a friendly welcoming pose, the whole character visible with space around it, plain " +
             "uncluttered background.",
-            cfg.CharacterStyle, raw, ImageClient.Orientation.Portrait);
+            profile.CharacterStyle, raw, ImageClient.Orientation.Portrait);
 
         await VideoAssembler.FitToPortraitAsync(cfg, raw, fitted);
         return fitted;
@@ -156,12 +156,12 @@ static class CharacterSource
     // How many characters are already in the pool, so Resolve knows whether it's still
     // building up, mixing, or full. 0 when CharacterPoolPath isn't a folder (empty, or a
     // single pinned file - neither has a "size" in this sense).
-    public static int PoolSize(GenConfig cfg)
+    public static int PoolSize(ContentProfile profile)
     {
-        if (string.IsNullOrWhiteSpace(cfg.CharacterPoolPath) || !Directory.Exists(cfg.CharacterPoolPath))
+        if (string.IsNullOrWhiteSpace(profile.CharacterPoolPath) || !Directory.Exists(profile.CharacterPoolPath))
             return 0;
 
-        return Directory.EnumerateFiles(cfg.CharacterPoolPath)
+        return Directory.EnumerateFiles(profile.CharacterPoolPath)
             .Count(f => ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase));
     }
 
@@ -169,14 +169,14 @@ static class CharacterSource
     // of every video being a stranger. imagePath is DrawAsync's already-1080x1920-fitted
     // character.png - nothing here resizes it. Writes the sidecar FromPool already knows
     // how to read, so no changes were needed on the read side.
-    public static void SaveToPool(GenConfig cfg, VideoScript script, string imagePath)
+    public static void SaveToPool(ContentProfile profile, VideoScript script, string imagePath)
     {
         var slug = Slugify(script.CharacterName);
         var extension = Path.GetExtension(imagePath);
 
-        var destination = Path.Combine(cfg.CharacterPoolPath, slug + extension);
+        var destination = Path.Combine(profile.CharacterPoolPath, slug + extension);
         for (var suffix = 2; File.Exists(destination) || File.Exists(Path.ChangeExtension(destination, ".json")); suffix++)
-            destination = Path.Combine(cfg.CharacterPoolPath, $"{slug}-{suffix}{extension}");
+            destination = Path.Combine(profile.CharacterPoolPath, $"{slug}-{suffix}{extension}");
 
         File.Copy(imagePath, destination);
         File.WriteAllText(Path.ChangeExtension(destination, ".json"), JsonSerializer.Serialize(
@@ -205,12 +205,12 @@ static class CharacterSource
     // one-off character doesn't put anyone on cooldown. Best-effort like RecentNames: a
     // job with no script.json yet, or one that fails to parse, is skipped rather than
     // thrown on.
-    public static HashSet<string> RecentPoolPicks(GenConfig cfg, string currentWorkDir, int max)
+    public static HashSet<string> RecentPoolPicks(ContentProfile profile, GenConfig cfg, string currentWorkDir, int max)
     {
         var picks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!Directory.Exists(cfg.WorkDirectory) || string.IsNullOrWhiteSpace(cfg.CharacterPoolPath)) return picks;
+        if (!Directory.Exists(cfg.WorkDirectory) || string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return picks;
 
-        var poolPath = Path.GetFullPath(cfg.CharacterPoolPath);
+        var poolPath = Path.GetFullPath(profile.CharacterPoolPath);
 
         var jobDirs = Directory.EnumerateDirectories(cfg.WorkDirectory, "job-*")
             .Where(d => !Path.GetFullPath(d).Equals(Path.GetFullPath(currentWorkDir), StringComparison.OrdinalIgnoreCase))
@@ -247,16 +247,16 @@ static class CharacterSource
     // instead of staying a stranger every video. Only CharacterPoolPath being a *folder*
     // engages this; empty (always invent) and a single file (always pin) are exactly as
     // they were before this existed.
-    public static (CharacterBrief? Pooled, bool AddToPool) Resolve(GenConfig cfg, string workDir)
+    public static (CharacterBrief? Pooled, bool AddToPool) Resolve(ContentProfile profile, GenConfig cfg, string workDir)
     {
-        if (string.IsNullOrWhiteSpace(cfg.CharacterPoolPath)) return (null, false);
-        if (File.Exists(cfg.CharacterPoolPath)) return (FromPool(cfg, workDir), false);
+        if (string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return (null, false);
+        if (File.Exists(profile.CharacterPoolPath)) return (FromPool(profile, workDir), false);
 
-        var size = PoolSize(cfg);
-        if (size < cfg.CharacterPoolBuildupSize) return (null, true);
+        var size = PoolSize(profile);
+        if (size < profile.CharacterPoolBuildupSize) return (null, true);
 
-        if (size >= cfg.CharacterPoolMaxSize)
-            return (FromPool(cfg, workDir, RecentPoolPicks(cfg, workDir, cfg.CharacterPoolCooldown)), false);
+        if (size >= profile.CharacterPoolMaxSize)
+            return (FromPool(profile, workDir, RecentPoolPicks(profile, cfg, workDir, profile.CharacterPoolCooldown)), false);
 
         // The mixing zone: still occasionally let a new character in, but mostly reuse.
         // This flip doesn't need to be reproducible across --prep/--assemble the way the
@@ -265,7 +265,7 @@ static class CharacterSource
         // downstream.
         return Random.Shared.Next(2) == 0
             ? (null, true)
-            : (FromPool(cfg, workDir, RecentPoolPicks(cfg, workDir, cfg.CharacterPoolCooldown)), false);
+            : (FromPool(profile, workDir, RecentPoolPicks(profile, cfg, workDir, profile.CharacterPoolCooldown)), false);
     }
 
     private static int StableIndex(string workDir, int count)

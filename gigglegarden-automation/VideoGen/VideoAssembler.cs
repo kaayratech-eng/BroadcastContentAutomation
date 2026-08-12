@@ -10,7 +10,7 @@ static partial class VideoAssembler
     // Builds each scene clip (image + zoompan + narration audio + wrapped subtitle),
     // crossfades them together, then mixes background music under the narration.
     public static async Task AssembleAsync(
-        GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
+        ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
         string workDir, string outputPath, int w, int h, bool preferVerticalImages,
         string? musicMood = null)
     {
@@ -18,7 +18,7 @@ static partial class VideoAssembler
 
         // Resolved up front, not at the mix step several minutes of encoding later, so a
         // bad path fails before any work is done rather than after all of it.
-        var music = ResolveBackgroundMusic(cfg, workDir, musicMood);
+        var music = ResolveBackgroundMusic(profile, workDir, musicMood);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -65,19 +65,19 @@ static partial class VideoAssembler
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
         var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
-        await MixBackgroundMusicAsync(cfg, concatPath, music, total, outputPath);
+        await MixBackgroundMusicAsync(profile, cfg, concatPath, music, total, outputPath);
     }
 
     // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
     // still with a camera move over it. Same crossfade/subtitle/music treatment as the
     // image path, so the two produce interchangeable output.
     public static async Task AssembleFromClipsAsync(
-        GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
+        ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
         string workDir, string outputPath, int w, int h, string? musicMood = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
-        var music = ResolveBackgroundMusic(cfg, workDir, musicMood);
+        var music = ResolveBackgroundMusic(profile, workDir, musicMood);
 
         var sceneClips = new List<string>();
         var durations = new List<double>();
@@ -108,7 +108,7 @@ static partial class VideoAssembler
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
         var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
-        await MixBackgroundMusicAsync(cfg, concatPath, music, total, outputPath);
+        await MixBackgroundMusicAsync(profile, cfg, concatPath, music, total, outputPath);
     }
 
     private const double MusicFadeSeconds = 1.5;
@@ -138,21 +138,21 @@ static partial class VideoAssembler
     // for free. Until that subfolder exists (or while it's empty), this falls straight
     // through to today's flat-folder behaviour unchanged - no mood pools exist yet, so
     // this is currently a no-op in practice.
-    private static string? ResolveBackgroundMusic(GenConfig cfg, string workDir, string? mood = null)
+    private static string? ResolveBackgroundMusic(ContentProfile profile, string workDir, string? mood = null)
     {
-        if (string.IsNullOrWhiteSpace(cfg.BackgroundMusicPath)) return null;
-        if (File.Exists(cfg.BackgroundMusicPath)) return cfg.BackgroundMusicPath;
+        if (string.IsNullOrWhiteSpace(profile.BackgroundMusicPath)) return null;
+        if (File.Exists(profile.BackgroundMusicPath)) return profile.BackgroundMusicPath;
 
-        if (!Directory.Exists(cfg.BackgroundMusicPath))
+        if (!Directory.Exists(profile.BackgroundMusicPath))
             throw new Exception(
-                $"BackgroundMusicPath points at \"{cfg.BackgroundMusicPath}\", which does not exist. " +
+                $"BackgroundMusicPath points at \"{profile.BackgroundMusicPath}\", which does not exist. " +
                 "Point it at a track, or at a folder of tracks, or clear it to render without music.");
 
         var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
 
         if (!string.IsNullOrWhiteSpace(mood))
         {
-            var moodDir = Path.Combine(cfg.BackgroundMusicPath, Slugify(mood));
+            var moodDir = Path.Combine(profile.BackgroundMusicPath, Slugify(mood));
             if (Directory.Exists(moodDir))
             {
                 var moodTrack = PickTrack(moodDir, key);
@@ -160,10 +160,10 @@ static partial class VideoAssembler
             }
         }
 
-        var track = PickTrack(cfg.BackgroundMusicPath, key);
+        var track = PickTrack(profile.BackgroundMusicPath, key);
         if (track is null)
             Console.WriteLine(
-                $"  Music: none - \"{cfg.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
+                $"  Music: none - \"{profile.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
                 $"Drop instrumentals in ({string.Join(", ", MusicExtensions)}) to get a bed.");
         return track;
     }
@@ -229,7 +229,7 @@ static partial class VideoAssembler
     // so simply mixing in stereo music made the voice measurably quieter than before.
     // pan copies the single channel to both at unity instead.
     private static async Task MixBackgroundMusicAsync(
-        GenConfig cfg, string concatPath, string? musicPath, double totalSeconds, string outputPath)
+        ContentProfile profile, GenConfig cfg, string concatPath, string? musicPath, double totalSeconds, string outputPath)
     {
         if (musicPath is null)
         {
@@ -237,10 +237,10 @@ static partial class VideoAssembler
             return;
         }
 
-        var gainDb = cfg.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, musicPath);
+        var gainDb = profile.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, musicPath);
         var fadeOutAt = Math.Max(0, totalSeconds - MusicFadeSeconds);
 
-        Console.WriteLine($"  Music: {Path.GetFileName(musicPath)} at {cfg.BackgroundMusicLufs:0.#} LUFS ({gainDb:+0.#;-0.#} dB)");
+        Console.WriteLine($"  Music: {Path.GetFileName(musicPath)} at {profile.BackgroundMusicLufs:0.#} LUFS ({gainDb:+0.#;-0.#} dB)");
 
         var filter =
             "[0:a]aresample=44100,aformat=sample_fmts=fltp,pan=stereo|c0=c0|c1=c0,asplit=2[voice][key];" +
