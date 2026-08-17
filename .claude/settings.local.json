@@ -1,7 +1,9 @@
 {
   "env": {
     "ANTHROPIC_BASE_URL": "http://127.0.0.1:8787",
-    "ENABLE_TOOL_SEARCH": "true"
+    "ENABLE_TOOL_SEARCH": "true",
+    "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "free-first"
   },
   "permissions": {
     "allow": [
@@ -106,35 +108,39 @@
       "WebFetch(domain:stability.ai)",
       "WebFetch(domain:app.klingai.com)",
       "WebFetch(domain:docs.lumalabs.ai)",
-      "PowerShell(Get-CimInstance Win32_VideoController)"
+      "PowerShell(Get-CimInstance Win32_VideoController)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(cd \"D:\\\\Business\\\\gigglegarden-automation\\\\VideoGen\\\\assets\\\\character-pool\" && rm -f animal-pack-bear.png animal-*)",
+      "Bash(find / -maxdepth 8 -iname \"formattest\" -type d 2>/dev/null; find /c/Users/rishi/AppData/Local/Temp -maxdepth 6 -iname \"*formattest*\" 2>/dev/null; find /d/Business -iname \"*formattest*\" 2>/dev/null)",
+      "Bash(python3 -c \"import json,sys; d=json.load\\(sys.stdin\\); print\\('DESCRIPTION:'\\); print\\(d.get\\('Description',''\\)\\); print\\(\\); print\\('TAGS:', d.get\\('Tags'\\)\\)\")",
+      "Bash(node -e \"const d=require\\('./SingAlong-20260812-070742.json'\\); console.log\\('DESCRIPTION:\\\\n'+d.Description+'\\\\n\\\\nTAGS:', d.Tags\\)\")",
+      "Bash(node -e \"const d=require\\('./CountingSong-20260812-071123.json'\\); console.log\\('DESCRIPTION:\\\\n'+d.Description\\); console.log\\(\\); console.log\\('MusicMood:', d.MusicMood, '| NarrationStyle:', d.NarrationStyle\\); const allText = d.Scenes.map\\(s=>s.Narration\\).join\\(' '\\)+' '+d.IntroText; console.log\\('ALLCAPS words:', \\(allText.match\\(/\\\\b[A-Z]{2,}\\\\b/g\\)||[]\\)\\); console.log\\('#Shorts present:', d.Description.includes\\('#Shorts'\\)\\);\")",
+      "WebFetch(domain:openart.ai)",
+      "WebFetch(domain:developer.adobe.com)",
+      "WebFetch(domain:fallendeity.github.io)",
+      "Bash(cp \"/c/Users/rishi/Downloads/ChronicleAndChaosDP.png\" \"D:/Business/gigglegarden-automation/VideoGen/assets/branding/chronicle-and-chaos/avatar.png\")",
+      "Bash(cp \"/c/Users/rishi/Downloads/ChronicleAndChaosBanner.png\" \"D:/Business/gigglegarden-automation/VideoGen/assets/branding/chronicle-and-chaos/banner.png\")",
+      "WebFetch(domain:github.com)",
+      "PowerShell(nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv)",
+      "WebFetch(domain:www.remotion.dev)",
+      "WebFetch(domain:www.pexels.com)",
+      "WebFetch(domain:commons.wikimedia.org)",
+      "WebFetch(domain:pixabay.com)",
+      "Bash(npm --version)",
+      "Bash(curl -s -H \"Ocp-Apim-Subscription-Key: __TRACKED_VAR__\" \"https://canadacentral.tts.speech.microsoft.com/cognitiveservices/voices/list\" -o /tmp/azure_voices.json -w \"%{http_code}\\\\n\")",
+      "Bash(grep -o '\"ShortName\":\"en-US-[A-Za-z]*Neural\"[^}]*\"StyleList\":\\\\[[^]]*\\\\]' /tmp/azure_voices.json | head -60 *)",
+      "Bash(mkdir -p \"/c/Users/rishi/AppData/Local/Temp/claude/D--Business/47e31b9d-6dfa-4c5b-b743-767d6d539513/scratchpad\")",
+      "Bash(cp /tmp/azure_voices.json \"/c/Users/rishi/AppData/Local/Temp/claude/D--Business/47e31b9d-6dfa-4c5b-b743-767d6d539513/scratchpad/azure_voices.json\")",
+      "Bash(env)",
+      "PowerShell(Get-NetTCPConnection -State Listen | Where-Object { $_.LocalPort -in 20128,8787,3000,3001,7000,8000,8080,8888,9000,9090 } | Select-Object LocalAddress,LocalPort,OwningProcess | Sort-Object LocalPort | Format-Table -AutoSize)",
+      "Bash(/c/Users/rishi/.local/bin/graphify --version)"
     ]
   },
-  "hooks": {
-    "SessionStart": [
-      {
-        "matcher": "startup|resume",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/rishi/.local/bin/headroom.EXE init hook ensure --profile init-business-7bb142dd --marker headroom-init-claude",
-            "timeout": 15
-          }
-        ]
-      }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash|PowerShell",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "C:/Users/rishi/.local/bin/headroom.EXE init hook ensure --profile init-business-7bb142dd --marker headroom-init-claude",
-            "timeout": 15
-          }
-        ]
-      }
-    ]
-  },
+  "enabledMcpjsonServers": [
+    "claude-flow",
+    "ruv-swarm",
+    "flow-nexus"
+  ],
   "enabledPlugins": {
     "headroom@headroom-marketplace": true
   }
