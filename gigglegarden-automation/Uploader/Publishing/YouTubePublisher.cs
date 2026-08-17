@@ -47,8 +47,8 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
                 Status = new VideoStatus
                 {
                     PrivacyStatus = cfg.PrivacyStatus,
-                    SelfDeclaredMadeForKids = true,
-                    MadeForKids = true,
+                    SelfDeclaredMadeForKids = request.Sidecar.MadeForKids,
+                    MadeForKids = request.Sidecar.MadeForKids,
                 },
             };
 

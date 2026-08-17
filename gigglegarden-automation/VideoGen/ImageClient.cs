@@ -9,9 +9,9 @@ class ImageClient(GenConfig cfg)
 {
     public enum Orientation { Landscape, Portrait }
 
-    public async Task GenerateAsync(string scenePrompt, string stylePrompt, string outputPath, Orientation orientation)
+    public async Task GenerateAsync(string scenePrompt, string stylePrompt, string portraitStyleSuffix, string outputPath, Orientation orientation)
     {
-        var fullPrompt = BuildPrompt(scenePrompt, stylePrompt, orientation, matchReference: false);
+        var fullPrompt = BuildPrompt(scenePrompt, stylePrompt, portraitStyleSuffix, orientation, matchReference: false);
 
         switch (cfg.ImageProvider.ToLowerInvariant())
         {
@@ -27,9 +27,9 @@ class ImageClient(GenConfig cfg)
     // the character's appearance stays consistent instead of drifting scene to scene -
     // each independent text-to-image call otherwise has no memory of prior output.
     public async Task GenerateWithReferenceAsync(
-        string scenePrompt, string stylePrompt, string referenceImagePath, string outputPath, Orientation orientation)
+        string scenePrompt, string stylePrompt, string portraitStyleSuffix, string referenceImagePath, string outputPath, Orientation orientation)
     {
-        var fullPrompt = BuildPrompt(scenePrompt, stylePrompt, orientation, matchReference: true);
+        var fullPrompt = BuildPrompt(scenePrompt, stylePrompt, portraitStyleSuffix, orientation, matchReference: true);
 
         switch (cfg.ImageProvider.ToLowerInvariant())
         {
@@ -41,7 +41,11 @@ class ImageClient(GenConfig cfg)
             throw new Exception($"Image provider returned no usable image for {Path.GetFileName(outputPath)}.");
     }
 
-    private static string BuildPrompt(string scenePrompt, string stylePrompt, Orientation orientation, bool matchReference)
+    // Public so ManualArtClient's per-scene call sites (CharacterSource.DrawAsync,
+    // Program.cs's no-Vidu prep branch - Deliverable 6) can build the same
+    // style+framing+consistency prompt this class's own OpenAI/Stability calls use,
+    // without duplicating that assembly logic.
+    public static string BuildPrompt(string scenePrompt, string stylePrompt, string portraitStyleSuffix, Orientation orientation, bool matchReference)
     {
         var framing = orientation == Orientation.Portrait
             ? "Vertical 9:16 portrait composition, subject centred with generous headroom and " +
@@ -52,8 +56,7 @@ class ImageClient(GenConfig cfg)
             ? " Keep the main character's appearance, proportions, colors and art style identical to the attached reference image."
             : "";
 
-        return $"{stylePrompt}. {scenePrompt}. {framing} Children's book illustration, bright cheerful " +
-               $"colors, soft rounded shapes, no text, no words, no letters anywhere in the image.{consistency}";
+        return $"{stylePrompt}. {scenePrompt}. {framing} {portraitStyleSuffix}{consistency}";
     }
 
     private async Task OpenAiAsync(string prompt, string outputPath, Orientation orientation)

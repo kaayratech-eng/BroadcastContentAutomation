@@ -26,7 +26,13 @@ record AppConfig
     public string[] TrendQueries { get; init; } =
         ["nursery rhymes for kids", "kids learning songs", "hindi rhymes for children"];
 
-    public PlatformsConfig Platforms { get; init; } = new();
+    // One credential set per ContentProfile/channel (keyed by profile Id, e.g.
+    // "gigglegarden", "chronicleandchaos"), so two channels can publish in the
+    // same run without sharing tokens. Sidecar.Channel selects which entry a
+    // given video routes through; DefaultChannel covers sidecar-less videos
+    // dropped in manually with no channel signal at all.
+    public Dictionary<string, PlatformsConfig> Channels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
+    public string DefaultChannel { get; init; } = "gigglegarden";
 }
 
 record PlatformsConfig

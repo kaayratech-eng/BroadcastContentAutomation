@@ -5,11 +5,11 @@
 // behind this choice.
 static class TtsProviderFactory
 {
-    public static ITtsProvider Create(GenConfig cfg, string language)
+    public static ITtsProvider Create(GenConfig cfg, ContentProfile profile, string language)
     {
         var mode = cfg.TtsProvider.ToLowerInvariant();
 
-        if (mode == "azure") return new AzureTtsProvider(cfg);
+        if (mode == "azure") return new AzureTtsProvider(cfg, profile.VoiceOverride);
 
         if (mode == "google")
         {
@@ -24,7 +24,7 @@ static class TtsProviderFactory
         return language switch
         {
             "en" or "hi" => new GoogleTtsProvider(cfg),
-            _ => new AzureTtsProvider(cfg),
+            _ => new AzureTtsProvider(cfg, profile.VoiceOverride),
         };
     }
 }

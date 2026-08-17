@@ -50,6 +50,20 @@ public sealed class Sidecar
     public string Language { get; set; } = "en";
     public string Aspect { get; set; } = "landscape";      // landscape | vertical
     public List<string> Targets { get; set; } = [];
+
+    // Which ContentProfile/channel this video belongs to (e.g. "gigglegarden",
+    // "chronicleandchaos") — drives which channel's credentials the Uploader
+    // publishes with. Empty on sidecars written before multi-channel support
+    // existed; LoadAsync below defaults those to "gigglegarden" rather than
+    // silently routing them through whichever channel happens to be default.
+    public string Channel { get; set; } = "";
+
+    // Drives YouTube's required self-declared audience flag (VideoStatus.MadeForKids /
+    // SelfDeclaredMadeForKids in YouTubePublisher). Defaults true - the platform's own
+    // safe default, and what every sidecar written before this field existed already
+    // behaved as - so an old/hand-edited sidecar with no MadeForKids key keeps rendering
+    // as kids content rather than silently flipping to a misdeclared adult upload.
+    public bool MadeForKids { get; set; } = true;
     public Dictionary<string, Publication> Publications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
     // Optional per-platform caption override. Absent means "derive from Description".
@@ -79,6 +93,11 @@ public sealed class Sidecar
         // an absent Targets list means the file predates multi-platform support, so it
         // keeps the original YouTube-only behaviour rather than silently fanning out.
         if (sidecar.Targets.Count == 0) sidecar.Targets.Add(Platforms.YouTube);
+
+        // Same backward-compat reasoning as Targets above: a sidecar written
+        // before multi-channel support existed belongs to the one channel
+        // that existed at the time.
+        if (string.IsNullOrWhiteSpace(sidecar.Channel)) sidecar.Channel = "gigglegarden";
 
         return sidecar;
     }

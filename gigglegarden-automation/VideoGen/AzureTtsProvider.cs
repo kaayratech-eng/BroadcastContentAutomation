@@ -6,19 +6,8 @@ using GiggleGarden.Shared;
 // mandatory fallback: it is the only provider covering pa-IN (no free Standard/WaveNet
 // Punjabi voice exists anywhere), and the forced-fallback path for en/hi via
 // GenConfig.TtsProvider = "azure". See TtsProviderFactory for routing.
-partial class AzureTtsProvider(GenConfig cfg) : ITtsProvider
+partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices) : ITtsProvider
 {
-    // Style is Azure's per-voice "cheerful"-type express-as tag - verified live against
-    // /cognitiveservices/voices/list before picking these (not every voice supports one,
-    // and Azure's docs lag behind what's actually deployed for a given locale). Currently
-    // null for pa-IN: neither Punjabi neural voice offers a style at all yet.
-    private static readonly Dictionary<string, (string Locale, string Voice, string? Style)> Voices = new()
-    {
-        ["en"] = ("en-US", "en-US-JennyNeural", "cheerful"),
-        ["hi"] = ("hi-IN", "hi-IN-SwaraNeural", "cheerful"),
-        ["pa"] = ("pa-IN", "pa-IN-VaaniNeural", null),
-    };
-
     // Azure reads an all-caps token as an initialism and spells it out letter by letter,
     // so a scripted "AH-CHOO!" comes back as "A-H-C-H-O-O". Scripts legitimately use caps
     // for emphasis and that reads well burned into the frame, so the fix is to soften the
@@ -33,20 +22,22 @@ partial class AzureTtsProvider(GenConfig cfg) : ITtsProvider
     [GeneratedRegex(@"\p{Lu}{2,}")]
     private static partial Regex AllCapsRun();
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath, ContentFormat format = ContentFormat.Educational)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
 
-        var (locale, voice, style) = Voices.TryGetValue(language, out var v) ? v : Voices["en"];
+        var (locale, voice, style) = voices.TryGetValue(language, out var v) ? v : voices["en"];
         var escaped = System.Security.SecurityElement.Escape(SpeakableCase(text));
 
-        // Rate/pitch come from ScriptGenerator.FormatVoiceProfile - one shared table so a
-        // format's pacing can't drift between what the script says (NarrationStyle) and
-        // what actually gets spoken. The voice's "cheerful" express-as style (below) is
-        // deliberately left untouched by format - only "cheerful" is verified live for
-        // these voices, and an unverified style value risks a failed Azure call outright.
-        var (rate, pitch, _) = ScriptGenerator.FormatVoiceProfile[format];
+        // Rate/pitch come from the caller's resolved ContentFormatDef (see
+        // ScriptGenerator.PickFormat) so a format's pacing can't drift between what the
+        // script says (NarrationStyle) and what actually gets spoken. The voice's
+        // express-as style (below) is deliberately left untouched by format - only styles
+        // verified live against Azure for a given voice (e.g. "cheerful" for GiggleGarden's
+        // voices, "narration-professional" for en-US-AriaNeural) should ever appear in a
+        // profile's VoiceOverride, since an unverified style value risks a failed Azure call
+        // outright.
         var prosody = $"<prosody rate='{rate}' pitch='{pitch}'>{escaped}</prosody>";
         var voiceContent = style is null
             ? prosody

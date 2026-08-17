@@ -5,19 +5,38 @@ Three projects:
 - **TokenCapture** — run once, saves the refresh token.
 - **Uploader** — runs daily via Task Scheduler.
 
-## 1. One-time setup
+## 1. One-time setup — run ONCE per channel, not per video
+
+`TokenCapture` takes the client secret **and a channel name**. The channel name
+picks which subfolder the refresh token is saved into, so each channel gets its
+own token and one channel's capture never overwrites another's:
 
 ```powershell
 cd TokenCapture
-dotnet run -- "C:\Secure\GiggleGarden\client_secret.json"
+dotnet run -- "C:\Secure\GiggleGarden\client_secret.json" gigglegarden
 ```
-Browser opens → sign in as the channel-owner account → approve.
-You should see `Refresh token saved.`
+Browser opens → sign in as GiggleGarden's channel-owner account → approve.
+You should see `Refresh token saved for channel "gigglegarden".`
+
+Then, separately, for the second channel:
+```powershell
+dotnet run -- "C:\Secure\GiggleGarden\client_secret.json" chronicleandchaos
+```
+Browser opens again → sign in as **Chronicle & Chaos's** channel-owner account
+(a different Google account/YouTube channel) → approve.
+You should see `Refresh token saved for channel "chronicleandchaos".`
+
+Both tokens now live side by side under `%APPDATA%\GiggleGarden\<channel>\` and
+never expire from normal use (Google refresh tokens are long-lived unless
+revoked). **The Uploader reuses them automatically on every run — you do not
+re-run TokenCapture per video or per upload, only once per channel, ever**
+(and again only if you revoke access or the token stops working).
 
 ## 2. Configure the uploader
 
-Edit `Uploader\appsettings.json`:
-- `TokenStorePath` — set YOURUSER to your Windows username (must match where TokenCapture saved it).
+Edit `Uploader\appsettings.json` → `Channels.<channel>.YouTube.TokenStorePath`
+for each channel — must match the folder TokenCapture saved into above
+(`%APPDATA%\GiggleGarden\gigglegarden`, `%APPDATA%\GiggleGarden\chronicleandchaos`).
 - `AnthropicApiKey` — from https://console.anthropic.com (only needed if you use auto-generated metadata).
 - Keep `PrivacyStatus: "private"` until the end-to-end test passes.
 
@@ -85,10 +104,19 @@ keep it on for kids' content. If you write your own sidecar JSON up front
 
 ```powershell
 cd VideoGen
-dotnet run -- --topic "counting ducks" --language en
+dotnet run -- --topic "counting ducks" --language en                      # uses GenConfig's default profile
 dotnet run -- --language hi          # Claude picks the topic
 dotnet run -- --language pa
+dotnet run -- --profile chronicleandchaos --topic "the myth of Icarus"    # explicit channel
 ```
+
+`--profile gigglegarden` or `--profile chronicleandchaos` picks which channel
+the video is *for* (omit it and it falls back to `VideoGen/appsettings.json`'s
+`Profile` setting). That choice gets stamped into the video's sidecar JSON as
+`"channel"` automatically — you don't answer this question again at upload
+time. The Uploader reads that field and picks the matching channel's
+credentials from `Channels.<channel>` in its own `appsettings.json` with no
+further input from you.
 
 Each run produces BOTH a 1920x1080 video and a 1080x1920 Short in
 `D:\Business\Videos`, each with a sidecar JSON at `approved:false`.

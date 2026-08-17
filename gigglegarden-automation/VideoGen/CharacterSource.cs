@@ -84,13 +84,14 @@ static class CharacterSource
 
     // Draws the character the script just invented, so the picture matches the words
     // rather than the other way round.
+    //
+    // Goes through the human-in-the-loop Gemini prompt-and-pickup loop (ManualArtClient)
+    // rather than ImageClient's OpenAI/Stability calls - Deliverable 6 (tasks/todo.md)
+    // moved both profiles' character art off paid image APIs onto free, by-hand
+    // generation. ImageClient's automated code stays in the repo but is now dormant;
+    // BuildPrompt is the one piece of it this path still reuses.
     public static async Task<string> DrawAsync(ContentProfile profile, GenConfig cfg, VideoScript script, string workDir)
     {
-        if (string.IsNullOrWhiteSpace(cfg.OpenAiApiKey) || cfg.OpenAiApiKey.StartsWith("PUT-"))
-            throw new InvalidOperationException(
-                "No character to start from and no OpenAiApiKey to draw one with. Either set OpenAiApiKey " +
-                "(appsettings.Local.json or GIGGLE_OpenAiApiKey), or point CharacterPoolPath at character art.");
-
         var raw = Path.Combine(workDir, "character-raw.png");
         var fitted = Path.Combine(workDir, "character.png");
 
@@ -101,11 +102,12 @@ static class CharacterSource
         // promises delivery within 48 hours per clip, so a nine-clip chain is up to
         // eighteen days. Seeding every scene from one frame keeps submission parallel
         // and has no generation-to-generation drift either.
-        await new ImageClient(cfg).GenerateAsync(
+        var prompt = ImageClient.BuildPrompt(
             $"{script.CharacterName}: {script.CharacterDescription}. Full body, standing, facing the viewer " +
             "with a friendly welcoming pose, the whole character visible with space around it, plain " +
             "uncluttered background.",
-            profile.CharacterStyle, raw, ImageClient.Orientation.Portrait);
+            profile.CharacterStyle, profile.CharacterPortraitStyleSuffix, ImageClient.Orientation.Portrait, matchReference: false);
+        await ManualArtClient.PromptAndWaitAsync(prompt, raw, ImageClient.Orientation.Portrait);
 
         await VideoAssembler.FitToPortraitAsync(cfg, raw, fitted);
         return fitted;

@@ -2,6 +2,8 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Text.RegularExpressions;
 using GiggleGarden.Shared;
 
@@ -109,6 +111,102 @@ static partial class VideoAssembler
         var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
         await MixBackgroundMusicAsync(profile, cfg, concatPath, music, total, outputPath);
+    }
+
+    // The no-Vidu path for a profile with AllowsContextScenes = true (Deliverable 6,
+    // tasks/todo.md): every scene already carries its own resolved visual - Scene.ImagePath
+    // for a manually-drawn character moment or a Pexels photo, Scene.ClipPath for a Pexels
+    // video - so there is no Ken Burns/crossfade/subtitle-burn-in work for ffmpeg to do
+    // here the way AssembleFromClipsAsync does for Vidu clips; composition, motion and
+    // captions all move into the sibling remotion-assembler project instead. Reuses the
+    // same music-resolution + per-orientation-call shape as AssembleFromClipsAsync so the
+    // two pipelines stay easy to compare.
+    public static async Task AssembleWithRemotionAsync(
+        ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes,
+        string workDir, string outputPath, int w, int h, string? musicMood = null)
+    {
+        if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
+
+        var music = ResolveBackgroundMusic(profile, workDir, musicMood);
+
+        // All paths must be absolute - Remotion resolves relative `src` paths against its
+        // own public/ folder, not this process's working directory (see the
+        // remotion-assembler README's invocation contract).
+        var assets = scenes.Select(s =>
+        {
+            var isVideo = s.ClipPath is { } clip && File.Exists(clip);
+            var path = isVideo ? s.ClipPath! : s.ImagePath
+                ?? throw new InvalidOperationException(
+                    "A scene has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
+
+            return new RemotionSceneAsset(
+                Kind: isVideo ? "video" : "image",
+                Path: Path.GetFullPath(path),
+                DurationInSeconds: s.DurationSeconds + 0.5,        // same breathing room as AssembleFromClipsAsync
+                NarrationAudioPath: s.AudioPath is { } a ? Path.GetFullPath(a) : null,
+                CaptionText: s.Narration,
+                // Context/b-roll scenes read better with a slower pan than the wider push
+                // used for a character moment - see remotion-assembler/src/Assembly.tsx.
+                MotionIntensity: s.SceneKind == "context" ? "subtle" : "normal");
+        }).ToList();
+
+        var props = new RemotionAssemblyProps(
+            Scenes: assets, WidthPx: w, HeightPx: h,
+            BackgroundMusicPath: music is not null ? Path.GetFullPath(music) : null,
+            BackgroundMusicVolume: 0.15);
+
+        var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
+        await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
+
+        await RunNpxRemotionRenderAsync(cfg, propsPath, outputPath);
+    }
+
+    // camelCase to match remotion-assembler/src/schema.ts's zod field names exactly -
+    // deliberately a separate JsonSerializerOptions from Sidecar.Options, which serializes
+    // script.json/sidecars in PascalCase and has nothing to do with this contract.
+    private static readonly JsonSerializerOptions RemotionPropsJsonOptions = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull,
+    };
+
+    private sealed record RemotionSceneAsset(
+        string Kind, string Path, double DurationInSeconds,
+        string? NarrationAudioPath, string? CaptionText, string MotionIntensity);
+
+    private sealed record RemotionAssemblyProps(
+        List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx,
+        string? BackgroundMusicPath, double BackgroundMusicVolume);
+
+    // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. Routed through
+    // cmd.exe rather than launched directly: npx resolves to npx.cmd on Windows, and
+    // CreateProcess (what Process.Start ultimately calls) can only launch .exe files
+    // directly, not .cmd shims - the same reason a bare `Process.Start("npm", ...)` fails
+    // on Windows while `Process.Start("cmd.exe", "/c npm ...")` works.
+    private static async Task RunNpxRemotionRenderAsync(GenConfig cfg, string propsPath, string outputPath)
+    {
+        if (string.IsNullOrWhiteSpace(cfg.RemotionProjectPath) || !Directory.Exists(cfg.RemotionProjectPath))
+            throw new Exception(
+                $"RemotionProjectPath is not set to a real folder (got \"{cfg.RemotionProjectPath}\"). " +
+                "Point it at the remotion-assembler project (see appsettings.json) - the no-Vidu " +
+                "Chronicle & Chaos pipeline renders through it instead of ffmpeg's Ken Burns path.");
+
+        var psi = new ProcessStartInfo("cmd.exe",
+            $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\"")
+        {
+            WorkingDirectory = cfg.RemotionProjectPath,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+
+        using var p = StartOrThrow(psi, "npx (via cmd.exe)");
+        var stdout = await p.StandardOutput.ReadToEndAsync();
+        var stderr = await p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+
+        if (p.ExitCode != 0)
+            throw new Exception($"remotion render failed (exit {p.ExitCode}):\n{Text.Tail(stdout + stderr, 2000)}");
     }
 
     private const double MusicFadeSeconds = 1.5;

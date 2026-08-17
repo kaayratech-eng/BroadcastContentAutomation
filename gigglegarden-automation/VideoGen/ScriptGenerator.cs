@@ -1,24 +1,10 @@
 using System.Text.Json;
 using GiggleGarden.Shared;
 
-// The video's content style. Educational is today's original (and still default-weighted)
-// behaviour; the rest are genuinely different writing/pacing rules, not the same script with
-// different words - see ScriptGenerator.FormatInstructions. Extend by adding a member here plus
-// a case in FormatInstructions; PickFormat and the weighting in GenConfig pick it up automatically.
-enum ContentFormat
-{
-    Educational,
-    Rhyme,
-    Poem,
-    Bedtime,
-    SingAlong,
-    CountingSong,
-}
-
-// Everything about a ContentFormat the script-generation prompt needs, supplied by the
-// active ContentProfile (see ContentProfile.FormatInstructions) - one enum member plus
-// one case in the profile's switch is all a new format needs; GenerateAsync and its
-// callers stay untouched.
+// Everything about a content format the script-generation prompt needs, supplied by the
+// active ContentProfile as part of a ContentFormatDef (see ContentProfile.cs) - a profile
+// adds a format by adding one ContentFormatDef to its Formats list; GenerateAsync and its
+// callers never change.
 record FormatInstructionSet(
     string ContentRules, string ColourGuidance, string ThumbnailGuidance,
     string IntroThird, string MusicMenu, string HashtagExamples);
@@ -83,10 +69,13 @@ class VideoScript
     // with, without the caller having to repeat --profile.
     public string Profile { get; set; } = "";
 
-    // Which content style this video was written as - persisted so --assemble (which may
-    // run days later, in a separate process) knows what it's rendering without re-deriving
-    // it, and so --retts can re-voice with the same format-appropriate TTS pacing.
-    public ContentFormat Format { get; set; } = ContentFormat.Educational;
+    // Which content format this video was written as - the Id of a ContentFormatDef on
+    // whichever ContentProfile generated it (see Profile below). Persisted so --assemble
+    // (which may run days later, in a separate process) knows what it's rendering without
+    // re-deriving it, and so --retts can re-voice with the same format-appropriate TTS
+    // pacing - resolve it back to a ContentFormatDef via ScriptGenerator.PickFormat(profile,
+    // script.Format), which does an exact Id match when given a non-null override.
+    public string Format { get; set; } = "";
 
     // One mood tag chosen by the model from a small closed menu (see
     // ScriptGenerator.FormatInstructions) appropriate to this format's energy - never free
@@ -124,6 +113,11 @@ class Scene
     // during --prep; ClipPath is the finished clip once --assemble has collected it.
     // Persisted in script.json so the two phases, which may run days apart, share state
     // across process restarts.
+    //
+    // ClipPath is no longer exclusively Vidu's: for a profile with AllowsContextScenes
+    // (Deliverable 6), a "context" scene's ClipPath is instead a Pexels video download
+    // (StockFootageClient), resolved synchronously during --prep, and StartFramePath/
+    // ViduTaskId stay null since nothing is ever submitted to Vidu for that scene.
     public string? StartFramePath { get; set; }
     public string? ViduTaskId { get; set; }
     public string? ClipPath { get; set; }
@@ -131,48 +125,50 @@ class Scene
     // What Vidu should animate for this scene. Distinct from ImagePrompt (which describes
     // a still) because a video prompt has to describe motion, not just composition.
     public string MotionPrompt { get; set; } = "";
+
+    // "character" (default) or "context" - only meaningful when the active profile has
+    // AllowsContextScenes = true (see ContentProfile.cs); ScriptGenerator never asks the
+    // model for this field otherwise, so every scene stays "character" for profiles like
+    // GiggleGarden. Program.cs's call-site rewiring (Deliverable 6) reads this to route a
+    // "context" scene to StockFootageClient instead of the manual Gemini character-art loop.
+    public string SceneKind { get; set; } = "character";
+
+    // Short English stock-footage/photo search phrase (2-6 words, e.g. "ancient greek ruins
+    // fog") - only populated, and only meaningful, for SceneKind == "context". Consumed by
+    // StockFootageClient.DownloadBestMatchAsync as the query; ImagePrompt/MotionPrompt are
+    // not used for a context scene since nothing generates or animates art for it.
+    public string? StockQuery { get; set; }
 }
 
 static class ScriptGenerator
 {
-    // Rate/pitch are plain SSML prosody - safe for every voice/language. TtsClient reads this
-    // table directly instead of a hardcoded literal; ScriptGenerator reads only Label, so the
-    // "how each format sounds" definition lives in exactly one place. Deliberately does NOT
-    // touch Azure's per-voice `style` (express-as) attribute - only "cheerful" is confirmed
-    // live for the en/hi voices this channel uses, and pa has no style support at all, so an
-    // arbitrary calm-format style value risks a failed Azure call for an unverified pairing.
-    public static readonly Dictionary<ContentFormat, (string Rate, string Pitch, string Label)> FormatVoiceProfile = new()
+    // Weighted random pick over profile.Formats, or an exact case-insensitive Id match on
+    // the caller's override (--format / deterministic testing / re-resolving script.Format
+    // back to its ContentFormatDef in Program.cs). Throws on an unknown Id rather than
+    // silently falling back - same "throw, don't guess" pattern ContentProfileRegistry.Get
+    // already established for --profile.
+    public static ContentFormatDef PickFormat(ContentProfile profile, string? overrideId)
     {
-        [ContentFormat.Educational] = ("-4%", "+6%", "bright, lively"),
-        [ContentFormat.Rhyme] = ("-4%", "+6%", "bright, playful"),
-        [ContentFormat.SingAlong] = ("-4%", "+6%", "bright, singable"),
-        [ContentFormat.CountingSong] = ("-4%", "+6%", "bright, playful"),
-        [ContentFormat.Poem] = ("-12%", "+2%", "gentle, measured"),
-        [ContentFormat.Bedtime] = ("-22%", "-6%", "calm, slow, soft"),
-    };
+        if (overrideId is not null)
+        {
+            var match = profile.Formats.FirstOrDefault(
+                f => f.Id.Equals(overrideId, StringComparison.OrdinalIgnoreCase));
+            return match ?? throw new ArgumentException(
+                $"Unknown format \"{overrideId}\" for profile \"{profile.Id}\". Use one of: " +
+                string.Join(", ", profile.Formats.Select(f => f.Id)));
+        }
 
-    private static bool IsCalm(ContentFormat format) => format is ContentFormat.Poem or ContentFormat.Bedtime;
-
-    // Weighted random pick, or the caller's override verbatim (--format / deterministic
-    // testing). ContentProfile.ContentFormatWeights is data, not code, specifically so the
-    // mix can be biased later by editing the profile rather than shipping a new build.
-    public static ContentFormat PickFormat(ContentProfile profile, ContentFormat? overrideFormat)
-    {
-        if (overrideFormat is { } chosen) return chosen;
-
-        var weights = profile.ContentFormatWeights;
-        var total = weights.Values.Sum();
-        if (total <= 0) return ContentFormat.Educational;
+        var total = profile.Formats.Sum(f => f.Weight);
+        if (total <= 0) return profile.Formats[0];
 
         var roll = Random.Shared.Next(total);
         var cumulative = 0;
-        foreach (var (name, weight) in weights)
+        foreach (var f in profile.Formats)
         {
-            cumulative += weight;
-            if (roll < cumulative && Enum.TryParse<ContentFormat>(name, ignoreCase: true, out var format))
-                return format;
+            cumulative += f.Weight;
+            if (roll < cumulative) return f;
         }
-        return ContentFormat.Educational;
+        return profile.Formats[^1];
     }
 
     // character is the one the video must be written about, when it came from a pool.
@@ -188,7 +184,7 @@ static class ScriptGenerator
     public static async Task<VideoScript> GenerateAsync(
         ContentProfile profile, string? topic, string language, IScriptProvider provider,
         string? trendContext = null, CharacterBrief? character = null,
-        IReadOnlyList<string>? avoidNames = null, ContentFormat? formatOverride = null)
+        IReadOnlyList<string>? avoidNames = null, string? formatOverride = null)
     {
         if (!profile.UsesCharacterMascot)
             throw new NotSupportedException(
@@ -197,9 +193,9 @@ static class ScriptGenerator
                 "faceless-visual script flow is future work, not built in this pass. Set " +
                 $"UsesCharacterMascot = true on \"{profile.Id}\", or implement the faceless path first.");
 
-        var format = PickFormat(profile, formatOverride);
+        var formatDef = PickFormat(profile, formatOverride);
         var (contentRules, colourGuidance, thumbnailGuidance, introThird, musicMenu, hashtagExamples) =
-            profile.FormatInstructions(format);
+            formatDef.Instructions;
 
         var langName = Text.LanguageName(language);
 
@@ -208,10 +204,10 @@ static class ScriptGenerator
         var topicLine = topic is not null
             ? $"Topic: {topic}"
             : trendContext is not null
-                ? $"Choose ONE fresh topic suitable for ages 2-6. {topicGuidance} For inspiration " +
+                ? $"Choose ONE fresh topic. {topicGuidance} For inspiration " +
                   "only - do NOT copy any of these titles or their wording - here is what's " +
-                  $"currently trending in kids' content on YouTube:\n{trendContext}"
-                : $"Choose ONE fresh topic suitable for ages 2-6. {topicGuidance}";
+                  $"currently trending on YouTube:\n{trendContext}"
+                : $"Choose ONE fresh topic. {topicGuidance}";
 
         var avoidLine = avoidNames is { Count: > 0 }
             ? $"Recent videos already used these names - pick a different one: {string.Join(", ", avoidNames)}."
@@ -230,22 +226,42 @@ static class ScriptGenerator
                """
             : profile.BuildCharacterInventionInstructions(langName, avoidLine);
 
+        var sceneKindGuidance = profile.AllowsContextScenes
+            ? """
+              Each scene also gets a sceneKind, either "character" or "context":
+              - "character": this video's figure is doing something on screen. Gets an
+                imagePrompt and motionPrompt as described below; stockQuery stays empty.
+              - "context": a real place, object, era-appropriate setting, or abstract idea
+                with NO character in frame - the shot a documentary would cut to while the
+                narration keeps talking (ruins, a landscape, a storm, an artifact, a crowd).
+                Leave imagePrompt and motionPrompt empty and instead give a stockQuery: 2-6
+                plain English words fit for a stock-footage/photo search (e.g. "ancient greek
+                ruins fog", "stormy ocean waves night") - concrete and visual, not a summary
+                of the narration.
+              Mix both freely across the 8 scenes - context scenes are how a real setting
+              comes through without the character on screen every single beat - but do not
+              use "context" for more than half the scenes, and scene 1 should be "character"
+              so the video opens on its subject.
+              """
+            : "";
+
         var prompt = $$"""
 {{profile.AudiencePersona}}
 {{topicLine}}
 Language for ALL narration: {{langName}}.
 {{profile.SafetyFraming}}
 
-This video's content format is {{format}}. Its requirements are given below and
+This video's content format is {{formatDef.Id}}. Its requirements are given below and
 DIVERGE from other formats on purpose - follow THIS format's rules, not a
 generic "kids video" template.
 
 {{characterLine}}
 
-The character must be recognisably the SAME one in every scene of this video.
-Every imagePrompt and every motionPrompt must name it and restate its key
+The character must be recognisably the SAME one in every{{(profile.AllowsContextScenes ? " character" : "")}} scene of this video.
+Every imagePrompt and every motionPrompt{{(profile.AllowsContextScenes ? " on a \"character\" scene" : "")}} must name it and restate its key
 visual features from characterDescription - the picture generator has no memory
 between scenes, so "the character" on its own is not enough.
+{{sceneKindGuidance}}
 
 Universal requirements (apply to every format):
 - Exactly 8 scenes. Each scene: 1-2 short sentences a narrator reads aloud
@@ -268,10 +284,7 @@ Universal requirements (apply to every format):
   Open it by naming the character and its appearance, then the setting and
   action. Keep the subject centred and clear of the top and bottom thirds so
   the same art works cropped to both 16:9 and 9:16, no text in the image.
-  ALWAYS give it an explicit COLOURFUL background/setting - name a colour or
-  palette in the sentence itself (e.g. "colourful garden background, bright
-  cheerful palette") - never plain white, black, grey or empty, and never a
-  single-colour flat void. {{colourGuidance}}
+  {{profile.ColourRule}} {{colourGuidance}}
 - Each scene ALSO gets a motionPrompt IN ENGLISH describing what actually MOVES
   in that scene, because every scene is generated as a short animated clip that
   starts from a picture of this video's character. Name the character and its
@@ -281,34 +294,25 @@ Universal requirements (apply to every format):
   has wings. Keep it to one or two sentences, keep the movement small and
   loopable. Like the image prompt, ALWAYS name an explicit colourful
   background/setting - the whole clip stays colourful start to finish, never a
-  plain or empty backdrop - and always end with: "2D cartoon animation, flat
-  colors, thick outlines, character design stays consistent." Never describe a
-  camera cut or a change of character.
+  plain or empty backdrop - and always end with: "{{profile.ArtStyleSuffix}}"
+  Never describe a camera cut or a change of character.
 - musicMood: ONE mood tag for this video's background music, chosen EXACTLY
   from this list (do not invent your own wording): {{musicMenu}}. Pick whichever
   one best matches this format's energy.
 
-This format's specific requirements ({{format}}):
+This format's specific requirements ({{formatDef.Id}}):
 {{contentRules}}
 
-- Title <=90 chars in {{langName}}, written for search. Shape it as
-  "[familiar rhyme/concept or concrete topic] [one emoji] | [the twist setting]" -
-  the first segment is what gets searched for, the second is what makes it
-  look new. Include the concrete topic, never just the character's name
-  (nobody is searching for a character they have never seen). A single
-  ALL-CAPS word for emphasis is fine HERE - titles are not spoken - but
-  nowhere else.
+- Title <=90 chars in {{langName}}, written for search. {{profile.TitleGuidance}}
+  A single ALL-CAPS word for emphasis is fine HERE - titles are not spoken -
+  but nowhere else.
 - Description in {{langName}}, in this order:
-  line 1: a hook addressed straight to the child - "Can you ...?", "Let's ...!",
-  "It's time to ...!", "Oh no, ...!" - optionally with an emoji. (For calm
-  formats like Bedtime/Poem, keep this line's energy soft and inviting rather
-  than exclamatory - e.g. "It's time to drift off to sleep..." not "Oh no!")
+  line 1: {{profile.BuildDescriptionHookGuidance(formatDef.IsCalm)}}
   line 2: 7-12 hashtags on ONE line, near the TOP, not at the bottom. First the
   channel, then 3-4 specific to this video's format and topic - favour tags
   like {{hashtagExamples}} where they fit - then broad audience ones.
-  then: a short paragraph naming what this video actually is (the skill it
-  teaches, the rhyme, the poem's theme, or the bedtime wind-down) and who it
-  is for (toddlers, preschoolers).
+  then: a short paragraph naming what this video actually is and who it is
+  for ({{profile.AudienceDescriptorLine}}).
 - tags: 5-10 topical tags for THIS video only, mixing {{langName}} and English -
   the format, the rhyme/skill/theme, the setting, the character's species. Do
   not include generic channel or audience tags; those are added automatically.
@@ -323,12 +327,10 @@ This format's specific requirements ({{format}}):
   thumbnail (documentary text only - nothing currently renders a separate
   image from it, but keep it consistent with the rest of this script.json).
   {{thumbnailGuidance}} It does not need to depict a specific scene; it needs to
-  be readable by a child who cannot read.
+  read instantly at a glance.
 - introText: exactly three very short sentences in {{langName}}, spoken over the
-  channel's branded opening bumper (plays before scene 1). First: a natural
-  translation of "Welcome to {{profile.ChannelName}}!" - an energetic greeting, not a
-  stiff word-for-word translation, and keep the channel name recognisable (for
-  Bedtime, keep this greeting warm rather than loud). Second: the character
+  channel's branded opening bumper (plays before scene 1). First:
+  {{profile.BuildIntroGreetingInstruction(profile.ChannelName)}}. Second: the character
   introducing ITSELF by name ("I'm Milo the fox!") - viewers have never met it
   before, so this is the only place they learn who they are watching. Third:
   {{introThird}}. Under 105 characters TOTAL across all three - this is a ~10
@@ -347,7 +349,7 @@ Respond ONLY with JSON, no markdown fences:
   "characterDescription": "...",
   "musicMood": "...",
   "tags": ["..."],
-  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..." } ]
+  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}} } ]
 }
 """;
 
@@ -362,11 +364,11 @@ Respond ONLY with JSON, no markdown fences:
         if (string.IsNullOrWhiteSpace(script.TikTokCaption)) script.TikTokCaption = script.Description;
         if (string.IsNullOrWhiteSpace(script.ReelsCaption)) script.ReelsCaption = script.Description;
         if (string.IsNullOrWhiteSpace(script.ThumbnailPrompt)) script.ThumbnailPrompt = script.Scenes[0].ImagePrompt;
-        if (string.IsNullOrWhiteSpace(script.IntroText)) script.IntroText = $"Welcome to {profile.ChannelName}!";
-        if (string.IsNullOrWhiteSpace(script.MusicMood)) script.MusicMood = IsCalm(format) ? "soft piano lullaby" : "upbeat playful";
+        if (string.IsNullOrWhiteSpace(script.IntroText)) script.IntroText = profile.BuildFallbackIntroText(profile.ChannelName);
+        if (string.IsNullOrWhiteSpace(script.MusicMood)) script.MusicMood = formatDef.DefaultMusicMood;
 
-        script.Format = format;
-        script.NarrationStyle = FormatVoiceProfile[format].Label;
+        script.Format = formatDef.Id;
+        script.NarrationStyle = formatDef.NarrationStyleLabel;
 
         // A pooled character is not the model's to change - it describes a picture that
         // already exists - so the sidecar wins over whatever came back.
@@ -392,15 +394,35 @@ Respond ONLY with JSON, no markdown fences:
             .Take(30)
             .ToList();
 
+        // A profile that never asked for sceneKind must not end up with scenes routed to
+        // StockFootageClient anyway - normalize to "character" rather than trust whatever
+        // the JSON default/deserialization produced.
+        foreach (var scene in script.Scenes)
+            scene.SceneKind = profile.AllowsContextScenes &&
+                scene.SceneKind.Equals("context", StringComparison.OrdinalIgnoreCase)
+                ? "context" : "character";
+
+        if (profile.AllowsContextScenes)
+        {
+            var badContextScene = script.Scenes.FirstOrDefault(
+                s => s.SceneKind == "context" && string.IsNullOrWhiteSpace(s.StockQuery));
+            if (badContextScene is not null)
+                throw new Exception(
+                    "Claude tagged a scene sceneKind: \"context\" but returned no stockQuery - " +
+                    "that scene has nothing for StockFootageClient to search for.");
+        }
+
         // A scene with no motion still has to animate - falling back to the still's
         // description plus idle movement beats submitting an empty prompt to Vidu. The
-        // character is named explicitly because the fallback may be all Vidu gets.
+        // character is named explicitly because the fallback may be all Vidu gets. Context
+        // scenes are skipped: they have no ImagePrompt to fall back on and are never routed
+        // through Vidu, so a filled-in MotionPrompt would just be unused data.
         foreach (var scene in script.Scenes)
-            if (string.IsNullOrWhiteSpace(scene.MotionPrompt))
+            if (scene.SceneKind == "character" && string.IsNullOrWhiteSpace(scene.MotionPrompt))
                 scene.MotionPrompt =
                     $"{script.CharacterName} ({script.CharacterDescription}). {scene.ImagePrompt}. " +
                     "Gentle idle motion, the character breathes and blinks. " +
-                    "2D cartoon animation, flat colors, thick outlines, character design stays consistent.";
+                    profile.ArtStyleSuffix;
 
         return script;
     }

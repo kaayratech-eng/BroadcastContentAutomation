@@ -47,19 +47,29 @@ static async Task RunAsync(AppConfig cfg, Logger log)
     Directory.CreateDirectory(cfg.DoneDirectory);
     Directory.CreateDirectory(cfg.FailedDirectory);
 
-    var publishers = new IPublisher[]
-    {
-        new YouTubePublisher(cfg.Platforms.YouTube, log),
-        new InstagramPublisher(cfg.Platforms.Instagram, log),
-        new FacebookPublisher(cfg.Platforms.Facebook, log),
-        new TikTokPublisher(cfg.Platforms.TikTok, log),
-    };
-    var publishersByPlatform = publishers.ToDictionary(p => p.Platform, StringComparer.OrdinalIgnoreCase);
+    if (cfg.Channels.Count == 0)
+        throw new InvalidOperationException("appsettings.json has no Channels configured.");
 
-    // Quota guard, tracked per platform across the whole run rather than
-    // per video — a platform that hits its MaxPerRun stops accepting new
-    // dispatches, but earlier videos it already handled are unaffected.
-    var dispatchedThisRun = publishers.ToDictionary(p => p.Platform, _ => 0, StringComparer.OrdinalIgnoreCase);
+    // One publisher set per channel — each channel carries its own credentials,
+    // so two channels can publish in the same run without sharing tokens.
+    var publishersByChannel = cfg.Channels.ToDictionary(
+        kv => kv.Key,
+        kv => (IReadOnlyDictionary<string, IPublisher>)new IPublisher[]
+        {
+            new YouTubePublisher(kv.Value.YouTube, log),
+            new InstagramPublisher(kv.Value.Instagram, log),
+            new FacebookPublisher(kv.Value.Facebook, log),
+            new TikTokPublisher(kv.Value.TikTok, log),
+        }.ToDictionary(p => p.Platform, StringComparer.OrdinalIgnoreCase),
+        StringComparer.OrdinalIgnoreCase);
+
+    // Quota guard, tracked per (channel, platform) across the whole run rather
+    // than per video — a channel/platform pair that hits its MaxPerRun stops
+    // accepting new dispatches, but earlier videos and the other channel are
+    // unaffected.
+    var dispatchedThisRun = new Dictionary<(string Channel, string Platform), int>();
+    int Dispatched(string channel, string platform) =>
+        dispatchedThisRun.TryGetValue((channel, platform), out var n) ? n : 0;
 
     var videos = Directory.GetFiles(cfg.WatchDirectory, "*.mp4")
         .Where(p => (DateTime.UtcNow - File.GetLastWriteTimeUtc(p)).TotalSeconds >= cfg.MinFileAgeSeconds)
@@ -74,7 +84,15 @@ static async Task RunAsync(AppConfig cfg, Logger log)
     {
         try
         {
-            var sidecar = await ResolveSidecarAsync(path, publishersByPlatform, cfg, log);
+            var sidecar = await ResolveSidecarAsync(path, publishersByChannel, cfg, log);
+            var channel = string.IsNullOrWhiteSpace(sidecar.Channel) ? cfg.DefaultChannel : sidecar.Channel;
+
+            if (!publishersByChannel.TryGetValue(channel, out var publishersByPlatform))
+            {
+                log.Error($"Failed {Path.GetFileName(path)}: channel \"{channel}\" has no entry under Channels in appsettings.json.");
+                MoveWithSiblings(path, cfg.FailedDirectory);
+                continue;
+            }
 
             if (cfg.RequireApproval && sidecar.Approved != true)
             {
@@ -103,9 +121,9 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                     continue;
                 }
 
-                if (dispatchedThisRun[publisher.Platform] >= publisher.MaxPerRun)
+                if (Dispatched(channel, publisher.Platform) >= publisher.MaxPerRun)
                 {
-                    log.Info($"  [{publisher.Platform}] run quota reached ({publisher.MaxPerRun}); deferring {Path.GetFileName(path)} to next run.");
+                    log.Info($"  [{channel}/{publisher.Platform}] run quota reached ({publisher.MaxPerRun}); deferring {Path.GetFileName(path)} to next run.");
                     continue;
                 }
 
@@ -120,7 +138,7 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                 if (cfg.StaggerSecondsBetweenPosts > 0 && dispatchedThisRun.Values.Sum() > 0)
                     await Task.Delay(TimeSpan.FromSeconds(cfg.StaggerSecondsBetweenPosts));
 
-                dispatchedThisRun[publisher.Platform]++;
+                dispatchedThisRun[(channel, publisher.Platform)] = Dispatched(channel, publisher.Platform) + 1;
 
                 var publication = sidecar.PublicationFor(target);
                 publication.Attempts++;
@@ -133,19 +151,19 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                     publication.Id = result.Id;
                     publication.Url = result.Url;
                     publication.At = DateTimeOffset.UtcNow;
-                    log.Info($"  [{publisher.Platform}] published: {result.Url ?? result.Id}");
+                    log.Info($"  [{channel}/{publisher.Platform}] published: {result.Url ?? result.Id}");
                 }
                 else if (result.Permanent || publication.Attempts >= cfg.MaxAttemptsPerPlatform)
                 {
                     publication.Status = PublishStatus.Abandoned;
                     publication.Error = result.Error;
-                    log.Error($"  [{publisher.Platform}] abandoned after {publication.Attempts} attempt(s): {result.Error}");
+                    log.Error($"  [{channel}/{publisher.Platform}] abandoned after {publication.Attempts} attempt(s): {result.Error}");
                 }
                 else
                 {
                     publication.Status = PublishStatus.Failed;
                     publication.Error = result.Error;
-                    log.Error($"  [{publisher.Platform}] failed (attempt {publication.Attempts}/{cfg.MaxAttemptsPerPlatform}, will retry): {result.Error}");
+                    log.Error($"  [{channel}/{publisher.Platform}] failed (attempt {publication.Attempts}/{cfg.MaxAttemptsPerPlatform}, will retry): {result.Error}");
                 }
             }
 
@@ -193,7 +211,8 @@ static void MoveWithSiblings(string videoPath, string destRoot)
 }
 
 static async Task<Sidecar> ResolveSidecarAsync(
-    string videoPath, IReadOnlyDictionary<string, IPublisher> publishersByPlatform, AppConfig cfg, Logger log)
+    string videoPath, IReadOnlyDictionary<string, IReadOnlyDictionary<string, IPublisher>> publishersByChannel,
+    AppConfig cfg, Logger log)
 {
     var existing = await Sidecar.LoadAsync(videoPath);
     if (existing is not null)
@@ -204,7 +223,9 @@ static async Task<Sidecar> ResolveSidecarAsync(
 
     log.Info("No sidecar — generating metadata from YouTube trends + Claude.");
 
-    var youtube = (YouTubePublisher)publishersByPlatform[Platforms.YouTube];
+    // A manually dropped video carries no channel signal, so it publishes
+    // through DefaultChannel's credentials.
+    var youtube = (YouTubePublisher)publishersByChannel[cfg.DefaultChannel][Platforms.YouTube];
     var trends = await youtube.FetchTrendingDataAsync(cfg.TrendQueries, log, CancellationToken.None);
     var meta = await GenerateMetadataAsync(videoPath, trends, cfg, log);
 
@@ -216,6 +237,7 @@ static async Task<Sidecar> ResolveSidecarAsync(
         Approved = false,
         Language = "en",
         Aspect = "landscape",
+        Channel = cfg.DefaultChannel,
         // Aspect ratio of a manually dropped video is unknown, so default to
         // the one target every render supports regardless of orientation.
         Targets = [Platforms.YouTube],

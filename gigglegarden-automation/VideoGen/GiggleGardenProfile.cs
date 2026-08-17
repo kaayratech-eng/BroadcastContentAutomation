@@ -9,6 +9,7 @@ static class GiggleGardenProfile
         Id = "gigglegarden",
         ChannelName = "Giggle Garden",
         UsesCharacterMascot = true,
+        MadeForKids = true,
 
         AudiencePersona = "You write original scripts for an animated kids' YouTube channel (ages 2-6).",
 
@@ -49,16 +50,62 @@ static class GiggleGardenProfile
               No personality, no backstory, no actions - appearance only.
             """,
 
-        FormatInstructions = FormatInstructions,
+        Formats = BuildFormats(),
 
-        ContentFormatWeights = new()
+        ColourRule =
+            "ALWAYS give it an explicit COLOURFUL background/setting - name a colour or " +
+            "palette in the sentence itself (e.g. \"colourful garden background, bright " +
+            "cheerful palette\") - never plain white, black, grey or empty, and never a " +
+            "single-colour flat void.",
+
+        ArtStyleSuffix = "2D cartoon animation, flat colors, thick outlines, character design stays consistent.",
+
+        TitleGuidance =
+            "Shape it as \"[familiar rhyme/concept or concrete topic] [one emoji] | [the twist " +
+            "setting]\" - the first segment is what gets searched for, the second is what makes " +
+            "it look new. Include the concrete topic, never just the character's name (nobody is " +
+            "searching for a character they have never seen).",
+
+        BuildDescriptionHookGuidance = isCalm =>
+            "a hook addressed straight to the child - \"Can you ...?\", \"Let's ...!\", " +
+            "\"It's time to ...!\", \"Oh no, ...!\" - optionally with an emoji." +
+            (isCalm
+                ? " (Keep this line's energy soft and inviting rather than exclamatory - e.g. " +
+                  "\"It's time to drift off to sleep...\" not \"Oh no!\")"
+                : ""),
+
+        AudienceDescriptorLine = "toddlers, preschoolers",
+
+        BuildIntroBumperPrompts = (characterName, characterDescription, isCalm) => isCalm
+            ? (
+                ImagePrompt: $"{characterName} greeting the viewer softly, colourful soft pastel background, warm cosy palette.",
+                MotionPrompt: $"{characterName} ({characterDescription}) waves hello softly to the viewer and sways " +
+                    "gently on the spot, eyes soft and calm. Colourful soft pastel background, warm cosy palette. " +
+                    "2D cartoon animation, flat colors, thick outlines, character design stays consistent."
+              )
+            : (
+                ImagePrompt: $"{characterName} greeting the viewer, colourful bright background, cheerful palette.",
+                MotionPrompt: $"{characterName} ({characterDescription}) waves hello to the viewer and bounces " +
+                    "happily on the spot, eyes bright and smiling. Colourful bright background, cheerful palette. " +
+                    "2D cartoon animation, flat colors, thick outlines, character design stays consistent."
+              ),
+
+        BuildIntroGreetingInstruction = channelName =>
+            $"a natural translation of \"Welcome to {channelName}!\" - an energetic greeting, not a " +
+            "stiff word-for-word translation, and keep the channel name recognisable (for Bedtime, " +
+            "keep this greeting warm rather than loud)",
+
+        BuildFallbackIntroText = channelName => $"Welcome to {channelName}!",
+
+        CharacterPortraitStyleSuffix =
+            "Children's book illustration, bright cheerful colors, soft rounded shapes, no text, " +
+            "no words, no letters anywhere in the image.",
+
+        VoiceOverride = new Dictionary<string, (string Locale, string Voice, string? Style)>
         {
-            ["Educational"] = 30,
-            ["Rhyme"] = 20,
-            ["Poem"] = 10,
-            ["Bedtime"] = 15,
-            ["SingAlong"] = 15,
-            ["CountingSong"] = 10,
+            ["en"] = ("en-US", "en-US-JennyNeural", "cheerful"),
+            ["hi"] = ("hi-IN", "hi-IN-SwaraNeural", "cheerful"),
+            ["pa"] = ("pa-IN", "pa-IN-VaaniNeural", null),
         },
 
         // Both CoComelon and Vlad and Niki run exactly this architecture - an unchanging
@@ -91,16 +138,40 @@ static class GiggleGardenProfile
         BackgroundMusicLufs = -36.0,
     };
 
-    private static bool IsCalm(ContentFormat format) => format is ContentFormat.Poem or ContentFormat.Bedtime;
+    // Builds all 6 GiggleGarden formats as ContentFormatDef entries - one place per format,
+    // replacing the old shared ContentFormat enum + FormatVoiceProfile/ContentFormatWeights
+    // tables. Ids match what the old enum already serialized as under Sidecar.Options'
+    // CamelCase JsonStringEnumConverter, so nothing already on disk needs a migration.
+    private static IReadOnlyList<ContentFormatDef> BuildFormats() =>
+    [
+        BuildFormat("educational", weight: 30, isCalm: false, rate: "-4%", pitch: "+6%",
+            narrationStyleLabel: "bright, lively"),
+        BuildFormat("rhyme", weight: 20, isCalm: false, rate: "-4%", pitch: "+6%",
+            narrationStyleLabel: "bright, playful"),
+        BuildFormat("poem", weight: 10, isCalm: true, rate: "-12%", pitch: "+2%",
+            narrationStyleLabel: "gentle, measured"),
+        BuildFormat("bedtime", weight: 15, isCalm: true, rate: "-22%", pitch: "-6%",
+            narrationStyleLabel: "calm, slow, soft"),
+        BuildFormat("singAlong", weight: 15, isCalm: false, rate: "-4%", pitch: "+6%",
+            narrationStyleLabel: "bright, singable"),
+        BuildFormat("countingSong", weight: 10, isCalm: false, rate: "-4%", pitch: "+6%",
+            narrationStyleLabel: "bright, playful"),
+    ];
 
-    private static FormatInstructionSet FormatInstructions(ContentFormat format)
+    private static ContentFormatDef BuildFormat(
+        string id, int weight, bool isCalm, string rate, string pitch, string narrationStyleLabel) =>
+        new(id, weight, isCalm, rate, pitch, narrationStyleLabel,
+            DefaultMusicMood: isCalm ? "soft piano lullaby" : "upbeat playful",
+            Instructions: FormatInstructions(id, isCalm));
+
+    private static FormatInstructionSet FormatInstructions(string id, bool isCalm)
     {
-        var colourGuidance = IsCalm(format)
+        var colourGuidance = isCalm
             ? "Still COLOURFUL, but soft pastel / warm dim tones (gentle purples, soft blues, " +
               "warm ambers) - cosy and colourful, never neon, and never dull, grey or monochrome."
             : "Bright, bold, saturated, playful colours.";
 
-        var thumbnailGuidance = IsCalm(format)
+        var thumbnailGuidance = isCalm
             ? "Name the character and its appearance, give it ONE large, warm, softly-lit face " +
               "filling much of the frame with a gentle, contented, sleepy-eyed expression (NOT an " +
               "exaggerated open-mouth surprised face), looking softly toward the lens, plus one " +
@@ -113,14 +184,14 @@ static class GiggleGardenProfile
               "Saturated primary colours, colourful high-contrast background, simple composition, " +
               "no text in the image.";
 
-        var musicMenu = IsCalm(format)
+        var musicMenu = isCalm
             ? """"soft piano lullaby", "gentle music box", "warm ambient""""
             : """"upbeat playful", "bright acoustic", "cheerful ukulele"""";
 
         string contentRules, introThird, hashtagExamples;
-        switch (format)
+        switch (id)
         {
-            case ContentFormat.Educational:
+            case "educational":
                 contentRules = """
                     - Scene 1 is the hook: the very first line must grab attention in the first
                       couple of seconds (an exciting question, a silly sound, a surprise) - not a
@@ -148,7 +219,7 @@ static class GiggleGardenProfile
                 hashtagExamples = "#kidslearning #preschoollearning #educationalvideos";
                 break;
 
-            case ContentFormat.Rhyme:
+            case "rhyme":
                 contentRules = """
                     - Every scene's narration must be a genuine RHYMING COUPLET (two lines that
                       rhyme, or that continue the rhyme from the previous scene) - a listener should
@@ -169,7 +240,7 @@ static class GiggleGardenProfile
                 hashtagExamples = "#nurseryrhymes #kidssongs #rhymetime";
                 break;
 
-            case ContentFormat.Poem:
+            case "poem":
                 contentRules = """
                     - Write in gentle, metered lines - a soft, consistent rhythm (rhyme is welcome
                       but not required). Prioritise IMAGERY - what things look, sound and feel like
@@ -192,7 +263,7 @@ static class GiggleGardenProfile
                 hashtagExamples = "#kidspoetry #calmtime #storytimeforkids";
                 break;
 
-            case ContentFormat.Bedtime:
+            case "bedtime":
                 contentRules = """
                     - This is a BEDTIME/LULLABY video: slow, soft, sleepy and calming from the very
                       first scene. Every line should feel like it winds the child DOWN toward sleep,
@@ -224,7 +295,7 @@ static class GiggleGardenProfile
                 hashtagExamples = "#lullaby #bedtimestories #sleepmusic";
                 break;
 
-            case ContentFormat.SingAlong:
+            case "singAlong":
                 contentRules = """
                     - This is a SING-ALONG video: build it around ONE short, extremely repeatable
                       CHORUS line (e.g. "Clap your hands, clap your hands, all around!") that appears
@@ -244,7 +315,7 @@ static class GiggleGardenProfile
                 hashtagExamples = "#singalong #kidssongs #clapalong";
                 break;
 
-            case ContentFormat.CountingSong:
+            case "countingSong":
                 contentRules = """
                     - This is a COUNTING SONG: structure the 8 scenes around counting a consistent
                       set of objects or characters up (or down) by one each scene (e.g. 1 duck, then
@@ -264,7 +335,7 @@ static class GiggleGardenProfile
                 break;
 
             default:
-                throw new ArgumentOutOfRangeException(nameof(format), format, "Unknown ContentFormat.");
+                throw new ArgumentOutOfRangeException(nameof(id), id, "Unknown format id.");
         }
 
         return new FormatInstructionSet(contentRules, colourGuidance, thumbnailGuidance, introThird, musicMenu, hashtagExamples);

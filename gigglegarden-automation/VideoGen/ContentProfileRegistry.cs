@@ -6,7 +6,11 @@
 static class ContentProfileRegistry
 {
     private static readonly Dictionary<string, ContentProfile> All =
-        new(StringComparer.OrdinalIgnoreCase) { ["gigglegarden"] = GiggleGardenProfile.Value };
+        new(StringComparer.OrdinalIgnoreCase)
+        {
+            ["gigglegarden"] = GiggleGardenProfile.Value,
+            ["chronicleandchaos"] = MythologyProfile.Value,
+        };
 
     public static ContentProfile Get(string id) =>
         All.TryGetValue(id, out var profile) ? profile

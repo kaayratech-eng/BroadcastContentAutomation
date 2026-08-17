@@ -1,0 +1,23 @@
+{
+  "name": "remotion-assembler",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Composites character art + stock footage + TTS narration + text overlays into a rendered video. Shelled out to by VideoGen (see ../VideoGen/Program.cs) the same way VideoGen already shells out to ffmpeg — see README.md for the invocation contract. Part of Deliverable 6, gigglegarden-automation/tasks/todo.md.",
+  "scripts": {
+    "start": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Assembly",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "remotion": "4.0.512",
+    "@remotion/cli": "4.0.512",
+    "zod": "3.23.8"
+  },
+  "devDependencies": {
+    "@types/react": "18.3.1",
+    "@types/react-dom": "18.3.1",
+    "typescript": "5.5.4"
+  }
+}

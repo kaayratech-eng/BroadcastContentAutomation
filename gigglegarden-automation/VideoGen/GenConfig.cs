@@ -48,6 +48,22 @@ record GenConfig
     public string OpenAiImageModel { get; init; } = "gpt-image-1";
     public string StabilityApiKey { get; init; } = "";
 
+    // Pexels stock photo/video search (see StockFootageClient) - the auto-fetched
+    // "context/b-roll moment" visual source for the stock-footage/Remotion pipeline
+    // (Deliverable 6, tasks/todo.md). Free API, no card required; license permits
+    // commercial/monetized use with no attribution needed (checked live before
+    // adopting). Not yet required in Validate() below - nothing calls this client
+    // until the pipeline is wired up, so an unset key must not block the existing
+    // Vidu-based runs from starting.
+    public string PexelsApiKey { get; init; } = "";
+
+    // Absolute path to the remotion-assembler sibling project (Deliverable 6,
+    // tasks/todo.md) - VideoAssembler.AssembleWithRemotionAsync shells out to
+    // `npx remotion render` there, the same way RunFfmpegAsync shells out to ffmpeg.
+    // Only read when the active profile has AllowsContextScenes = true; GiggleGarden's
+    // Vidu/ffmpeg path never reaches it, so an unset value doesn't block that channel.
+    public string RemotionProjectPath { get; init; } = "";
+
     // Public YouTube Data API key (no OAuth - Google Cloud Console -> Credentials ->
     // API key, with "YouTube Data API v3" enabled) used to pull real trending kids'
     // titles as topic inspiration when --topic is not given. Separate from the

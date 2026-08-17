@@ -35,7 +35,7 @@ var cfg = config.Get<GenConfig>() ?? throw new InvalidOperationException("appset
 
 string? topic = null, language = "en", job = null, profileId = null;
 var mode = "";
-ContentFormat? formatOverride = null;
+string? formatOverride = null;
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -51,15 +51,10 @@ for (var i = 0; i < args.Length; i++)
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
         case "--profile" when i + 1 < args.Length: profileId = args[++i]; break;
         case "--format" when i + 1 < args.Length:
-            if (!Enum.TryParse<ContentFormat>(args[++i], ignoreCase: true, out var parsedFormat))
-            {
-                Console.Error.WriteLine($"Unknown --format '{args[i]}'. Use one of: {string.Join(", ", Enum.GetNames<ContentFormat>())}.");
-                return 1;
-            }
-            formatOverride = parsedFormat;
+            formatOverride = args[++i];
             break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format Educational|Rhyme|Poem|Bedtime|SingAlong|CountingSong]");
+            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format <id>]   (valid --format ids depend on --profile; see that profile's Formats catalog)");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
             Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
             Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
@@ -148,31 +143,26 @@ async Task<int> RunPrepAsync()
     //    so its wording/motion is what actually delivers a format-appropriate thumbnail -
     //    calm formats get a gentler wave and a soft-pastel-but-colourful setting instead of
     //    the energetic bounce every format used to get.
-    var calmIntro = script.Format is ContentFormat.Poem or ContentFormat.Bedtime;
+    var calmIntro = ScriptGenerator.PickFormat(profile, script.Format).IsCalm;
+    var (introImagePrompt, introMotionPrompt) =
+        profile.BuildIntroBumperPrompts(script.CharacterName, script.CharacterDescription, calmIntro);
     var intro = new Scene
     {
         Narration = script.IntroText,
-        ImagePrompt = calmIntro
-            ? $"{script.CharacterName} greeting the viewer softly, colourful soft pastel background, warm cosy palette."
-            : $"{script.CharacterName} greeting the viewer, colourful bright background, cheerful palette.",
-        MotionPrompt = calmIntro
-            ? $"{script.CharacterName} ({script.CharacterDescription}) waves hello softly to the viewer and sways " +
-              "gently on the spot, eyes soft and calm. Colourful soft pastel background, warm cosy palette. " +
-              "2D cartoon animation, flat colors, thick outlines, character design stays consistent."
-            : $"{script.CharacterName} ({script.CharacterDescription}) waves hello to the viewer and bounces " +
-              "happily on the spot, eyes bright and smiling. Colourful bright background, cheerful palette. " +
-              "2D cartoon animation, flat colors, thick outlines, character design stays consistent.",
+        ImagePrompt = introImagePrompt,
+        MotionPrompt = introMotionPrompt,
     };
     script.Scenes.Insert(0, intro);
 
     // 3. Narration first: every clip is generated to the length of the line it has to
     //    carry, so the audio has to exist before anything is submitted.
-    var tts = TtsProviderFactory.Create(cfg, language!);
+    var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
+    var tts = TtsProviderFactory.Create(cfg, profile, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, script.Format);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
         scene.AudioPath = audioPath;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
@@ -181,25 +171,72 @@ async Task<int> RunPrepAsync()
     var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
     Console.WriteLine($"Narration total: {total:0}s");
 
-    // 4. Submit every clip. All scenes seed from this video's one character frame rather
-    //    than chaining each clip off the previous one's last frame: chaining is serial,
-    //    which cannot work against an off-peak queue that may take 48 hours per clip,
-    //    and it compounds drift over a dozen generations. Seeding every scene from a
-    //    single frame is fully parallel, has no drift at all, and still gives one
-    //    consistent character for the length of the video.
-    IVideoProvider vidu = new ViduClient(cfg);
     var credits = 0;
 
-    for (var i = 0; i < script.Scenes.Count; i++)
+    if (profile.AllowsContextScenes)
     {
-        var scene = script.Scenes[i];
-        scene.StartFramePath = characterImage;
+        // The no-Vidu hybrid pipeline (Deliverable 6, tasks/todo.md): a "context" scene's
+        // visual comes from Pexels (no human step), a "character" scene's comes from the
+        // manual Gemini prompt-and-pickup loop, referencing the character portrait above
+        // for consistency the way Vidu's shared start frame used to provide automatically.
+        // Everything is resolved synchronously right here - there is no async job to poll,
+        // so --assemble for this profile has nothing to collect and goes straight to
+        // rendering (with Remotion, not ffmpeg's Ken Burns path).
+        var stock = new StockFootageClient(cfg);
+        for (var i = 0; i < script.Scenes.Count; i++)
+        {
+            var scene = script.Scenes[i];
+            var label = $"{i + 1}/{script.Scenes.Count}";
 
-        var submission = await vidu.SubmitAsync(characterImage, scene.MotionPrompt, scene.DurationSeconds);
-        scene.ViduTaskId = submission.TaskId;
-        credits += submission.Credits;
+            if (scene.SceneKind == "context")
+            {
+                var basePath = Path.Combine(workDir, $"scene{i:D2}-stock");
+                var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, basePath, ImageClient.Orientation.Portrait)
+                    ?? throw new Exception(
+                        $"Scene {label}: Pexels had no match for \"{scene.StockQuery}\". Broaden the stockQuery " +
+                        $"and re-run --prep, or hand-place a file at {basePath}.jpg or {basePath}.mp4 and re-run --assemble.");
 
-        Console.WriteLine($"Submitted {i + 1}/{script.Scenes.Count} — task {submission.TaskId} ({submission.Credits} credits)");
+                if (Path.GetExtension(downloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                    scene.ClipPath = downloaded;
+                else
+                    scene.ImagePath = downloaded;
+
+                Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
+            }
+            else
+            {
+                var outputPath = Path.Combine(workDir, $"scene{i:D2}-art.png");
+                var prompt = ImageClient.BuildPrompt(
+                    scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
+                    ImageClient.Orientation.Portrait, matchReference: true);
+                scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
+                    prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
+
+                Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
+            }
+        }
+    }
+    else
+    {
+        // Submit every clip. All scenes seed from this video's one character frame rather
+        // than chaining each clip off the previous one's last frame: chaining is serial,
+        // which cannot work against an off-peak queue that may take 48 hours per clip,
+        // and it compounds drift over a dozen generations. Seeding every scene from a
+        // single frame is fully parallel, has no drift at all, and still gives one
+        // consistent character for the length of the video.
+        IVideoProvider vidu = new ViduClient(cfg);
+
+        for (var i = 0; i < script.Scenes.Count; i++)
+        {
+            var scene = script.Scenes[i];
+            scene.StartFramePath = characterImage;
+
+            var submission = await vidu.SubmitAsync(characterImage, scene.MotionPrompt, scene.DurationSeconds);
+            scene.ViduTaskId = submission.TaskId;
+            credits += submission.Credits;
+
+            Console.WriteLine($"Submitted {i + 1}/{script.Scenes.Count} — task {submission.TaskId} ({submission.Credits} credits)");
+        }
     }
 
     script.Language = language!;
@@ -207,10 +244,18 @@ async Task<int> RunPrepAsync()
     await SaveScriptAsync(workDir, script);
 
     Console.WriteLine();
-    Console.WriteLine($"Submitted {script.Scenes.Count} clips, {credits} credits (~${credits * 0.005:0.00}).");
-    Console.WriteLine(cfg.ViduOffPeak
-        ? "Off-peak: Vidu delivers within 48 hours. Run --assemble later to collect and render."
-        : "Peak rate: clips usually land within minutes. Run --assemble to collect and render.");
+    if (profile.AllowsContextScenes)
+    {
+        Console.WriteLine($"Resolved visuals for {script.Scenes.Count} scenes (stock footage + manual art, no Vidu spend).");
+        Console.WriteLine("Run --assemble to render with Remotion:");
+    }
+    else
+    {
+        Console.WriteLine($"Submitted {script.Scenes.Count} clips, {credits} credits (~${credits * 0.005:0.00}).");
+        Console.WriteLine(cfg.ViduOffPeak
+            ? "Off-peak: Vidu delivers within 48 hours. Run --assemble later to collect and render."
+            : "Peak rate: clips usually land within minutes. Run --assemble to collect and render.");
+    }
     Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
     return 0;
 }
@@ -230,12 +275,13 @@ async Task<int> RunRettsAsync()
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
     profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
 
-    var tts = TtsProviderFactory.Create(cfg, language!);
+    var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
+    var tts = TtsProviderFactory.Create(cfg, profile, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, script.Format);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
         scene.AudioPath = audioPath;
 
         var before = scene.DurationSeconds;
@@ -270,13 +316,13 @@ async Task<int> RunTestTtsAsync()
     Console.WriteLine($"Comparing TTS providers for \"{language}\" -> {outDir}");
 
     var azurePath = Path.Combine(outDir, $"azure-{language}.mp3");
-    await new AzureTtsProvider(cfg).SynthesizeAsync(text, language!, azurePath, ContentFormat.Educational);
+    await new AzureTtsProvider(cfg, profile.VoiceOverride).SynthesizeAsync(text, language!, azurePath, "-4%", "+6%");
     Console.WriteLine($"  Azure  -> {azurePath}");
 
     try
     {
         var googlePath = Path.Combine(outDir, $"google-{language}.mp3");
-        await new GoogleTtsProvider(cfg).SynthesizeAsync(text, language!, googlePath, ContentFormat.Educational);
+        await new GoogleTtsProvider(cfg).SynthesizeAsync(text, language!, googlePath, "-4%", "+6%");
         Console.WriteLine($"  Google -> {googlePath}");
     }
     catch (NotSupportedException ex)
@@ -327,62 +373,69 @@ async Task<int> RunAssembleAsync()
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
     profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
 
-    IVideoProvider vidu = new ViduClient(cfg);
-    var pending = 0;
-
-    // 5. Collect. Each scene is independent, so a clip that is still queued only holds
-    //    up this run - already-downloaded clips are recorded in script.json and skipped
-    //    next time, which makes repeated --assemble runs cheap and resumable.
-    for (var i = 0; i < script.Scenes.Count; i++)
+    // The no-Vidu hybrid pipeline (Deliverable 6) resolves every scene's visual
+    // synchronously during --prep - stock footage and manual art are both already on
+    // disk by the time --assemble runs, so there is nothing async to poll or collect.
+    // Only a profile still on Vidu needs this step.
+    if (!profile.AllowsContextScenes)
     {
-        var scene = script.Scenes[i];
-        var label = $"{i + 1}/{script.Scenes.Count}";
+        IVideoProvider vidu = new ViduClient(cfg);
+        var pending = 0;
 
-        if (scene.ClipPath is { } existing && File.Exists(existing)) continue;
-
-        if (string.IsNullOrEmpty(scene.ViduTaskId))
-            throw new InvalidOperationException($"Scene {label} was never submitted. Re-run --prep.");
-
-        var result = await vidu.PollAsync(scene.ViduTaskId);
-
-        if (result.Succeeded)
+        // 5. Collect. Each scene is independent, so a clip that is still queued only holds
+        //    up this run - already-downloaded clips are recorded in script.json and skipped
+        //    next time, which makes repeated --assemble runs cheap and resumable.
+        for (var i = 0; i < script.Scenes.Count; i++)
         {
-            var clipPath = Path.Combine(workDir, $"clip{i:D2}-source.mp4");
-            await vidu.DownloadAsync(result.Url!, clipPath);
-            scene.ClipPath = clipPath;
-            Console.WriteLine($"  {label} downloaded");
+            var scene = script.Scenes[i];
+            var label = $"{i + 1}/{script.Scenes.Count}";
+
+            if (scene.ClipPath is { } existing && File.Exists(existing)) continue;
+
+            if (string.IsNullOrEmpty(scene.ViduTaskId))
+                throw new InvalidOperationException($"Scene {label} was never submitted. Re-run --prep.");
+
+            var result = await vidu.PollAsync(scene.ViduTaskId);
+
+            if (result.Succeeded)
+            {
+                var clipPath = Path.Combine(workDir, $"clip{i:D2}-source.mp4");
+                await vidu.DownloadAsync(result.Url!, clipPath);
+                scene.ClipPath = clipPath;
+                Console.WriteLine($"  {label} downloaded");
+            }
+            else if (result.IsTerminal)
+            {
+                // Vidu auto-cancels off-peak work it could not place inside the window and
+                // refunds the credits, so the fix is to resubmit this one scene, not the job.
+                Console.WriteLine($"  {label} {result.State} — resubmitting ({result.Error ?? "no reason given"})");
+
+                // Has to be this job's own character frame, not a channel-wide one: a scene
+                // resubmitted from anything else comes back with a different creature in it.
+                var startFrame = scene.StartFramePath ?? script.CharacterImagePath
+                    ?? throw new InvalidOperationException(
+                        $"Scene {label} needs resubmitting but the job records no character image. Re-run --prep.");
+
+                var resubmit = await vidu.SubmitAsync(startFrame, scene.MotionPrompt, scene.DurationSeconds);
+                scene.ViduTaskId = resubmit.TaskId;
+                pending++;
+            }
+            else
+            {
+                Console.WriteLine($"  {label} {result.State}");
+                pending++;
+            }
         }
-        else if (result.IsTerminal)
+
+        await SaveScriptAsync(workDir, script);
+
+        if (pending > 0)
         {
-            // Vidu auto-cancels off-peak work it could not place inside the window and
-            // refunds the credits, so the fix is to resubmit this one scene, not the job.
-            Console.WriteLine($"  {label} {result.State} — resubmitting ({result.Error ?? "no reason given"})");
-
-            // Has to be this job's own character frame, not a channel-wide one: a scene
-            // resubmitted from anything else comes back with a different creature in it.
-            var startFrame = scene.StartFramePath ?? script.CharacterImagePath
-                ?? throw new InvalidOperationException(
-                    $"Scene {label} needs resubmitting but the job records no character image. Re-run --prep.");
-
-            var resubmit = await vidu.SubmitAsync(startFrame, scene.MotionPrompt, scene.DurationSeconds);
-            scene.ViduTaskId = resubmit.TaskId;
-            pending++;
+            Console.WriteLine();
+            Console.WriteLine($"{pending} clip(s) still generating. Re-run --assemble to continue:");
+            Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
+            return 0;
         }
-        else
-        {
-            Console.WriteLine($"  {label} {result.State}");
-            pending++;
-        }
-    }
-
-    await SaveScriptAsync(workDir, script);
-
-    if (pending > 0)
-    {
-        Console.WriteLine();
-        Console.WriteLine($"{pending} clip(s) still generating. Re-run --assemble to continue:");
-        Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
-        return 0;
     }
 
     // 6. Render
@@ -406,7 +459,10 @@ async Task<int> RunAssembleAsync()
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
 
     var vertical = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}-short.mp4");
-    await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
+    if (profile.AllowsContextScenes)
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood);
+    else
+        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
@@ -418,6 +474,8 @@ async Task<int> RunAssembleAsync()
         Approved = false,
         Language = language!,
         Aspect = "vertical",
+        MadeForKids = profile.MadeForKids,
+        Channel = profile.Id,
         Targets = [.. cfg.VerticalTargets],
         CaptionOverrides =
         {
@@ -432,7 +490,10 @@ async Task<int> RunAssembleAsync()
     // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
     // than generating a second orientation, which would double the per-video spend.
     var landscape = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}.mp4");
-    await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
+    if (profile.AllowsContextScenes)
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood);
+    else
+        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 
@@ -452,6 +513,8 @@ async Task<int> RunAssembleAsync()
         Approved = false,
         Language = language!,
         Aspect = "landscape",
+        MadeForKids = profile.MadeForKids,
+        Channel = profile.Id,
         Targets = [.. cfg.LandscapeTargets],
     }.SaveAsync(landscape);
     rendered.Add(landscape);
