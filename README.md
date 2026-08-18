@@ -1,8 +1,15 @@
 # GiggleGarden YouTube Automation — Windows / .NET 8
 
+Drives two channels off one codebase, picked per run with `--profile`:
+
+| Channel | `--profile` id | Content |
+|---|---|---|
+| GiggleGarden (Giggle Wiggle Town branding) | `gigglegarden` | Kids' nursery-rhyme/counting shorts |
+| Chronicle & Chaos | `chronicleandchaos` | Mythology explainers |
+
 Projects:
 - **VideoGen** — generates finished videos (script → TTS → images → FFmpeg).
-- **TokenCapture** — run once, saves the YouTube refresh token.
+- **TokenCapture** — run once per channel, saves the YouTube refresh token.
 - **TikTokTokenCapture** — run once (only if you're enabling TikTok), saves the TikTok refresh token.
 - **Uploader** — runs daily via Task Scheduler; publishes each video to every platform its sidecar targets (YouTube, and optionally Instagram/Facebook/TikTok for the vertical short).
 
@@ -11,14 +18,32 @@ gitignored `appsettings.Local.json` next to each project's `appsettings.json`
 (already wired up for `VideoGen` and `Uploader`; values there override the
 tracked file's placeholders).
 
-## 1. One-time setup
+## 1. One-time setup — run ONCE per channel, not per video
+
+`TokenCapture` takes the client secret **and a channel name**. The channel name
+picks which subfolder the refresh token is saved into, so each channel gets its
+own token and one channel's capture never overwrites another's:
 
 ```powershell
 cd TokenCapture
-dotnet run -- "C:\Secure\GiggleGarden\client_secret.json"
+dotnet run -- "C:\Secure\GiggleGarden\client_secret.json" gigglegarden
 ```
-Browser opens → sign in as the channel-owner account → approve.
-You should see `Refresh token saved.`
+Browser opens → sign in as GiggleGarden's channel-owner account → approve.
+You should see `Refresh token saved for channel "gigglegarden".`
+
+Then, separately, for the second channel:
+```powershell
+dotnet run -- "C:\Secure\GiggleGarden\client_secret.json" chronicleandchaos
+```
+Browser opens again → sign in as **Chronicle & Chaos's** channel-owner account
+(a different Google account/YouTube channel) → approve.
+You should see `Refresh token saved for channel "chronicleandchaos".`
+
+Both tokens now live side by side under `%APPDATA%\GiggleGarden\<channel>\` and
+never expire from normal use (Google refresh tokens are long-lived unless
+revoked). **The Uploader reuses them automatically on every run — you do not
+re-run TokenCapture per video or per upload, only once per channel, ever**
+(and again only if you revoke access or the token stops working).
 
 ### Optional: enable TikTok
 
@@ -38,12 +63,13 @@ You should see `Refresh token saved.`
 
 ## 2. Configure the uploader
 
-Edit `Uploader\appsettings.json` (structure, safe to commit) and
-`Uploader\appsettings.Local.json` (real secrets, gitignored):
-- `Platforms.YouTube.TokenStorePath` — set YOURUSER to your Windows username (must match where TokenCapture saved it).
+Edit `Uploader\appsettings.json` (structure, safe to commit) → `Channels.<channel>.YouTube.TokenStorePath`
+for each channel — must match the folder TokenCapture saved into above
+(`%APPDATA%\GiggleGarden\gigglegarden`, `%APPDATA%\GiggleGarden\chronicleandchaos`) —
+and `Uploader\appsettings.Local.json` (real secrets, gitignored):
 - `AnthropicApiKey` — from https://console.anthropic.com (only needed if a video has no sidecar and metadata must be auto-generated) — put the real value in `appsettings.Local.json`.
 - For Instagram/Facebook: `Platforms.Instagram.IgUserId` / `Platforms.Facebook.PageId` in `appsettings.json`, the Meta Page access token in `appsettings.Local.json`. Both can share one Meta app and Page access token.
-- Keep `Platforms.YouTube.PrivacyStatus: "private"` until the end-to-end test passes.
+- Keep `PrivacyStatus: "private"` until the end-to-end test passes.
 
 ## 3. Test end-to-end (do this before scheduling anything)
 
@@ -68,7 +94,7 @@ Task Scheduler → Create Task:
 
 ## How the approval gate works
 
-Every auto-generated metadata file lands as a sidecar JSON with `"approved": false`.
+Every auto-generated metadata file lands as a sidecar JSON with `"approved": false"`.
 Nothing uploads until you flip it to `true`. This is your 10-second human glance —
 keep it on for kids' content. If you write your own sidecar JSON up front
 (title/description/tags/approved:true), the trend+Claude step is skipped entirely.
@@ -100,19 +126,42 @@ keep it on for kids' content. If you write your own sidecar JSON up front
 2. **Azure Speech key**: portal.azure.com → Create resource → "Speech" → Free F0 tier
    is fine to start (0.5M chars/month free). Copy Key + Region into appsettings.
 3. **OpenAI API key**: platform.openai.com → API keys (for scene illustrations).
-4. **Anthropic API key**: console.anthropic.com (for script writing).
-5. **Background music**: put a royalty-free loop at `D:\Business\VideoGen\assets\music.mp3`.
-   Use YouTube Audio Library (free, safe) — pick something marked "no attribution required".
+4. **Anthropic / Groq / Gemini API keys**: script generation routes through
+   `ScriptProvider` in `appsettings.json` (`claude`, `groq`, `gemini`, or
+   `hybrid`, which tries the free tiers before falling back to Claude) — only
+   the key(s) for whichever provider(s) you use are required.
+5. **Background music**: per-profile libraries already live under
+   `VideoGen/assets/music/` (GiggleGarden) and `VideoGen/assets/music-mythology/`
+   (Chronicle & Chaos) — drop additional royalty-free loops in via the YouTube
+   Audio Library ("no attribution required" tracks only).
 6. Font: `NirmalaB.ttf` ships with Windows and covers Devanagari + Gurmukhi. No action needed.
 
 ## Usage
 
 ```powershell
 cd VideoGen
-dotnet run -- --topic "counting ducks" --language en
+dotnet run -- --topic "counting ducks" --language en                      # uses GenConfig's default profile
 dotnet run -- --language hi          # Claude picks the topic
 dotnet run -- --language pa
+dotnet run -- --profile chronicleandchaos --topic "the myth of Icarus"    # explicit channel
 ```
+
+`--profile gigglegarden` or `--profile chronicleandchaos` picks which channel
+the video is *for* (omit it and it falls back to `VideoGen/appsettings.json`'s
+`Profile` setting). That choice gets stamped into the video's sidecar JSON as
+`"channel"` automatically — you don't answer this question again at upload
+time. The Uploader reads that field and picks the matching channel's
+credentials from `Channels.<channel>` in its own `appsettings.json` with no
+further input from you.
+
+GiggleGarden also runs a recurring cast: `VideoGen/assets/character-pool/`
+holds finalized `.png` + `.json` sidecar pairs, one per character. Videos draw
+from that pool once it reaches `CharacterPoolMaxSize` (in
+`GiggleGardenProfile.cs`) instead of inventing a new character every time, so
+the audience learns to recognize a stable set of characters. Raw/unprocessed
+source art doesn't belong loose in that folder — see
+`assets/character-pool/_raw-source/` and `assets/extra-character-pool-background/`
+for where spare or pre-cutout art is kept instead.
 
 Each run produces BOTH a 1920x1080 video and a 1080x1920 Short in
 `D:\Business\Videos`, each with a sidecar JSON at `approved:false`.
@@ -121,10 +170,19 @@ kids' content need your eyes every time — this gate is deliberate.
 
 ## Cost per video (approx)
 
-- Script (Claude): ~$0.02
+Measured from real OpenAI usage data, not estimated - the image count below is
+what actually gets generated per video with the current config, not the
+original 7-images/video design this section was first written for.
+
+- Script (Claude): ~$0.02 (free if `ScriptProvider` is `groq`, `gemini`, or `hybrid`)
 - TTS (Azure): free tier initially, then ~$0.05
-- Images (7 scenes, OpenAI medium): ~$0.30
-- Total: well under $0.50/video
+- Images (OpenAI gpt-image-1, medium, ~$0.13 each): 17-21+ per video -
+  2 character-reference images, 2 per scene (landscape + vertical, via
+  `GenerateVerticalImages`), 1 thumbnail, plus 2 more for every scene whose
+  narration exceeds `SplitLongSceneAfterSeconds` - roughly **$2.25-2.75**
+- Total: roughly **$2.30-2.85/video**, not $0.50 - see `GenConfig.cs` for the
+  toggles (`GenerateVerticalImages`, `UseCharacterReference`,
+  `SplitLongSceneAfterSeconds`) if you want to trade image count for spend
 
 ## Full daily flow once everything is wired
 
