@@ -33,7 +33,7 @@ var config = new ConfigurationBuilder()
 
 var cfg = config.Get<GenConfig>() ?? throw new InvalidOperationException("appsettings.json invalid");
 
-string? topic = null, language = "en", job = null, profileId = null;
+string? topic = null, language = "en", job = null, profileId = null, scriptFile = null;
 var mode = "";
 string? formatOverride = null;
 var longForm = false;
@@ -44,6 +44,9 @@ for (var i = 0; i < args.Length; i++)
     {
         case "--prep": mode = "prep"; break;
         case "--assemble": mode = "assemble"; break;
+        case "--resume": mode = "resume"; break;
+        case "--manual": mode = "manual"; break;
+        case "--status": mode = "status"; break;
         case "--retts": mode = "retts"; break;
         case "--test-tts": mode = "test-tts"; break;
         case "--dry-script": mode = "dry-script"; break;
@@ -52,15 +55,19 @@ for (var i = 0; i < args.Length; i++)
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
         case "--profile" when i + 1 < args.Length: profileId = args[++i]; break;
+        case "--script-file" when i + 1 < args.Length: scriptFile = args[++i]; break;
         case "--format" when i + 1 < args.Length:
             formatOverride = args[++i];
             break;
         case "--help" or "-h":
             Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format <id>] [--long]   (valid --format ids depend on --profile; see that profile's Formats catalog. --long generates a 12-15 minute YouTube documentary cut instead of the usual ~8-scene short; only supported by profiles with AllowsContextScenes.)");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
+            Console.WriteLine("       VideoGen --resume   [--job job-YYYYMMDD-HHMMSS]   continue an interrupted --prep, skipping any scene whose audio/art is already on disk");
+            Console.WriteLine("       VideoGen --manual --script-file <path> --format <id> [--language en|hi|pa] [--profile ...]   start a new job from a hand-written script.json-shaped file instead of calling the AI script provider");
             Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
             Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
             Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...] [--long]   one script-generation call only, no TTS/character-draw/Vidu spend");
+            Console.WriteLine("       VideoGen --status   lists every job with a decision still pending: never rendered, rendered but not approved, or approved and processed but never actually published anywhere");
             return 0;
     }
 }
@@ -107,6 +114,9 @@ try
     return mode switch
     {
         "prep" => await RunPrepAsync(),
+        "resume" => await RunResumeAsync(),
+        "manual" => await RunManualAsync(),
+        "status" => await RunStatusAsync(),
         "retts" => await RunRettsAsync(),
         "test-tts" => await RunTestTtsAsync(),
         "dry-script" => await RunDryScriptAsync(),
@@ -139,14 +149,11 @@ async Task<int> RunPrepAsync()
         ? CharacterSource.RecentNames(cfg, workDir) : [];
 
     var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
+    var recentTopics = topic is null ? await TopicHistory.RecentAsync(profile.Id) : [];
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm);
-
-    var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(profile, cfg, script, workDir);
-    script.CharacterImagePath = characterImage;
-    if (addToPool) CharacterSource.SaveToPool(profile, script, characterImage);
-
-    Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm, recentTopics);
+    script.Language = language!;
+    script.Profile = profile.Id;
 
     // 2. The branded intro bumper is scene zero: the same channel greeting every video,
     //    this video's character introducing itself, and a one-line preview of what it
@@ -155,143 +162,356 @@ async Task<int> RunPrepAsync()
     //    so its wording/motion is what actually delivers a format-appropriate thumbnail -
     //    calm formats get a gentler wave and a soft-pastel-but-colourful setting instead of
     //    the energetic bounce every format used to get.
+    //
+    //    Inserted before the earliest save below (not after the character draw, as it used
+    //    to be) so a resumed job's scene indices - and therefore its scene00.mp3/
+    //    scene00-art.png filenames - always match what --resume finds on disk. Building it
+    //    only needs script.Format/CharacterName/CharacterDescription, all already set by
+    //    GenerateAsync, so it never needed the drawn portrait to exist first.
+    InsertIntroScene(script);
+
+    // Persist right away, before the blocking manual-art step below - a script this far
+    // along already spent real API quota to generate, so a crash, a closed terminal, or a
+    // stuck art prompt must not lose it. --resume picks up from exactly this file (and
+    // whatever partial audio/art already landed on disk) if anything past this point fails.
+    // The topic-history log itself is NOT written here - it is only written by the
+    // Uploader, once a render from this job actually publishes (see TopicHistory.cs) -
+    // so a job that crashes or never gets approved never blocks a future run from
+    // reusing its topic.
+    await SaveScriptAsync(workDir, script);
+
+    var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(profile, cfg, script, workDir);
+    script.CharacterImagePath = characterImage;
+    if (addToPool) CharacterSource.SaveToPool(profile, script, characterImage);
+    await SaveScriptAsync(workDir, script);
+
+    Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+
+    // 3. Narration, then visuals - both shared with --resume, which calls the same two
+    //    loops against a loaded-not-generated script and skips whatever is already on disk.
+    await RunTtsLoopAsync(workDir, script);
+
+    var credits = 0;
+    if (profile.AllowsContextScenes)
+        await RunVisualLoopAsync(workDir, script, characterImage);
+    else
+        credits = await RunViduLoopAsync(workDir, script, characterImage);
+
+    await SaveScriptAsync(workDir, script);
+
+    Console.WriteLine();
+    if (profile.AllowsContextScenes)
+    {
+        Console.WriteLine($"Resolved visuals for {script.Scenes.Count} scenes (stock footage + manual art, no Vidu spend).");
+        Console.WriteLine("Run --assemble to render with Remotion:");
+    }
+    else
+    {
+        Console.WriteLine($"Submitted {script.Scenes.Count} clips, {credits} credits (~${credits * 0.005:0.00}).");
+        Console.WriteLine(cfg.ViduOffPeak
+            ? "Off-peak: Vidu delivers within 48 hours. Run --assemble later to collect and render."
+            : "Peak rate: clips usually land within minutes. Run --assemble to collect and render.");
+    }
+    Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
+    return 0;
+}
+
+// The branded intro bumper as scene zero - shared by --prep and --manual, since a
+// hand-written script needs the exact same channel greeting/thumbnail-source clip a
+// generated one gets. See RunPrepAsync's comment above the call site for why this has to
+// happen before the first save.
+void InsertIntroScene(VideoScript script)
+{
     var calmIntro = ScriptGenerator.PickFormat(profile, script.Format).IsCalm;
     var (introImagePrompt, introMotionPrompt) =
         profile.BuildIntroBumperPrompts(script.CharacterName, script.CharacterDescription, calmIntro);
-    var intro = new Scene
+    script.Scenes.Insert(0, new Scene
     {
         Narration = script.IntroText,
         ImagePrompt = introImagePrompt,
         MotionPrompt = introMotionPrompt,
-    };
-    script.Scenes.Insert(0, intro);
+    });
+}
 
-    // 3. Narration first: every clip is generated to the length of the line it has to
-    //    carry, so the audio has to exist before anything is submitted.
+// Narration for every scene. Shared by --prep and --resume: a scene whose scene{i:D2}.mp3
+// already exists on disk is skipped (just re-measured, since a script.json saved before the
+// TTS loop ran has DurationSeconds still at 0), so re-running this against a job that died
+// partway through only pays for the scenes that never finished. Saves after every new
+// synth, not just at the end, so a second interruption loses at most one clip.
+async Task RunTtsLoopAsync(string workDir, VideoScript script)
+{
     var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
     var tts = TtsProviderFactory.Create(cfg, profile, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
+
+        if (File.Exists(audioPath))
+        {
+            scene.AudioPath = audioPath;
+            scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
+            Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count}: already on disk ({scene.DurationSeconds:0.0}s)");
+            continue;
+        }
+
         await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
         scene.AudioPath = audioPath;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
+        await SaveScriptAsync(workDir, script);
     }
 
     var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
     Console.WriteLine($"Narration total: {total:0}s");
+}
 
-    var credits = 0;
+// The no-Vidu hybrid pipeline's visuals (Deliverable 6, tasks/todo.md): a "context" scene's
+// visual comes from Pexels (no human step), a "character" scene's comes from the manual
+// Gemini prompt-and-pickup loop, referencing the character portrait for consistency the way
+// Vidu's shared start frame used to provide automatically. Shared by --prep and --resume - a
+// scene whose scene{i:D2}-stock.(mp4|jpg) or scene{i:D2}-art.(png|jpg|jpeg|webp) is already on
+// disk is picked up as-is rather than re-downloaded/re-prompted, so resuming a job that died
+// mid-loop never repeats a manual art step the user already did.
+async Task RunVisualLoopAsync(string workDir, VideoScript script, string characterImage)
+{
+    var stock = new StockFootageClient(cfg);
 
-    if (profile.AllowsContextScenes)
+    // Long-form (Scene.VisualGroup, see ScriptGenerator.cs): consecutive scenes sharing a
+    // group number are one "visual beat" and reuse the same resolved image/clip instead of
+    // each triggering its own Pexels/Gemini call - that's what makes ~12-18 art beats cover
+    // 70-90 scenes. Scene 0 (the intro bumper) is excluded from both sides of the comparison
+    // so it never accidentally matches - and never gets matched by - a real story scene that
+    // happens to also default to group 0. A short-form script never sets VisualGroup, so
+    // canReuse is always false there and every scene resolves independently.
+    int? lastGroup = null;
+    string? lastImagePath = null;
+    string? lastClipPath = null;
+
+    for (var i = 0; i < script.Scenes.Count; i++)
     {
-        // The no-Vidu hybrid pipeline (Deliverable 6, tasks/todo.md): a "context" scene's
-        // visual comes from Pexels (no human step), a "character" scene's comes from the
-        // manual Gemini prompt-and-pickup loop, referencing the character portrait above
-        // for consistency the way Vidu's shared start frame used to provide automatically.
-        // Everything is resolved synchronously right here - there is no async job to poll,
-        // so --assemble for this profile has nothing to collect and goes straight to
-        // rendering (with Remotion, not ffmpeg's Ken Burns path).
-        var stock = new StockFootageClient(cfg);
+        var scene = script.Scenes[i];
+        var label = $"{i + 1}/{script.Scenes.Count}";
+        var isIntro = i == 0;
+        var canReuse = script.IsLongForm && !isIntro && lastGroup == scene.VisualGroup;
 
-        // Long-form (Scene.VisualGroup, see ScriptGenerator.cs): consecutive scenes sharing a
-        // group number are one "visual beat" and reuse the same resolved image/clip instead of
-        // each triggering its own Pexels/Gemini call - that's what makes ~12-18 art beats cover
-        // 70-90 scenes. Scene 0 (the intro bumper, inserted above and not part of the model's
-        // grouping) is excluded from both sides of the comparison so it never accidentally
-        // matches - and never gets matched by - a real story scene that happens to also default
-        // to group 0. A short-form script never sets VisualGroup, so canReuse is always false
-        // there and every scene resolves exactly as it did before this feature existed.
-        int? lastGroup = null;
-        string? lastImagePath = null;
-        string? lastClipPath = null;
-
-        for (var i = 0; i < script.Scenes.Count; i++)
+        if (scene.SceneKind == "context")
         {
-            var scene = script.Scenes[i];
-            var label = $"{i + 1}/{script.Scenes.Count}";
-            var isIntro = i == 0;
-            var canReuse = script.IsLongForm && !isIntro && lastGroup == scene.VisualGroup;
+            var stockBase = Path.Combine(workDir, $"scene{i:D2}-stock");
+            var existing = File.Exists(stockBase + ".mp4") ? stockBase + ".mp4"
+                : File.Exists(stockBase + ".jpg") ? stockBase + ".jpg" : null;
 
-            if (scene.SceneKind == "context")
+            if (existing is not null)
             {
-                if (canReuse && (lastClipPath is not null || lastImagePath is not null))
-                {
-                    scene.ClipPath = lastClipPath;
-                    scene.ImagePath = lastImagePath;
-                    Console.WriteLine($"Stock {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastClipPath ?? lastImagePath!)}");
-                }
+                if (Path.GetExtension(existing).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                    scene.ClipPath = existing;
                 else
-                {
-                    var basePath = Path.Combine(workDir, $"scene{i:D2}-stock");
-                    var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, basePath, ImageClient.Orientation.Portrait)
-                        ?? throw new Exception(
-                            $"Scene {label}: Pexels had no match for \"{scene.StockQuery}\". Broaden the stockQuery " +
-                            $"and re-run --prep, or hand-place a file at {basePath}.jpg or {basePath}.mp4 and re-run --assemble.");
-
-                    if (Path.GetExtension(downloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
-                        scene.ClipPath = downloaded;
-                    else
-                        scene.ImagePath = downloaded;
-
-                    Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
-                }
+                    scene.ImagePath = existing;
+                Console.WriteLine($"Stock {label}: already on disk -> {Path.GetFileName(existing)}");
+            }
+            else if (canReuse && (lastClipPath is not null || lastImagePath is not null))
+            {
+                scene.ClipPath = lastClipPath;
+                scene.ImagePath = lastImagePath;
+                Console.WriteLine($"Stock {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastClipPath ?? lastImagePath!)}");
             }
             else
             {
-                if (canReuse && lastImagePath is not null)
-                {
-                    scene.ImagePath = lastImagePath;
-                    Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}");
-                }
+                var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, stockBase, ImageClient.Orientation.Portrait)
+                    ?? throw new Exception(
+                        $"Scene {label}: Pexels had no match for \"{scene.StockQuery}\". Broaden the stockQuery " +
+                        $"and re-run --prep, or hand-place a file at {stockBase}.jpg or {stockBase}.mp4 and re-run --assemble.");
+
+                if (Path.GetExtension(downloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                    scene.ClipPath = downloaded;
                 else
-                {
-                    var outputPath = Path.Combine(workDir, $"scene{i:D2}-art.png");
-                    var prompt = ImageClient.BuildPrompt(
-                        scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                        ImageClient.Orientation.Portrait, matchReference: true);
-                    scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
-                        prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
+                    scene.ImagePath = downloaded;
 
-                    Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
-                }
-            }
-
-            if (!isIntro)
-            {
-                lastGroup = scene.VisualGroup;
-                lastImagePath = scene.ImagePath;
-                lastClipPath = scene.ClipPath;
+                Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
             }
         }
+        else
+        {
+            var artBase = Path.Combine(workDir, $"scene{i:D2}-art");
+            var existing = ManualArtClient.ImageExtensions.Select(ext => artBase + ext).FirstOrDefault(File.Exists);
+
+            if (existing is not null)
+            {
+                scene.ImagePath = existing;
+                Console.WriteLine($"Art {label}: already on disk -> {Path.GetFileName(existing)}");
+            }
+            else if (canReuse && lastImagePath is not null)
+            {
+                scene.ImagePath = lastImagePath;
+                Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}");
+            }
+            else
+            {
+                var outputPath = artBase + ".png";
+                var prompt = ImageClient.BuildPrompt(
+                    scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
+                    ImageClient.Orientation.Portrait, matchReference: true);
+                scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
+                    prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
+
+                Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
+            }
+        }
+
+        if (!isIntro)
+        {
+            lastGroup = scene.VisualGroup;
+            lastImagePath = scene.ImagePath;
+            lastClipPath = scene.ClipPath;
+        }
+
+        await SaveScriptAsync(workDir, script);
+    }
+}
+
+// Submits every clip to Vidu. All scenes seed from this video's one character frame rather
+// than chaining each clip off the previous one's last frame: chaining is serial, which
+// cannot work against an off-peak queue that may take 48 hours per clip, and it compounds
+// drift over a dozen generations. Shared by --prep and --resume - a scene that already has a
+// ViduTaskId is left alone rather than resubmitted (a real resubmit-on-failure only happens
+// in --assemble's poll loop, which needs the terminal-state check that lives there).
+async Task<int> RunViduLoopAsync(string workDir, VideoScript script, string characterImage)
+{
+    IVideoProvider vidu = new ViduClient(cfg);
+    var credits = 0;
+
+    for (var i = 0; i < script.Scenes.Count; i++)
+    {
+        var scene = script.Scenes[i];
+
+        if (!string.IsNullOrEmpty(scene.ViduTaskId))
+        {
+            Console.WriteLine($"Scene {i + 1}/{script.Scenes.Count}: already submitted (task {scene.ViduTaskId})");
+            continue;
+        }
+
+        scene.StartFramePath = characterImage;
+
+        var submission = await vidu.SubmitAsync(characterImage, scene.MotionPrompt, scene.DurationSeconds);
+        scene.ViduTaskId = submission.TaskId;
+        credits += submission.Credits;
+
+        Console.WriteLine($"Submitted {i + 1}/{script.Scenes.Count} — task {submission.TaskId} ({submission.Credits} credits)");
+        await SaveScriptAsync(workDir, script);
+    }
+
+    return credits;
+}
+
+// --------------------------------------------------------------- resume ------
+
+// Continues a --prep run that never reached --assemble - a crashed terminal, a stuck
+// manual-art prompt, a closed laptop - by reloading its script.json and re-running the same
+// TTS/visual/Vidu loops --prep uses, which each skip any scene whose output file is already
+// on disk. Only useful for jobs started after the early-save changes above; an older job
+// whose process died before ever writing script.json has nothing here to resume from.
+async Task<int> RunResumeAsync()
+{
+    var workDir = ResolveJobDirectory();
+    Console.WriteLine($"Workspace: {workDir}");
+
+    var script = await LoadScriptAsync(workDir);
+    language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
+    profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
+
+    if (script.Scenes.Count == 0)
+        throw new InvalidOperationException($"{workDir} has a script.json but no scenes yet - nothing to resume. Re-run --prep.");
+
+    Console.WriteLine($"Resuming \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+
+    var characterImage = script.CharacterImagePath is { Length: > 0 } saved && File.Exists(saved)
+        ? saved
+        : File.Exists(Path.Combine(workDir, "character.png"))
+            ? Path.Combine(workDir, "character.png")
+            : await CharacterSource.DrawAsync(profile, cfg, script, workDir);
+    script.CharacterImagePath = characterImage;
+    await SaveScriptAsync(workDir, script);
+
+    await RunTtsLoopAsync(workDir, script);
+
+    var credits = 0;
+    if (profile.AllowsContextScenes)
+        await RunVisualLoopAsync(workDir, script, characterImage);
+    else
+        credits = await RunViduLoopAsync(workDir, script, characterImage);
+
+    await SaveScriptAsync(workDir, script);
+
+    Console.WriteLine();
+    if (profile.AllowsContextScenes)
+    {
+        Console.WriteLine("Resolved. Run --assemble to render with Remotion:");
     }
     else
     {
-        // Submit every clip. All scenes seed from this video's one character frame rather
-        // than chaining each clip off the previous one's last frame: chaining is serial,
-        // which cannot work against an off-peak queue that may take 48 hours per clip,
-        // and it compounds drift over a dozen generations. Seeding every scene from a
-        // single frame is fully parallel, has no drift at all, and still gives one
-        // consistent character for the length of the video.
-        IVideoProvider vidu = new ViduClient(cfg);
-
-        for (var i = 0; i < script.Scenes.Count; i++)
-        {
-            var scene = script.Scenes[i];
-            scene.StartFramePath = characterImage;
-
-            var submission = await vidu.SubmitAsync(characterImage, scene.MotionPrompt, scene.DurationSeconds);
-            scene.ViduTaskId = submission.TaskId;
-            credits += submission.Credits;
-
-            Console.WriteLine($"Submitted {i + 1}/{script.Scenes.Count} — task {submission.TaskId} ({submission.Credits} credits)");
-        }
+        Console.WriteLine(credits > 0
+            ? $"Submitted {credits} additional credits (~${credits * 0.005:0.00})."
+            : "Nothing new to submit - every scene already had a Vidu task.");
+        Console.WriteLine(cfg.ViduOffPeak
+            ? "Off-peak: Vidu delivers within 48 hours. Run --assemble later to collect and render."
+            : "Peak rate: clips usually land within minutes. Run --assemble to collect and render.");
     }
+    Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
+    return 0;
+}
 
+// --------------------------------------------------------------- manual ------
+
+// Starts a brand-new job from a hand-written script instead of calling the AI script
+// provider - e.g. a script drafted together in a chat session and saved to a file. Runs the
+// exact same TTS/visual/Vidu pipeline --prep does, via the same shared loops, so a manual
+// job is assembled and rendered identically to a generated one. --format is required (not
+// weighted-random picked) since whoever wrote the script already chose its tone/pacing.
+async Task<int> RunManualAsync()
+{
+    if (scriptFile is null)
+        throw new ArgumentException("--manual requires --script-file <path>. See --help.");
+    if (formatOverride is null)
+        throw new ArgumentException(
+            $"--manual requires --format <id>. Choose one of: {string.Join(", ", profile.Formats.Select(f => f.Id))}.");
+    if (!File.Exists(scriptFile))
+        throw new FileNotFoundException($"No such script file: {scriptFile}", scriptFile);
+
+    var draft = System.Text.Json.JsonSerializer.Deserialize<VideoScript>(
+        await File.ReadAllTextAsync(scriptFile),
+        new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
+        ?? throw new InvalidDataException($"{scriptFile} is not valid script JSON.");
+
+    var script = ScriptGenerator.FinalizeManualScript(profile, draft, formatOverride);
     script.Language = language!;
     script.Profile = profile.Id;
+
+    var workDir = Directory.CreateDirectory(
+        Path.Combine(cfg.WorkDirectory, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
+    Console.WriteLine($"Workspace: {workDir}");
+
+    InsertIntroScene(script);
+
+    await SaveScriptAsync(workDir, script);
+    // Topic-history is written by the Uploader once this job's render actually
+    // publishes, not here - see TopicHistory.cs.
+
+    // Manual scripts always draw fresh rather than pulling from the character pool - the
+    // script already names a specific figure, not an interchangeable pool pick.
+    var characterImage = await CharacterSource.DrawAsync(profile, cfg, script, workDir);
+    script.CharacterImagePath = characterImage;
+    await SaveScriptAsync(workDir, script);
+
+    Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+
+    await RunTtsLoopAsync(workDir, script);
+
+    var credits = 0;
+    if (profile.AllowsContextScenes)
+        await RunVisualLoopAsync(workDir, script, characterImage);
+    else
+        credits = await RunViduLoopAsync(workDir, script, characterImage);
+
     await SaveScriptAsync(workDir, script);
 
     Console.WriteLine();
@@ -583,6 +803,86 @@ async Task<int> RunAssembleAsync()
     Console.WriteLine();
     Console.WriteLine("Done. Review each video, set \"approved\": true in its sidecar JSON, then the publisher takes over:");
     foreach (var path in rendered) Console.WriteLine($"  {Sidecar.PathFor(path)}");
+    return 0;
+}
+
+// --------------------------------------------------------------- status ------
+
+// Walks every job-* folder that has a script.json and reports the ones that still need
+// a human decision, so a started job can never quietly fall through the cracks now that
+// topic-history is only written on confirmed publish (see TopicHistory.cs) rather than
+// the moment a script is generated. Three states get flagged, per render (landscape and
+// vertical are tracked independently, since the Uploader processes them independently):
+//   - never rendered           -> the job stalled before --assemble ever produced this file
+//   - rendered, not approved   -> sitting in cfg.OutputDirectory waiting on you
+//   - processed, never published -> the Uploader ran it to a terminal state (moved to
+//     \done or \failed) but every target failed or was skipped, so it never actually
+//     went live anywhere
+// A job with neither file anywhere is reported as never rendered for both renders; a job
+// where every render already published successfully is not flagged at all.
+async Task<int> RunStatusAsync()
+{
+    var jobDirs = Directory.Exists(cfg.WorkDirectory)
+        ? Directory.GetDirectories(cfg.WorkDirectory, "job-*")
+            .Where(d => File.Exists(Path.Combine(d, "script.json")))
+            .OrderBy(d => d)
+            .ToList()
+        : new List<string>();
+
+    var doneDir = Path.Combine(cfg.OutputDirectory, "done");
+    var failedDir = Path.Combine(cfg.OutputDirectory, "failed");
+    var flagged = new List<string>();
+
+    foreach (var dir in jobDirs)
+    {
+        var jobName = Path.GetFileName(dir);
+        VideoScript script;
+        try { script = await LoadScriptAsync(dir); }
+        catch (Exception ex) { flagged.Add($"[{jobName}] script.json unreadable: {ex.Message}"); continue; }
+
+        var slug = Text.Slug(script.Title);
+
+        foreach (var (suffix, kind) in new (string Suffix, string Kind)[]
+                 { ("-short", "vertical/shorts"), ("", "landscape/YouTube") })
+        {
+            var fileName = $"{slug}-{script.Language}{suffix}.mp4";
+            var liveVideo = Path.Combine(cfg.OutputDirectory, fileName);
+            var doneVideo = Path.Combine(doneDir, Path.GetFileNameWithoutExtension(fileName), fileName);
+            var failedVideo = Path.Combine(failedDir, Path.GetFileNameWithoutExtension(fileName), fileName);
+
+            if (File.Exists(liveVideo))
+            {
+                var sidecar = await Sidecar.LoadAsync(liveVideo);
+                if (sidecar is not null && sidecar.Approved != true)
+                    flagged.Add($"[{jobName}] \"{script.Title}\" ({kind}) — rendered, awaiting your approval. " +
+                        $"Set \"approved\": true in {Sidecar.PathFor(liveVideo)}, or delete both files to discard.");
+            }
+            else if (File.Exists(doneVideo) || File.Exists(failedVideo))
+            {
+                var terminalVideo = File.Exists(doneVideo) ? doneVideo : failedVideo;
+                var sidecar = await Sidecar.LoadAsync(terminalVideo);
+                if (sidecar is not null && !sidecar.AnyPublished())
+                    flagged.Add($"[{jobName}] \"{script.Title}\" ({kind}) — processed but never published on any " +
+                        $"target. Check {Sidecar.PathFor(terminalVideo)} for per-platform errors, then fix and " +
+                        "re-approve, or discard.");
+            }
+            else
+            {
+                flagged.Add($"[{jobName}] \"{script.Title}\" ({kind}) — never rendered. Run " +
+                    $"\"--assemble --job {jobName}\" (or \"--resume --job {jobName}\" first if TTS/art is " +
+                    $"incomplete), or delete {dir} to discard.");
+            }
+        }
+    }
+
+    if (flagged.Count == 0)
+    {
+        Console.WriteLine("No unfinished work - every job is either fully published or still healthy mid-pipeline.");
+        return 0;
+    }
+
+    Console.WriteLine($"{flagged.Count} item(s) need a decision:");
+    foreach (var line in flagged) Console.WriteLine($"  - {line}");
     return 0;
 }
 

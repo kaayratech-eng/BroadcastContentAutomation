@@ -171,6 +171,13 @@ static async Task RunAsync(AppConfig cfg, Logger log)
 
             if (sidecar.AllTargetsTerminal())
             {
+                // The topic only counts as "covered" once something actually went live -
+                // this is the sole writer of topic-history, deliberately later than
+                // render/approval, so VideoGen never marks a topic used until a real
+                // publish confirms it.
+                if (sidecar.AnyPublished())
+                    await TopicHistory.AppendAsync(sidecar.Channel, sidecar.Title);
+
                 MoveWithSiblings(path, cfg.DoneDirectory);
                 log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
             }

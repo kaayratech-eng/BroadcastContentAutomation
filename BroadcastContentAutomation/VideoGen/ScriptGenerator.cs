@@ -218,7 +218,7 @@ static class ScriptGenerator
         ContentProfile profile, string? topic, string language, IScriptProvider provider,
         string? trendContext = null, CharacterBrief? character = null,
         IReadOnlyList<string>? avoidNames = null, string? formatOverride = null,
-        bool longForm = false)
+        bool longForm = false, IReadOnlyList<string>? avoidTopics = null)
     {
         if (!profile.UsesCharacterMascot)
             throw new NotSupportedException(
@@ -236,13 +236,17 @@ static class ScriptGenerator
 
         var topicGuidance = profile.TopicGuidance;
 
+        var avoidTopicsLine = topic is null && avoidTopics is { Count: > 0 }
+            ? $" Already covered by earlier videos - do not repeat any of these topics/titles, pick something distinct: {string.Join("; ", avoidTopics)}."
+            : "";
+
         var topicLine = topic is not null
             ? $"Topic: {topic}"
             : trendContext is not null
-                ? $"Choose ONE fresh topic. {topicGuidance} For inspiration " +
+                ? $"Choose ONE fresh topic. {topicGuidance}{avoidTopicsLine} For inspiration " +
                   "only - do NOT copy any of these titles or their wording - here is what's " +
                   $"currently trending on YouTube:\n{trendContext}"
-                : $"Choose ONE fresh topic. {topicGuidance}";
+                : $"Choose ONE fresh topic. {topicGuidance}{avoidTopicsLine}";
 
         var avoidLine = avoidNames is { Count: > 0 }
             ? $"Recent videos already used these names - pick a different one: {string.Join(", ", avoidNames)}."
@@ -639,6 +643,65 @@ Respond ONLY with JSON, no markdown fences:
             throw new Exception($"The script provider returned an act {actNumber} with no scenes.");
 
         return result.Scenes;
+    }
+
+    // Normalizes and validates a hand-written script (see Program.cs's --manual mode) the
+    // same way GenerateAsync's own postprocessing does for a model-generated one, so a
+    // manually authored script.json is indistinguishable from a generated one to every
+    // later step (TTS pacing, SceneKind routing, tag list, MotionPrompt fallback, etc.).
+    // formatId is required rather than weighted-random picked, since a human choosing to
+    // hand-write a script has already chosen its tone. Does not touch the character pool -
+    // a manual script already names a specific figure, so the caller always draws fresh.
+    public static VideoScript FinalizeManualScript(ContentProfile profile, VideoScript script, string formatId)
+    {
+        if (script.Scenes.Count == 0) throw new Exception("Manual script has no scenes.");
+        if (string.IsNullOrWhiteSpace(script.Title)) throw new Exception("Manual script has no title.");
+        if (string.IsNullOrWhiteSpace(script.CharacterName) || string.IsNullOrWhiteSpace(script.CharacterDescription))
+            throw new Exception(
+                "Manual script needs characterName and characterDescription - the description " +
+                "is what the reference frame gets drawn from.");
+
+        var formatDef = PickFormat(profile, formatId);
+
+        if (string.IsNullOrWhiteSpace(script.TikTokCaption)) script.TikTokCaption = script.Description;
+        if (string.IsNullOrWhiteSpace(script.ReelsCaption)) script.ReelsCaption = script.Description;
+        if (string.IsNullOrWhiteSpace(script.ThumbnailPrompt)) script.ThumbnailPrompt = script.Scenes[0].ImagePrompt;
+        if (string.IsNullOrWhiteSpace(script.IntroText)) script.IntroText = profile.BuildFallbackIntroText(profile.ChannelName);
+        if (string.IsNullOrWhiteSpace(script.MusicMood)) script.MusicMood = formatDef.DefaultMusicMood;
+
+        script.Format = formatDef.Id;
+        script.NarrationStyle = formatDef.NarrationStyleLabel;
+        script.IsLongForm = false;
+
+        script.Tags = profile.BaseTags.Concat(script.Tags)
+            .Where(t => !string.IsNullOrWhiteSpace(t))
+            .Select(t => t.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .Take(30)
+            .ToList();
+
+        foreach (var scene in script.Scenes)
+            scene.SceneKind = profile.AllowsContextScenes &&
+                scene.SceneKind.Equals("context", StringComparison.OrdinalIgnoreCase)
+                ? "context" : "character";
+
+        if (profile.AllowsContextScenes)
+        {
+            var badContextScene = script.Scenes.FirstOrDefault(
+                s => s.SceneKind == "context" && string.IsNullOrWhiteSpace(s.StockQuery));
+            if (badContextScene is not null)
+                throw new Exception(
+                    $"Scene \"{badContextScene.Narration}\" is sceneKind \"context\" but has no stockQuery.");
+        }
+
+        foreach (var scene in script.Scenes)
+            if (scene.SceneKind == "character" && string.IsNullOrWhiteSpace(scene.MotionPrompt))
+                scene.MotionPrompt =
+                    $"{script.CharacterName} ({script.CharacterDescription}). {scene.ImagePrompt}. " +
+                    "Gentle idle motion, the character breathes and blinks. " +
+                    profile.ArtStyleSuffix;
+
+        return script;
     }
 
     // Open-weight models (Groq's free-tier catalog especially - see GroqScriptProvider.cs)

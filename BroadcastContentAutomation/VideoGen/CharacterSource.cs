@@ -20,8 +20,6 @@ record CharacterBrief(string Name, string Description, string ImagePath, string?
 // drawing the one the script invented.
 static class CharacterSource
 {
-    private static readonly string[] ImageExtensions = [".png", ".jpg", ".jpeg", ".webp"];
-
     // Sidecar beside each pooled image: milo-fox.png + milo-fox.json. Source and
     // licence are not read by anything - they are here because a monetised kids'
     // channel needs to be able to answer where a character came from, and the answer
@@ -41,7 +39,7 @@ static class CharacterSource
         var images = File.Exists(profile.CharacterPoolPath)
             ? [profile.CharacterPoolPath]
             : Directory.EnumerateFiles(profile.CharacterPoolPath)
-                .Where(f => ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+                .Where(f => ManualArtClient.ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
                 .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
                 .ToList();
 
@@ -51,7 +49,7 @@ static class CharacterSource
         {
             Console.WriteLine(
                 $"  Character: \"{profile.CharacterPoolPath}\" has no images in it, drawing one instead. " +
-                $"Drop character art in ({string.Join(", ", ImageExtensions)}) with a matching .json to use a pool.");
+                $"Drop character art in ({string.Join(", ", ManualArtClient.ImageExtensions)}) with a matching .json to use a pool.");
             return null;
         }
 
@@ -112,9 +110,9 @@ static class CharacterSource
             "with a friendly welcoming pose, the whole character visible with space around it, plain " +
             "uncluttered background.",
             profile.CharacterStyle, profile.CharacterPortraitStyleSuffix, ImageClient.Orientation.Portrait, matchReference: false);
-        await ManualArtClient.PromptAndWaitAsync(prompt, raw, ImageClient.Orientation.Portrait);
+        var saved = await ManualArtClient.PromptAndWaitAsync(prompt, raw, ImageClient.Orientation.Portrait);
 
-        await VideoAssembler.FitToPortraitAsync(cfg, raw, fitted);
+        await VideoAssembler.FitToPortraitAsync(cfg, saved, fitted);
         return fitted;
     }
 
@@ -169,7 +167,7 @@ static class CharacterSource
             return 0;
 
         return Directory.EnumerateFiles(profile.CharacterPoolPath)
-            .Count(f => ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase));
+            .Count(f => ManualArtClient.ImageExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase));
     }
 
     // Copies a just-drawn character into the pool so a later video can reuse it instead
