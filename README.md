@@ -1,6 +1,8 @@
-# GiggleGarden YouTube Automation — Windows / .NET 8
+# BroadcastContentAutomation — Windows / .NET 8
 
-Drives two channels off one codebase, picked per run with `--profile`:
+AI-driven pipeline for script generation, TTS, video generation, and
+multi-platform (YouTube/Instagram/Facebook/TikTok) upload with SEO metadata.
+Drives multiple content channels off one codebase, picked per run with `--profile`:
 
 | Channel | `--profile` id | Content |
 |---|---|---|
