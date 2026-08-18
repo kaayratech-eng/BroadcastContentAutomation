@@ -22,7 +22,7 @@ tracked file's placeholders).
 
 ## Branding
 
-Channel avatar/banner art lives in `VideoGen/assets/branding/<channel-slug>/`
+Channel avatar/banner art lives in `BroadcastContentAutomation/VideoGen/assets/branding/<channel-slug>/`
 (`giggle-wiggle-town/` for GiggleGarden, `chronicle-and-chaos/` for Chronicle &
 Chaos) as a reference/backup copy — **nothing in this codebase uploads it
 automatically.** Design it once (the existing files were hand-made/AI-drawn,
@@ -62,9 +62,9 @@ otherwise. Field names below match `GenConfig.cs` (`VideoGen`) or
 Two extra local tools this project shells out to, not API keys but still
 one-time installs:
 - **Python 3** + `pip install numpy pillow scipy` — needed only when
-  hand-adding a new character to the pool via `VideoGen/tools/remove-background.py`
+  hand-adding a new character to the pool via `BroadcastContentAutomation/VideoGen/tools/remove-background.py`
   (strips a flat backdrop to transparency; local/offline, no API).
-- **Node.js + npm**, `npm install` inside `remotion-assembler/` — needed only
+- **Node.js + npm**, `npm install` inside `BroadcastContentAutomation/remotion-assembler/` — needed only
   for Chronicle & Chaos's Remotion-based render path
   (`RemotionProjectPath` in `GenConfig.cs`). GiggleGarden's ffmpeg render path
   never touches this. Note: as of this writing that path is scaffold-only —
@@ -77,7 +77,7 @@ picks which subfolder the refresh token is saved into, so each channel gets its
 own token and one channel's capture never overwrites another's:
 
 ```powershell
-cd TokenCapture
+cd BroadcastContentAutomation/TokenCapture
 dotnet run -- "C:\Secure\GiggleGarden\client_secret.json" gigglegarden
 ```
 Browser opens → sign in as GiggleGarden's channel-owner account → approve.
@@ -102,11 +102,11 @@ re-run TokenCapture per video or per upload, only once per channel, ever**
 1. Register a TikTok Developer app at developers.tiktok.com with redirect URI
    **exactly** `http://localhost:53682/callback`.
 2. ```powershell
-   cd TikTokTokenCapture
+   cd BroadcastContentAutomation/TikTokTokenCapture
    dotnet run -- "<client-key>" "<client-secret>"
    ```
    Browser opens → approve → `Refresh token saved.` to `C:\Secure\GiggleGarden\tiktok-token.json`.
-3. Put the client key/secret in `Uploader\appsettings.Local.json` under
+3. Put the client key/secret in `BroadcastContentAutomation\Uploader\appsettings.Local.json` under
    `Platforms.TikTok`, then set `Platforms.TikTok.Enabled: true` in `appsettings.json`.
 4. TikTok's Direct Post (posting straight to the account) requires an audited
    app — until then, leave `DirectPost: false` (the default): videos land in
@@ -115,10 +115,10 @@ re-run TokenCapture per video or per upload, only once per channel, ever**
 
 ## 2. Configure the uploader
 
-Edit `Uploader\appsettings.json` (structure, safe to commit) → `Channels.<channel>.YouTube.TokenStorePath`
+Edit `BroadcastContentAutomation\Uploader\appsettings.json` (structure, safe to commit) → `Channels.<channel>.YouTube.TokenStorePath`
 for each channel — must match the folder TokenCapture saved into above
 (`%APPDATA%\GiggleGarden\gigglegarden`, `%APPDATA%\GiggleGarden\chronicleandchaos`) —
-and `Uploader\appsettings.Local.json` (real secrets, gitignored):
+and `BroadcastContentAutomation\Uploader\appsettings.Local.json` (real secrets, gitignored):
 - `AnthropicApiKey` — from https://console.anthropic.com (only needed if a video has no sidecar and metadata must be auto-generated) — put the real value in `appsettings.Local.json`.
 - For Instagram/Facebook: `Platforms.Instagram.IgUserId` / `Platforms.Facebook.PageId` in `appsettings.json`, the Meta Page access token in `appsettings.Local.json`. Both can share one Meta app and Page access token.
 - Keep `PrivacyStatus: "private"` until the end-to-end test passes.
@@ -126,7 +126,7 @@ and `Uploader\appsettings.Local.json` (real secrets, gitignored):
 ## 3. Test end-to-end (do this before scheduling anything)
 
 1. Drop ONE short test .mp4 into `D:\Business\Videos`.
-2. `cd Uploader && dotnet run`
+2. `cd BroadcastContentAutomation/Uploader && dotnet run`
 3. First run generates `<video>.json` next to the file and stops (approval gate).
 4. Open the JSON, review title/description/tags, set `"approved": true`.
 5. `dotnet run` again → video uploads as **private**.
@@ -136,7 +136,7 @@ and `Uploader\appsettings.Local.json` (real secrets, gitignored):
 ## 4. Schedule the daily run
 
 ```powershell
-cd Uploader
+cd BroadcastContentAutomation/Uploader
 dotnet publish -c Release -o D:\Business\UploaderApp
 ```
 Task Scheduler → Create Task:
@@ -186,7 +186,8 @@ See the credentials table above for exactly how to obtain each key. In short:
 5. **Python 3** (`pip install numpy pillow scipy`) — only if you're adding a new
    character to the pool by hand via `VideoGen/tools/remove-background.py`.
 6. **Background music**: per-profile libraries already live under
-   `VideoGen/assets/music/` (GiggleGarden) and `VideoGen/assets/music-mythology/`
+   `BroadcastContentAutomation/VideoGen/assets/music/` (GiggleGarden) and
+   `BroadcastContentAutomation/VideoGen/assets/music-mythology/`
    (Chronicle & Chaos) — drop additional royalty-free loops in via the YouTube
    Audio Library ("no attribution required" tracks only).
 7. Font: `NirmalaB.ttf` ships with Windows and covers Devanagari + Gurmukhi. No action needed.
@@ -194,7 +195,7 @@ See the credentials table above for exactly how to obtain each key. In short:
 ## Usage
 
 ```powershell
-cd VideoGen
+cd BroadcastContentAutomation/VideoGen
 dotnet run -- --topic "counting ducks" --language en                      # uses GenConfig's default profile
 dotnet run -- --language hi          # Claude picks the topic
 dotnet run -- --language pa
@@ -209,7 +210,7 @@ time. The Uploader reads that field and picks the matching channel's
 credentials from `Channels.<channel>` in its own `appsettings.json` with no
 further input from you.
 
-GiggleGarden also runs a recurring cast: `VideoGen/assets/character-pool/`
+GiggleGarden also runs a recurring cast: `BroadcastContentAutomation/VideoGen/assets/character-pool/`
 holds finalized `.png` + `.json` sidecar pairs, one per character. Videos draw
 from that pool once it reaches `CharacterPoolMaxSize` (in
 `GiggleGardenProfile.cs`) instead of inventing a new character every time, so

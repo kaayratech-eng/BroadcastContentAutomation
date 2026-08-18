@@ -152,7 +152,7 @@ static class MythologyProfile
             "history storytelling shorts", "ancient history documentary", "folklore stories",
         ],
 
-        BackgroundMusicPath = @"D:\Business\gigglegarden-automation\VideoGen\assets\music-mythology",
+        BackgroundMusicPath = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\music-mythology",
 
         // Placeholder pending real measurement: no narration has actually been synthesized with
         // en-US-AriaNeural yet (see tasks/todo.md - blocked on Claude credits/Groq key for

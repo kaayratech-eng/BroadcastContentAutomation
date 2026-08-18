@@ -1,77 +1,12 @@
 {
   ".claude/settings.json": {
-    "mtime": 1785896974.490896,
-    "ast_hash": "4c0b35a8cc22554838b11331ee44af50",
+    "mtime": 1786932474.7384415,
+    "ast_hash": "5b833cc24c39d5e4b81ff1587221f186",
     "semantic_hash": ""
   },
   ".claude/settings.local.json": {
-    "mtime": 1786374742.7016668,
-    "ast_hash": "9efffe38bec930361093dc83bf1e7ef7",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/TokenCapture/Program.cs": {
-    "mtime": 1783942834.0,
-    "ast_hash": "2103ea5b0a55d8e9aef9f160bd021d50",
-    "semantic_hash": "2103ea5b0a55d8e9aef9f160bd021d50"
-  },
-  "gigglegarden-automation/TokenCapture/TokenCapture.csproj": {
-    "mtime": 1783942840.0,
-    "ast_hash": "21e07f12cc316ef096706cc7ce06feea",
-    "semantic_hash": "21e07f12cc316ef096706cc7ce06feea"
-  },
-  "gigglegarden-automation/Uploader/Program.cs": {
-    "mtime": 1786267552.2081916,
-    "ast_hash": "853248acd89e2a9c74f1a4c2108dbfba",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Uploader.csproj": {
-    "mtime": 1785900582.4907339,
-    "ast_hash": "8c4db3d5c7fb8a7405bac5cef0afadfb",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/appsettings.json": {
-    "mtime": 1786215409.0156817,
-    "ast_hash": "66e28cf24d45004ec112b259f76d84f6",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/GenConfig.cs": {
-    "mtime": 1786390633.1893961,
-    "ast_hash": "fe4056e5f07855b82fbb45347a04419b",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/ImageClient.cs": {
-    "mtime": 1786222256.8037548,
-    "ast_hash": "9fe5309ddb09b0c9467a261f3d19d0e9",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/Program.cs": {
-    "mtime": 1786390719.110198,
-    "ast_hash": "9167ca41ab8771c4a1cfd9b45fec4a7a",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/ScriptGenerator.cs": {
-    "mtime": 1786376217.3684227,
-    "ast_hash": "013529dab8985a526b22736e893c49f1",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/TtsClient.cs": {
-    "mtime": 1786303056.4875288,
-    "ast_hash": "f13d2d3cded22449cd80f887c3d7e787",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/VideoAssembler.cs": {
-    "mtime": 1786376228.7048523,
-    "ast_hash": "7641c97df5b9d8a85ee2d2dc279e5b86",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/VideoGen.csproj": {
-    "mtime": 1785739477.4585922,
-    "ast_hash": "67d9c547db3f9045df1de6cc5612a350",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/VideoGen/appsettings.json": {
-    "mtime": 1786390639.4399328,
-    "ast_hash": "429d5de9623f3aa1b33317f435d145b4",
+    "mtime": 1786961231.8432877,
+    "ast_hash": "3e7e0c878bcf4096e2547a63e91c1ddd",
     "semantic_hash": ""
   },
   "CLAUDE.md": {
@@ -80,13 +15,8 @@
     "semantic_hash": "8a6643a420fdad6bfb583523bc6cef16"
   },
   "README.md": {
-    "mtime": 1785900950.504728,
-    "ast_hash": "0c0235f17b881c11259750e101ecc2ee",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/README.md": {
-    "mtime": 1786260659.5830834,
-    "ast_hash": "ae5d4f989aaed7cf06f3b9f510dd376d",
+    "mtime": 1787023749.5368924,
+    "ast_hash": "e5d78ccbf6b01f7854d3ae40e9095dbc",
     "semantic_hash": ""
   },
   ".claude-flow/daemon-state.json": {
@@ -392,71 +322,6 @@
   ".swarm/schema.sql": {
     "mtime": 1785896703.3384018,
     "ast_hash": "4122efdc0a8be70c8c321f165d5ed43a",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/GiggleGarden.sln": {
-    "mtime": 1785900918.9290006,
-    "ast_hash": "c206b345e7b97cd1232846490976486e",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Shared/RetryHandler.cs": {
-    "mtime": 1785739193.7454314,
-    "ast_hash": "8ebaa229831acfb15ddc3ea82c47c6c5",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Shared/Shared.csproj": {
-    "mtime": 1785739157.8809357,
-    "ast_hash": "9d5c71eda396d7cc799ce963e361ccf2",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Shared/Sidecar.cs": {
-    "mtime": 1786261182.418331,
-    "ast_hash": "fa8a81b4784361169feb337f36231a3a",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Shared/Text.cs": {
-    "mtime": 1785739216.5479562,
-    "ast_hash": "5ecaa8974f77a80194b328129e92149f",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/AppConfig.cs": {
-    "mtime": 1785739560.6447446,
-    "ast_hash": "f6e68260ea9e4388a4849a0b79de4bfa",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Logger.cs": {
-    "mtime": 1785739608.8902857,
-    "ast_hash": "19e37ba5e98003ce4a32bf33e375b5b7",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Publishing/FacebookPublisher.cs": {
-    "mtime": 1786253207.7981305,
-    "ast_hash": "bba2101b75bbaf5a9c9c225ae70e196c",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Publishing/IPublisher.cs": {
-    "mtime": 1785739557.1213284,
-    "ast_hash": "daab6ca8e2e1ccb1651b6cd7a06177e7",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Publishing/InstagramPublisher.cs": {
-    "mtime": 1786304417.5972583,
-    "ast_hash": "ff47cec8d828599958cdad077c77579e",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Publishing/MetaGraph.cs": {
-    "mtime": 1786304408.9508784,
-    "ast_hash": "cf5d0370ebfdd0b552e57199e4b54ebc",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Publishing/TikTokPublisher.cs": {
-    "mtime": 1786267530.82225,
-    "ast_hash": "1c6c227cd46ebd29da9463ce7f959dd7",
-    "semantic_hash": ""
-  },
-  "gigglegarden-automation/Uploader/Publishing/YouTubePublisher.cs": {
-    "mtime": 1786222148.5855463,
-    "ast_hash": "883ff7ec4cf41f0f391abefe7880e195",
     "semantic_hash": ""
   },
   "package.json": {
@@ -1959,129 +1824,819 @@
     "ast_hash": "ea8683210cab709650978b77351893b5",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/TikTokTokenCapture/Program.cs": {
+  "BroadcastContentAutomation/GiggleGarden.sln": {
+    "mtime": 1785900918.9290006,
+    "ast_hash": "c206b345e7b97cd1232846490976486e",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/Shared/RetryHandler.cs": {
+    "mtime": 1785739193.7454314,
+    "ast_hash": "8ebaa229831acfb15ddc3ea82c47c6c5",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/Shared/Shared.csproj": {
+    "mtime": 1785739157.8809357,
+    "ast_hash": "9d5c71eda396d7cc799ce963e361ccf2",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/Shared/Sidecar.cs": {
+    "mtime": 1786955973.366814,
+    "ast_hash": "062c69a4ccb3b440fdbda62de4591c09",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/Shared/Text.cs": {
+    "mtime": 1785739216.5479562,
+    "ast_hash": "5ecaa8974f77a80194b328129e92149f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/TikTokTokenCapture/Program.cs": {
     "mtime": 1786215315.337203,
     "ast_hash": "44dc84eb2977c697c0a4cc3f907b0bfd",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/TikTokTokenCapture/TikTokTokenCapture.csproj": {
+  "BroadcastContentAutomation/TikTokTokenCapture/TikTokTokenCapture.csproj": {
     "mtime": 1785900897.8686259,
     "ast_hash": "c18c479a47a30949d2f07cce9f0334c9",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/TrendResearch.cs": {
-    "mtime": 1786222308.6209934,
-    "ast_hash": "b97fd4c368c3bae31e4f842b1fab3fba",
+  "BroadcastContentAutomation/TokenCapture/Program.cs": {
+    "mtime": 1786956200.4395547,
+    "ast_hash": "7296b21fa26bd17be9b12dd742f2f4cd",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/CharacterSource.cs": {
-    "mtime": 1786390708.53289,
-    "ast_hash": "e3ba44e9ca56ebdfe96e9f3587a729b0",
+  "BroadcastContentAutomation/TokenCapture/TokenCapture.csproj": {
+    "mtime": 1783942840.0,
+    "ast_hash": "21e07f12cc316ef096706cc7ce06feea",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/ViduClient.cs": {
-    "mtime": 1786301817.23391,
-    "ast_hash": "eca3a6bcf3c79f6c79b8e19d7ef81336",
+  "BroadcastContentAutomation/Uploader/AppConfig.cs": {
+    "mtime": 1786955984.536557,
+    "ast_hash": "9939ff35075d1ead542539b7404c906d",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/music/README.md": {
-    "mtime": 1786348480.4624934,
-    "ast_hash": "6a123cb593b252f0aec6bc988269c988",
+  "BroadcastContentAutomation/Uploader/Logger.cs": {
+    "mtime": 1785739608.8902857,
+    "ast_hash": "19e37ba5e98003ce4a32bf33e375b5b7",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/tasks/lessons.md": {
-    "mtime": 1786349728.6759188,
-    "ast_hash": "bbbfede0421d26bee21051071677e3f8",
+  "BroadcastContentAutomation/Uploader/Program.cs": {
+    "mtime": 1786956024.2640872,
+    "ast_hash": "650ba3d00f38bca7f894f0c27e284c98",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/tasks/research-kids-channels.md": {
-    "mtime": 1786350170.2590845,
-    "ast_hash": "3949cf9ec0731888b6ba828cacb248da",
+  "BroadcastContentAutomation/Uploader/Publishing/FacebookPublisher.cs": {
+    "mtime": 1786253207.7981305,
+    "ast_hash": "bba2101b75bbaf5a9c9c225ae70e196c",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/tasks/todo.md": {
-    "mtime": 1786394350.1538732,
-    "ast_hash": "85a924246f02411ee06ab778519926d7",
+  "BroadcastContentAutomation/Uploader/Publishing/IPublisher.cs": {
+    "mtime": 1785739557.1213284,
+    "ast_hash": "daab6ca8e2e1ccb1651b6cd7a06177e7",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/gigi-reference.png": {
-    "mtime": 1786301748.1019554,
-    "ast_hash": "e64988ea18f9ca1bf8cda9756f758f21",
+  "BroadcastContentAutomation/Uploader/Publishing/InstagramPublisher.cs": {
+    "mtime": 1786304417.5972583,
+    "ast_hash": "ff47cec8d828599958cdad077c77579e",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-bear.json": {
-    "mtime": 1786394301.9746559,
-    "ast_hash": "9bd18a965ddfce39b2a9c121d9bf007a",
+  "BroadcastContentAutomation/Uploader/Publishing/MetaGraph.cs": {
+    "mtime": 1786304408.9508784,
+    "ast_hash": "cf5d0370ebfdd0b552e57199e4b54ebc",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-elephant.json": {
-    "mtime": 1786394306.314757,
-    "ast_hash": "6691805d5321a1521c8ae5d6cc411d56",
+  "BroadcastContentAutomation/Uploader/Publishing/TikTokPublisher.cs": {
+    "mtime": 1786267530.82225,
+    "ast_hash": "1c6c227cd46ebd29da9463ce7f959dd7",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-giraffe.json": {
-    "mtime": 1786394309.541784,
-    "ast_hash": "8ee0d56eb97aa80fdb63e0bfb6d8bd47",
+  "BroadcastContentAutomation/Uploader/Publishing/YouTubePublisher.cs": {
+    "mtime": 1786578423.4661913,
+    "ast_hash": "1f5b7d787844e61031fffca1ca937190",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-panda.json": {
-    "mtime": 1786394314.8948808,
-    "ast_hash": "ab4fef2e2d6d6f7792189eb083ac3484",
+  "BroadcastContentAutomation/Uploader/Uploader.csproj": {
+    "mtime": 1785900582.4907339,
+    "ast_hash": "8c4db3d5c7fb8a7405bac5cef0afadfb",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/gigi-the-duckling.json": {
+  "BroadcastContentAutomation/Uploader/appsettings.json": {
+    "mtime": 1786963923.6788096,
+    "ast_hash": "d121e41c32f2312345a2ef51ef96c15b",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/AzureTtsProvider.cs": {
+    "mtime": 1786642624.4015028,
+    "ast_hash": "d9c016f104b5ae31d482b257413797a8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/CharacterSource.cs": {
+    "mtime": 1787020379.5527382,
+    "ast_hash": "abb5cb191ae8e194f5c2fb2cb5e74add",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ClaudeScriptProvider.cs": {
+    "mtime": 1786546681.6066475,
+    "ast_hash": "fbd7e3f0cdd1df772641b9f7aa3e83a1",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ContentProfile.cs": {
+    "mtime": 1786937862.0824835,
+    "ast_hash": "f0acfca52e2a0f59f492eff82c12e98f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ContentProfileRegistry.cs": {
+    "mtime": 1786642580.8133478,
+    "ast_hash": "ea66f9cc3849ce9443dea937c0448f8b",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/GeminiScriptProvider.cs": {
+    "mtime": 1786981081.2121332,
+    "ast_hash": "66c6de59fbe40940a86bc1c0993418a2",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/GenConfig.cs": {
+    "mtime": 1786983364.791054,
+    "ast_hash": "4fa26a21dab4891435e709139e470121",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/GiggleGardenProfile.cs": {
+    "mtime": 1787023713.7266169,
+    "ast_hash": "589160c29d8ce0aea4ad903b32e33e4a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/GoogleTtsProvider.cs": {
+    "mtime": 1786635707.0102694,
+    "ast_hash": "eaa7378ac303dfa56c5a936ea9158f2b",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/GroqScriptProvider.cs": {
+    "mtime": 1786972574.336894,
+    "ast_hash": "ab8dfada86f4268d738b97d59eda938c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/HybridScriptProvider.cs": {
+    "mtime": 1786981783.5319052,
+    "ast_hash": "7030afcd6c267e7e5d9c6dbcbe4b47bd",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/IScriptProvider.cs": {
+    "mtime": 1786546674.4967697,
+    "ast_hash": "33d4128b85210d5655fc322fdd7c8967",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ITtsProvider.cs": {
+    "mtime": 1786635695.8816147,
+    "ast_hash": "93fc8f2ac7440b6de9fd57f9816a1cd9",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/IVideoProvider.cs": {
+    "mtime": 1786485454.727216,
+    "ast_hash": "4b9cac16da19866d9ab708f4d679c74f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ImageClient.cs": {
+    "mtime": 1786938444.7728238,
+    "ast_hash": "5048d181c75a58439e2f295c07065011",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ManualArtClient.cs": {
+    "mtime": 1786937978.1640618,
+    "ast_hash": "416a1c682b3f918978733131578fb957",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/MythologyProfile.cs": {
+    "mtime": 1787023719.1804132,
+    "ast_hash": "104d8cd80a9efa645168527ffccc4c07",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/Program.cs": {
+    "mtime": 1786969908.3547344,
+    "ast_hash": "74e7d081e210c229d5e418ac2f4ec393",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ScriptGenerator.cs": {
+    "mtime": 1787020409.587901,
+    "ast_hash": "af2ea4c1a9d6f1da31455a240569f9bc",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ScriptProviderFactory.cs": {
+    "mtime": 1786983372.9202404,
+    "ast_hash": "08f08b93cbad0816fec9b9d99a4de10a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/StockFootageClient.cs": {
+    "mtime": 1786937487.289632,
+    "ast_hash": "3a248e257128945eee156dd53d5c2bf8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/TrendResearch.cs": {
+    "mtime": 1786558594.849071,
+    "ast_hash": "7053f2194fd896f58fd8447bdf18c48e",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/TtsProviderFactory.cs": {
+    "mtime": 1786637328.4667366,
+    "ast_hash": "f354f37c4f920653d9d7e718a9fe6e69",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/VideoAssembler.cs": {
+    "mtime": 1786938495.8780081,
+    "ast_hash": "b999664d56f131e1baacb16856f56d38",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/VideoGen.csproj": {
+    "mtime": 1785739477.4585922,
+    "ast_hash": "67d9c547db3f9045df1de6cc5612a350",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/ViduClient.cs": {
+    "mtime": 1786485457.6381931,
+    "ast_hash": "5939b0f98cb932e4611f4da6e07aae14",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/appsettings.json": {
+    "mtime": 1787023720.3004634,
+    "ast_hash": "6d787790fcb8f5fd62aecf0979793a47",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/bandit-the-raccoon.json": {
+    "mtime": 1787020722.035373,
+    "ast_hash": "2dee6929937d1fde41c991fda7cab573",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/gigi-the-duckling.json": {
     "mtime": 1786393237.7870579,
     "ast_hash": "885a3f937821dc5315451b2b92f093e5",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/mascot-bunny.json": {
-    "mtime": 1786394159.521755,
-    "ast_hash": "4b67b9d8b032cec8d49c11342498166f",
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/kiwi-the-koala.json": {
+    "mtime": 1787020764.0099025,
+    "ast_hash": "879a9dc511c96fcc90c515b37ee8057b",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/teddy-bear.json": {
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/milo-the-fox.json": {
+    "mtime": 1786543232.4906874,
+    "ast_hash": "6a8517a15cfba9e3f7a78c0d38c2fc3c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/nari-the-elephant.json": {
+    "mtime": 1787020712.9318657,
+    "ast_hash": "f707e61539f56991a8296aec35418cc1",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/pebbles-the-penguin.json": {
+    "mtime": 1787020728.3492303,
+    "ast_hash": "2b561d00fbecc05d4034acda97178ea0",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/pip-the-panda.json": {
+    "mtime": 1787020709.4566104,
+    "ast_hash": "274f2bd540a65080ec059b1d598d57bc",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/splash-the-otter.json": {
+    "mtime": 1786543235.5750685,
+    "ast_hash": "4c428082ffe00004b8bf8666cfdfd9a5",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/stretch-the-giraffe.json": {
+    "mtime": 1787020731.427399,
+    "ast_hash": "1fa1e05ed4135032018529e9a57f6772",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/teddy-bear.json": {
     "mtime": 1786394156.3513496,
     "ast_hash": "0423988e6ae3afed9c246ddd33408e72",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/tasks/character-and-music-sourcing.md": {
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/hazel-the-owl.json": {
+    "mtime": 1787020737.0951672,
+    "ast_hash": "e06555b6c9324f13cb3c7f80b1cf15b0",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/mascot-bunny.json": {
+    "mtime": 1786394159.521755,
+    "ast_hash": "4b67b9d8b032cec8d49c11342498166f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/quill-the-hedgehog.json": {
+    "mtime": 1787020716.1013343,
+    "ast_hash": "df8b00b855dc8e94c9a2d664c656cc3f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/ruby-the-bunny.json": {
+    "mtime": 1786543229.2547047,
+    "ast_hash": "5e52f77c4548de96f57b1f153c9cf4e4",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/sunny-the-sloth.json": {
+    "mtime": 1787020725.0900803,
+    "ast_hash": "e8baa57b82966a26ab855a579755c75e",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/willow-the-lamb.json": {
+    "mtime": 1787020734.2509143,
+    "ast_hash": "45fdd7afa310ab09488a591927f4870a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/tools/remove-background.py": {
+    "mtime": 1786543066.9533365,
+    "ast_hash": "c909c01f52323b9d333924e7f371bed1",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/package.json": {
+    "mtime": 1787023720.8992374,
+    "ast_hash": "99484c6a37fc4001dcedeae3b253831f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/remotion.config.ts": {
+    "mtime": 1786937558.9831383,
+    "ast_hash": "0407821e46aaba26931a1f40493908fb",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/src/Assembly.tsx": {
+    "mtime": 1786937604.0719104,
+    "ast_hash": "4e67a40d4ebcba6492757bb61057ffcf",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/src/Root.tsx": {
+    "mtime": 1786937607.8906665,
+    "ast_hash": "b6c28075d742282ebff28ae15843fd94",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/src/index.ts": {
+    "mtime": 1786937608.9761975,
+    "ast_hash": "d92d9dee1ab16aa44a75ae7fbfb843ca",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/src/schema.ts": {
+    "mtime": 1786937593.6571343,
+    "ast_hash": "2c22025f37169cbbb7f82ac9f62f940a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/tsconfig.json": {
+    "mtime": 1786937557.1076615,
+    "ast_hash": "ecd268ac81d8412a952132b5b279260e",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/README.md": {
+    "mtime": 1786642599.5939462,
+    "ast_hash": "47d85bb83e46afe93608618968a98071",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/README.md": {
+    "mtime": 1786348480.4624934,
+    "ast_hash": "6a123cb593b252f0aec6bc988269c988",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/remotion-assembler/README.md": {
+    "mtime": 1786937613.1728816,
+    "ast_hash": "4a4ed0dd95b0524120ec4bb6bf54d909",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/tasks/character-and-music-sourcing.md": {
     "mtime": 1786391695.659355,
     "ast_hash": "f7ba8f2baa48ede4065acc88e170ea93",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-bear.png": {
-    "mtime": 1786394298.366339,
-    "ast_hash": "6ae0254b8a1efd34d25e3eab34a6e041",
+  "BroadcastContentAutomation/tasks/free-character-tool-shortlist.md": {
+    "mtime": 1786543241.0054758,
+    "ast_hash": "9cc3fbe9d7316c50e7ef2401d2f619d3",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-elephant.png": {
-    "mtime": 1786394298.4044905,
-    "ast_hash": "2d6b2da677443c383e51d055e85093f4",
+  "BroadcastContentAutomation/tasks/free-video-feasibility.md": {
+    "mtime": 1786485508.4251564,
+    "ast_hash": "731289489df9751d0ed8f96d32645868",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-giraffe.png": {
-    "mtime": 1786394298.4479082,
-    "ast_hash": "0f75efce6bf1cfd9a9c294499f6c9199",
+  "BroadcastContentAutomation/tasks/lessons.md": {
+    "mtime": 1786349728.6759188,
+    "ast_hash": "bbbfede0421d26bee21051071677e3f8",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/animal-pack-panda.png": {
-    "mtime": 1786394298.4961627,
-    "ast_hash": "236367413d21d2756bd48ae5d75bad73",
+  "BroadcastContentAutomation/tasks/research-kids-channels.md": {
+    "mtime": 1786350170.2590845,
+    "ast_hash": "3949cf9ec0731888b6ba828cacb248da",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/gigi-the-duckling.png": {
-    "mtime": 1786393235.1763399,
-    "ast_hash": "e64988ea18f9ca1bf8cda9756f758f21",
+  "BroadcastContentAutomation/tasks/todo.md": {
+    "mtime": 1787020792.2190585,
+    "ast_hash": "4032c1501717ab8f054b60fe42bd5497",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/mascot-bunny.png": {
+  "BroadcastContentAutomation/VideoGen/assets/branding/chronicle-and-chaos/avatar.png": {
+    "mtime": 1786589600.86042,
+    "ast_hash": "334b1fb8c384a4824d2d3b965b4328b1",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/branding/chronicle-and-chaos/avatar_compressed.png": {
+    "mtime": 1786961931.1626368,
+    "ast_hash": "93385858fb6aba0f2d299587a11648e7",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/branding/chronicle-and-chaos/banner.png": {
+    "mtime": 1786589600.9024594,
+    "ast_hash": "b32f0ca06985a373dff185985f46b936",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/branding/giggle-wiggle-town/Giggle_Wiggle_Town_Avatar.jpeg": {
+    "mtime": 1787002548.9508836,
+    "ast_hash": "d6db145c690d44e3b10c4816ea7003ed",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/branding/giggle-wiggle-town/Giggle_Wiggle_Town_Banner.jpeg": {
+    "mtime": 1787002575.2268848,
+    "ast_hash": "892c6223a487e47ab47eec9b9a0d67b1",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Bandit-the-Raccoon.jpeg": {
+    "mtime": 1787019477.721102,
+    "ast_hash": "39878792ab4724b5da217136c6fd14bc",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Coco-the-Koala.jpeg": {
+    "mtime": 1787019444.9146779,
+    "ast_hash": "ae4b9d7046e14243fd5e18fe38084ac7",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Hazel-the-Owl.jpeg": {
+    "mtime": 1787019871.4739869,
+    "ast_hash": "e45298ef88cffab4ac760799da0427c6",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Nari-the-Elephant.jpeg": {
+    "mtime": 1787010066.4625285,
+    "ast_hash": "bcffd952231bc371f2337285f9c9741a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Pebbles-the-Penguin.jpeg": {
+    "mtime": 1787019559.5692987,
+    "ast_hash": "358e06a3cae3d308229781c38fae86a4",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Quill-the-Hedgehog.jpeg": {
+    "mtime": 1787019335.9487028,
+    "ast_hash": "f787a653e430b4f4cdd482c44993bd10",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Stretch-the-Giraffe.jpeg": {
+    "mtime": 1787019595.6202433,
+    "ast_hash": "ffe322b9397f46ca1bb7496782b4eb7f",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Sunny-the-Sloth.jpeg": {
+    "mtime": 1787019521.1111736,
+    "ast_hash": "be755b61b730e95216dcd9c44464b792",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/Willow-the-Lamb.jpeg": {
+    "mtime": 1787019810.436261,
+    "ast_hash": "5161e7ac30072e406c0f83a5c0f2077d",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/_raw-source/pip-the-panda.jpeg": {
+    "mtime": 1787009399.392129,
+    "ast_hash": "f5035468d45b0518a3778a92f4bbf821",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/bandit-the-raccoon.png": {
+    "mtime": 1787020705.0852997,
+    "ast_hash": "dda12a02eea2454a4c56bbdbb8cc627c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/gigi-the-duckling.png": {
+    "mtime": 1787021664.345663,
+    "ast_hash": "a860cd9957dad5fdfd5b46a917a966af",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/kiwi-the-koala.png": {
+    "mtime": 1787020705.0378103,
+    "ast_hash": "08df309d6382e3406dd4f4c1d1b95958",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/milo-the-fox.png": {
+    "mtime": 1786543225.541852,
+    "ast_hash": "822316419af10325247779c91c15e37c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/nari-the-elephant.png": {
+    "mtime": 1787020704.9759712,
+    "ast_hash": "95df28642ad911dc1ca2889a74855850",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/pebbles-the-penguin.png": {
+    "mtime": 1787020704.7122943,
+    "ast_hash": "d9f82c0e4ce15517285a156059b9a5cb",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/pip-the-panda.png": {
+    "mtime": 1787020705.131955,
+    "ast_hash": "f511d9dd93fb2abf88bdcf8c1acba0a9",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/splash-the-otter.png": {
+    "mtime": 1786543225.5900757,
+    "ast_hash": "0c95a8fe4826dfb2b3b914caa772fe1d",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/stretch-the-giraffe.png": {
+    "mtime": 1787020704.7825463,
+    "ast_hash": "a5733e2cbcd7bb45183395fb31532dbc",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/character-pool/teddy-bear.png": {
+    "mtime": 1786394152.46321,
+    "ast_hash": "7e3b155cb4a66621363794c82d1f5f36",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/Bandit the Raccoon.jpeg": {
+    "mtime": 1787008770.9597862,
+    "ast_hash": "40520b7a561ef5a2e446314cc8a8d50b",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/Coco the Koala.jpeg": {
+    "mtime": 1787008752.644768,
+    "ast_hash": "fc29aabc874cd03a2d5bae822fb908ce",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/Nari the Elephant.jpeg": {
+    "mtime": 1787008716.4895308,
+    "ast_hash": "08356c28c6436d5bb2ef9c2eb569dc2a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/Pip the Panda.jpeg": {
+    "mtime": 1787008693.4591026,
+    "ast_hash": "b476973b54667169862b67c93c720b6e",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/Quill the Hedgehog.jpeg": {
+    "mtime": 1787008735.0187361,
+    "ast_hash": "daf144356bfb4890f5f91a906012103c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/hazel-the-owl.png": {
+    "mtime": 1787020704.897601,
+    "ast_hash": "24358e7f3712893013bc5c531c4eaf3c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/mascot-bunny.png": {
     "mtime": 1786394152.4866397,
     "ast_hash": "45f7b8a2d6629190c30000396a2936e6",
     "semantic_hash": ""
   },
-  "gigglegarden-automation/VideoGen/assets/character-pool/teddy-bear.png": {
-    "mtime": 1786394152.46321,
-    "ast_hash": "7e3b155cb4a66621363794c82d1f5f36",
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/quill-the-hedgehog.png": {
+    "mtime": 1787020705.0012217,
+    "ast_hash": "a24eb8ebc22f91e9e1fda7b08a4e8d4c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/ruby-the-bunny.png": {
+    "mtime": 1786543225.4948804,
+    "ast_hash": "cd9add6488dfd9426353c3d87471541a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/sunny-the-sloth.png": {
+    "mtime": 1787020704.8213825,
+    "ast_hash": "196e324b273c11ffce9b68be7a4c9908",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/extra-character-pool-background/willow-the-lamb.png": {
+    "mtime": 1787020704.8681087,
+    "ast_hash": "5e06e0662ddb42fea64eb3b2fb4fd017",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/ancient-drone/atlasaudio-drone-ambient-518685.mp3": {
+    "mtime": 1786929329.2358973,
+    "ast_hash": "a64c8a8daf23e055e8a198a077dc6600",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/ancient-drone/leberch-cyberpunk-drone-375259.mp3": {
+    "mtime": 1786929846.0902224,
+    "ast_hash": "4ab790c52d5cd061d9825fb5abfaa5a7",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/curious-ambient/atlasaudio-ambient-574024.mp3": {
+    "mtime": 1786930208.6273792,
+    "ast_hash": "0f64862dfbb9f1772d21969ed055b981",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/curious-ambient/atlasaudio-ambient-ambient-music-576612.mp3": {
+    "mtime": 1786930216.214993,
+    "ast_hash": "7eb643777e8284ccfd6f8ae9a7952165",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/curious-ambient/paulyudin-ambient-ambient-music-574003.mp3": {
+    "mtime": 1786929533.6095245,
+    "ast_hash": "a69739a9b250f15bcc0349b73a47d0e8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/driving-epic/leberch-epic-509664.mp3": {
+    "mtime": 1786930271.372375,
+    "ast_hash": "679a25f8283ccbaec8f15b45808d0546",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/driving-epic/paulyudin-epic-epic-music-573969.mp3": {
+    "mtime": 1786929451.7883399,
+    "ast_hash": "026dbbe75870b6b02fe05976a6b7c06c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/driving-epic/the_mountain-epic-508009.mp3": {
+    "mtime": 1786930259.7431302,
+    "ast_hash": "5d3da7657f65336b0c4faeee2b217735",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/driving-epic/the_mountain-epic-cinematic-576567.mp3": {
+    "mtime": 1786930302.9354393,
+    "ast_hash": "3fd34aef6c9a8c4cb037d568719902dd",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/mysterious-tense/alex-morgan-tense-suspense-rising-dread-573934.mp3": {
+    "mtime": 1786929073.3528278,
+    "ast_hash": "ff1d0c882a26d0ee0d5e7e1ef2bf06a8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/mysterious-tense/the_mountain-tense-492813.mp3": {
+    "mtime": 1786929085.8779778,
+    "ast_hash": "31c6f31f1e9e9d601ce5b05cdc1385b3",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/somber-orchestral/atlasaudio-orchestral-orchestral-music-507851.mp3": {
+    "mtime": 1786928938.7361803,
+    "ast_hash": "e1fdf9e658c09b1a74ee533f4924b5e9",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/somber-orchestral/leberch-dark-578736.mp3": {
+    "mtime": 1786928964.5000644,
+    "ast_hash": "5e183305d0679f4c2cb6920378f4a369",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/somber-orchestral/leberch-dark-cinematic-509801.mp3": {
+    "mtime": 1786928853.499616,
+    "ast_hash": "af1374444c924f65ef85eacf2daabdd6",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/somber-orchestral/paulyudin-orchestral-518713.mp3": {
+    "mtime": 1786929210.4043903,
+    "ast_hash": "0b7f95d44da09434c24a643f4741fb33",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/tense-atmospheric/alex-morgan-tense-suspense-rising-dread-573934.mp3": {
+    "mtime": 1786930440.4454947,
+    "ast_hash": "ff1d0c882a26d0ee0d5e7e1ef2bf06a8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/tense-atmospheric/leberch-cinematic-tense-313612.mp3": {
+    "mtime": 1786930543.6574178,
+    "ast_hash": "66674ec6516b9696e37bdf500b591739",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music-mythology/tense-atmospheric/the_mountain-tense-492813.mp3": {
+    "mtime": 1786929415.443181,
+    "ast_hash": "31c6f31f1e9e9d601ce5b05cdc1385b3",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/bright-acoustic/jonasblakewood-extraordinary-custom-294010.mp3": {
+    "mtime": 1787006480.0343542,
+    "ast_hash": "f29966d10540b9cc94c93ea8c0f1a42c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/bright-acoustic/paulyudin-acoustic-acoustic-music-574005.mp3": {
+    "mtime": 1787006463.4379966,
+    "ast_hash": "02fb0ae10e5096c60844ad99d447113a",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/bright-acoustic/paulyudin-upbeat-folk-150300.mp3": {
+    "mtime": 1787006539.1251726,
+    "ast_hash": "5e98fea51cb2e75770067cc5a108028b",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/bright-acoustic/the_mountain-bright-513153.mp3": {
+    "mtime": 1787006455.3000789,
+    "ast_hash": "4697bce98805e63a0fd00fd00dbc6e33",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/bright-acoustic/the_mountain-cheerful-cheerful-music-507997.mp3": {
+    "mtime": 1787006500.123658,
+    "ast_hash": "3c07dfa94e50b996502c83568d4b084b",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/cheerful-ukulele/alex-morgan-corporate-upbeat-advertising-568141.mp3": {
+    "mtime": 1787006640.394257,
+    "ast_hash": "1127be627849e4e48e4226b37b47b912",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/cheerful-ukulele/alex-morgan-kids-background-music-579469.mp3": {
+    "mtime": 1787006581.8185277,
+    "ast_hash": "a1a4bd105dee8131bd928a400c0848a0",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/cheerful-ukulele/alex-morgan-toddler-kids-background-music-583241.mp3": {
+    "mtime": 1787006596.416849,
+    "ast_hash": "3984b6103af6a3b68ee746ba26726f3c",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/cheerful-ukulele/atlasaudio-ukulele-518095.mp3": {
+    "mtime": 1787006621.4846938,
+    "ast_hash": "badf740d3ccf7360bab3c0f57e7311eb",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/cheerful-ukulele/bombinsound-happy-ukulele-version-2-537784.mp3": {
+    "mtime": 1787006628.9245665,
+    "ast_hash": "17435302eed532009c00915a8b64e195",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/gentle-music-box/alex-morgan-piano-soft-gentle-morning-keys-575879.mp3": {
+    "mtime": 1787005870.6022708,
+    "ast_hash": "3052f5ca752ac6ee723c107b8877be62",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/gentle-music-box/leberch-gentle-music-box-511181.mp3": {
+    "mtime": 1787005852.383503,
+    "ast_hash": "e4e7f5a355be32a28cf03f3c025561fc",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/gentle-music-box/leberch-soft-piano-soft-piano-music-504418.mp3": {
+    "mtime": 1787005879.6190877,
+    "ast_hash": "d15655f5ef70c9bc1bba01d4b7f4b6d8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/soft-piano-lullaby/alex-morgan-gentle-baby-sleep-lullaby-dream-530944.mp3": {
+    "mtime": 1787005650.3282974,
+    "ast_hash": "4a001281153b759a33d23501e5d17762",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/soft-piano-lullaby/alex-morgan-piano-background-gentle-study-flow-578490.mp3": {
+    "mtime": 1787005713.7415826,
+    "ast_hash": "30efca764bd768a11ab7db9a8edb670d",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/soft-piano-lullaby/atlasaudio-nursery-578928.mp3": {
+    "mtime": 1787005764.8545687,
+    "ast_hash": "baa346dc5f74dd09a4ec50519681b222",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/soft-piano-lullaby/leberch-lullaby-578714.mp3": {
+    "mtime": 1787005660.2424433,
+    "ast_hash": "ab95e8be2c8d08e45ec3059d3703fbb6",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/soft-piano-lullaby/verclub_music-sleep-music-571041.mp3": {
+    "mtime": 1787005689.0479689,
+    "ast_hash": "7cc41c5b7f06e8e8a85ca8264a97e768",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/upbeat-playful/alex-morgan-kids-background-music-579469.mp3": {
+    "mtime": 1787006347.089438,
+    "ast_hash": "a1a4bd105dee8131bd928a400c0848a0",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/upbeat-playful/paulyudin-fun-fun-cartoon-music-494180.mp3": {
+    "mtime": 1787006405.347568,
+    "ast_hash": "f87d531d653aea5fa3d59219bce75636",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/upbeat-playful/sub_clair-kids-581150.mp3": {
+    "mtime": 1787006357.076306,
+    "ast_hash": "e7aa79e273af72da95c205beb4f2a680",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/upbeat-playful/the_mountain-children-522447.mp3": {
+    "mtime": 1787006379.5476305,
+    "ast_hash": "630fd0c72ba6b7bfc968fa1e90ed4426",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/alex-morgan-ambient-background-soft-air-drift-575882.mp3": {
+    "mtime": 1787006263.17531,
+    "ast_hash": "d933ec5aaeb67f138a23298a0754c541",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/alex-morgan-nature-ambient-548640.mp3": {
+    "mtime": 1787005942.4645607,
+    "ast_hash": "2c360f06415c219ab3ffe27b3e1c8163",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/alex-morgan-slow-morning-ritual-537463.mp3": {
+    "mtime": 1787006237.0785997,
+    "ast_hash": "5bc47ff897fc5281d9f0a74d4d88bb46",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/joyinsound-dream-state-echoes-385090.mp3": {
+    "mtime": 1787006287.7552855,
+    "ast_hash": "b66e890833899688ee8b188badbac322",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/joyinsound-fragments-of-silence-385083.mp3": {
+    "mtime": 1787006271.7350783,
+    "ast_hash": "082d4a36ecadcfe96d70d38553076d62",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/paulyudin-ambient-ambient-music-574003.mp3": {
+    "mtime": 1787005930.4367347,
+    "ast_hash": "a69739a9b250f15bcc0349b73a47d0e8",
+    "semantic_hash": ""
+  },
+  "BroadcastContentAutomation/VideoGen/assets/music/warm-ambient/paulyudin-calm-160676.mp3": {
+    "mtime": 1787005963.3712459,
+    "ast_hash": "8a4c8a8557e576cd08135ec0b244dd11",
     "semantic_hash": ""
   }
 }

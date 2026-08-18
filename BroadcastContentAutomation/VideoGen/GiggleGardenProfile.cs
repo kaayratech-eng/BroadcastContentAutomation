@@ -126,7 +126,7 @@ static class GiggleGardenProfile
         ],
 
         CharacterStyle = "Cute 2D children's cartoon style, flat colors, thick outlines, bright cheerful palette",
-        CharacterPoolPath = @"D:\Business\gigglegarden-automation\VideoGen\assets\character-pool",
+        CharacterPoolPath = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\character-pool",
         // A small fixed cast the audience learns to recognise, not a large pool optimised
         // for variety: build 10, then every video reuses one of those 10 rather than still
         // inventing new ones (CoComelon/Vlad and Niki/Ryan's World all run a recurring cast,
@@ -146,7 +146,7 @@ static class GiggleGardenProfile
         // Narration lands around -19 LUFS, so -36 sits ~17 LU underneath it: something you
         // notice when it stops rather than while it plays, which is the whole job of a bed
         // under a narrator aimed at 2-6 year olds.
-        BackgroundMusicPath = @"D:\Business\gigglegarden-automation\VideoGen\assets\music",
+        BackgroundMusicPath = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\music",
         BackgroundMusicLufs = -36.0,
     };
 
