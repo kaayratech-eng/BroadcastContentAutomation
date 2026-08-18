@@ -1,0 +1,60 @@
+{
+  "title": "Icarus: The Wings His Father Begged Him Not to Trust",
+  "description": "Every telling remembers the fall. Almost none remembers what his father actually said first.\n#chronicleandchaos #greekmythology #icarus #daedalus #ancientgreece #mythologyexplained #hubris\nA retelling of the myth of Icarus and Daedalus - the wings built from feathers and wax, the one warning ignored, and the sea that still carries his name - for adults who enjoy mythology, history and folklore storytelling.",
+  "tags": ["icarus", "daedalus", "greek mythology", "crete", "labyrinth", "hubris", "ancient greece", "icarian sea"],
+  "tiktokCaption": "His dad built him wings from feathers and wax. Then gave him one rule. He broke it. #icarus #greekmythology #mythology #ancientgreece",
+  "reelsCaption": "The myth of Icarus isn't really about flying too high - it's about the one warning he didn't listen to. #icarus #greekmythology #mythologyexplained #daedalus #ancientgreece #folklore #history",
+  "thumbnailPrompt": "Icarus's face close up, feathers falling around him, intense haunted expression, one broken white wing feather in frame, moody high-contrast lighting, desaturated blue and gold palette, no text.",
+  "introText": "Tonight, on Chronicle & Chaos: the fall everyone warns about. I'm Icarus. One warning. One choice.",
+  "characterName": "Icarus",
+  "characterDescription": "A lean young Greek man with tousled dark curls and sun-bronzed skin, wearing a simple white chiton, with towering wings of white feathers bound to his arms and back by leather straps and pale wax.",
+  "characterCatchphrase": "",
+  "musicMood": "somber orchestral",
+  "scenes": [
+    {
+      "narration": "Trapped on Crete, Daedalus binds feathers and wax to his son's arms by firelight.",
+      "sceneKind": "character",
+      "imagePrompt": "Icarus, a lean young Greek man with tousled dark curls and sun-bronzed skin in a simple white chiton, stands still as his father binds white-feathered wax wings to his arms inside a firelit stone tower, warm firelit amber and shadow palette.",
+      "motionPrompt": "Icarus (lean young Greek man, dark curls, sun-bronzed skin, white chiton, wings of white feathers and pale wax being strapped to his arms) stands still in flickering torchlight as his father's hands move quickly, wax dripping, feathers trembling, warm firelit amber and shadow palette. painterly illustrated animation, dramatic lighting, semi-realistic proportions, character design stays consistent."
+    },
+    {
+      "narration": "\"Not too low, the sea soaks the wings. Not too high, the sun melts the wax,\" his father warns.",
+      "sceneKind": "character",
+      "imagePrompt": "Icarus, dark curls and sun-bronzed skin in a white chiton with feathered wax wings strapped to his back, stands at a cliff-edge tower at first light, listening intently to his father, cold moonlit blue fading into pale dawn gold.",
+      "motionPrompt": "Icarus (dark curls, sun-bronzed skin, white chiton, wings of white feathers and wax on his back) stands at the cliff's edge, wings shifting slightly in the wind as he nods, listening, cold moonlit blue fading into pale dawn gold. painterly illustrated animation, dramatic lighting, semi-realistic proportions, character design stays consistent."
+    },
+    {
+      "narration": "Below the tower, the labyrinth's guards still patrol the only way out by land.",
+      "sceneKind": "context",
+      "stockQuery": "ancient greek stone tower cliffside ruins"
+    },
+    {
+      "narration": "At dawn, Icarus leaps from the cliff - and for the first time, he is flying.",
+      "sceneKind": "character",
+      "imagePrompt": "Icarus, dark curls and sun-bronzed skin in a white chiton, soars above Crete's cliffs and sea with his white-feathered wax wings spread wide, joyful expression, bright dawn-gold and deep blue palette.",
+      "motionPrompt": "Icarus (dark curls, sun-bronzed skin, white chiton, wings of white feathers and wax spread wide) beats his wings and rises higher over the sea, joyful, hair and feathers streaming in the wind, bright dawn-gold and deep blue palette. painterly illustrated animation, dramatic lighting, semi-realistic proportions, character design stays consistent."
+    },
+    {
+      "narration": "The sea shrinks beneath him. The wind roars louder than his father's voice now.",
+      "sceneKind": "context",
+      "stockQuery": "aerial view ocean waves sunlight sparkling"
+    },
+    {
+      "narration": "Drunk on the height, he climbs past every warning, straight toward the sun.",
+      "sceneKind": "character",
+      "imagePrompt": "Icarus, dark curls and sun-bronzed skin in a white chiton, flies high near the blazing sun with his wax-and-feather wings beginning to glisten and soften, dazzled expression, blinding gold and white palette.",
+      "motionPrompt": "Icarus (dark curls, sun-bronzed skin, white chiton, wings of white feathers and wax) climbs higher, wax visibly softening and a few feathers loosening from his wings as he squints into blinding light, blinding gold and white palette. painterly illustrated animation, dramatic lighting, semi-realistic proportions, character design stays consistent."
+    },
+    {
+      "narration": "The wax softens first. Then the feathers. One by one, they scatter into light.",
+      "sceneKind": "context",
+      "stockQuery": "white feathers falling sky closeup"
+    },
+    {
+      "narration": "Icarus falls into the sea below - the water that still carries his name.",
+      "sceneKind": "character",
+      "imagePrompt": "Icarus, dark curls and sun-bronzed skin in a white chiton, falls through the air toward the sea below, his wax-and-feather wings shredding apart around him, dramatic chiaroscuro lighting, deep blue and gold palette.",
+      "motionPrompt": "Icarus (dark curls, sun-bronzed skin, white chiton) falls through the air, his wings of feathers and wax tearing apart and scattering behind him toward the sea below, dramatic chiaroscuro lighting, deep blue and gold palette. painterly illustrated animation, dramatic lighting, semi-realistic proportions, character design stays consistent."
+    }
+  ]
+}

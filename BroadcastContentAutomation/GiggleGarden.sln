@@ -1,0 +1,46 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Shared", "Shared\Shared.csproj", "{8B5B3F9E-B08D-427D-B9A9-9F8CE774DB43}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "VideoGen", "VideoGen\VideoGen.csproj", "{246C0B8A-E467-485D-B1EE-340F40DBB91D}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Uploader", "Uploader\Uploader.csproj", "{49A87DCE-8986-4F43-8706-726BEC786091}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TokenCapture", "TokenCapture\TokenCapture.csproj", "{8B650F17-BE32-4981-8CBE-C0D081C20918}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "TikTokTokenCapture", "TikTokTokenCapture\TikTokTokenCapture.csproj", "{2ECE3204-11F5-4D67-81C3-DB2517AFEF1B}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{8B5B3F9E-B08D-427D-B9A9-9F8CE774DB43}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B5B3F9E-B08D-427D-B9A9-9F8CE774DB43}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B5B3F9E-B08D-427D-B9A9-9F8CE774DB43}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B5B3F9E-B08D-427D-B9A9-9F8CE774DB43}.Release|Any CPU.Build.0 = Release|Any CPU
+		{246C0B8A-E467-485D-B1EE-340F40DBB91D}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{246C0B8A-E467-485D-B1EE-340F40DBB91D}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{246C0B8A-E467-485D-B1EE-340F40DBB91D}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{246C0B8A-E467-485D-B1EE-340F40DBB91D}.Release|Any CPU.Build.0 = Release|Any CPU
+		{49A87DCE-8986-4F43-8706-726BEC786091}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{49A87DCE-8986-4F43-8706-726BEC786091}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{49A87DCE-8986-4F43-8706-726BEC786091}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{49A87DCE-8986-4F43-8706-726BEC786091}.Release|Any CPU.Build.0 = Release|Any CPU
+		{8B650F17-BE32-4981-8CBE-C0D081C20918}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{8B650F17-BE32-4981-8CBE-C0D081C20918}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{8B650F17-BE32-4981-8CBE-C0D081C20918}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{8B650F17-BE32-4981-8CBE-C0D081C20918}.Release|Any CPU.Build.0 = Release|Any CPU
+		{2ECE3204-11F5-4D67-81C3-DB2517AFEF1B}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{2ECE3204-11F5-4D67-81C3-DB2517AFEF1B}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{2ECE3204-11F5-4D67-81C3-DB2517AFEF1B}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{2ECE3204-11F5-4D67-81C3-DB2517AFEF1B}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal
