@@ -36,6 +36,7 @@ var cfg = config.Get<GenConfig>() ?? throw new InvalidOperationException("appset
 string? topic = null, language = "en", job = null, profileId = null;
 var mode = "";
 string? formatOverride = null;
+var longForm = false;
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -46,6 +47,7 @@ for (var i = 0; i < args.Length; i++)
         case "--retts": mode = "retts"; break;
         case "--test-tts": mode = "test-tts"; break;
         case "--dry-script": mode = "dry-script"; break;
+        case "--long": longForm = true; break;
         case "--job" when i + 1 < args.Length: job = args[++i]; break;
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
@@ -54,11 +56,11 @@ for (var i = 0; i < args.Length; i++)
             formatOverride = args[++i];
             break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format <id>]   (valid --format ids depend on --profile; see that profile's Formats catalog)");
+            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format <id>] [--long]   (valid --format ids depend on --profile; see that profile's Formats catalog. --long generates a 12-15 minute YouTube documentary cut instead of the usual ~8-scene short; only supported by profiles with AllowsContextScenes.)");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
             Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
             Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
-            Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...]   one script-generation call only, no TTS/character-draw/Vidu spend");
+            Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...] [--long]   one script-generation call only, no TTS/character-draw/Vidu spend");
             return 0;
     }
 }
@@ -85,6 +87,16 @@ try
 catch (Exception ex)
 {
     Console.Error.WriteLine($"Configuration error: {ex.Message}");
+    return 1;
+}
+
+if (longForm && !profile.AllowsContextScenes)
+{
+    Console.Error.WriteLine(
+        $"--long is not supported for profile \"{profile.Id}\": it renders through the Vidu " +
+        "path, and a 70-90 scene long-form script there would mean 70-90 paid Vidu " +
+        "submissions per video. --long is only wired for AllowsContextScenes profiles " +
+        "(e.g. chronicleandchaos).");
     return 1;
 }
 
@@ -128,7 +140,7 @@ async Task<int> RunPrepAsync()
 
     var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride);
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm);
 
     var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(profile, cfg, script, workDir);
     script.CharacterImagePath = characterImage;
@@ -183,36 +195,75 @@ async Task<int> RunPrepAsync()
         // so --assemble for this profile has nothing to collect and goes straight to
         // rendering (with Remotion, not ffmpeg's Ken Burns path).
         var stock = new StockFootageClient(cfg);
+
+        // Long-form (Scene.VisualGroup, see ScriptGenerator.cs): consecutive scenes sharing a
+        // group number are one "visual beat" and reuse the same resolved image/clip instead of
+        // each triggering its own Pexels/Gemini call - that's what makes ~12-18 art beats cover
+        // 70-90 scenes. Scene 0 (the intro bumper, inserted above and not part of the model's
+        // grouping) is excluded from both sides of the comparison so it never accidentally
+        // matches - and never gets matched by - a real story scene that happens to also default
+        // to group 0. A short-form script never sets VisualGroup, so canReuse is always false
+        // there and every scene resolves exactly as it did before this feature existed.
+        int? lastGroup = null;
+        string? lastImagePath = null;
+        string? lastClipPath = null;
+
         for (var i = 0; i < script.Scenes.Count; i++)
         {
             var scene = script.Scenes[i];
             var label = $"{i + 1}/{script.Scenes.Count}";
+            var isIntro = i == 0;
+            var canReuse = script.IsLongForm && !isIntro && lastGroup == scene.VisualGroup;
 
             if (scene.SceneKind == "context")
             {
-                var basePath = Path.Combine(workDir, $"scene{i:D2}-stock");
-                var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, basePath, ImageClient.Orientation.Portrait)
-                    ?? throw new Exception(
-                        $"Scene {label}: Pexels had no match for \"{scene.StockQuery}\". Broaden the stockQuery " +
-                        $"and re-run --prep, or hand-place a file at {basePath}.jpg or {basePath}.mp4 and re-run --assemble.");
-
-                if (Path.GetExtension(downloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
-                    scene.ClipPath = downloaded;
+                if (canReuse && (lastClipPath is not null || lastImagePath is not null))
+                {
+                    scene.ClipPath = lastClipPath;
+                    scene.ImagePath = lastImagePath;
+                    Console.WriteLine($"Stock {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastClipPath ?? lastImagePath!)}");
+                }
                 else
-                    scene.ImagePath = downloaded;
+                {
+                    var basePath = Path.Combine(workDir, $"scene{i:D2}-stock");
+                    var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, basePath, ImageClient.Orientation.Portrait)
+                        ?? throw new Exception(
+                            $"Scene {label}: Pexels had no match for \"{scene.StockQuery}\". Broaden the stockQuery " +
+                            $"and re-run --prep, or hand-place a file at {basePath}.jpg or {basePath}.mp4 and re-run --assemble.");
 
-                Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
+                    if (Path.GetExtension(downloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                        scene.ClipPath = downloaded;
+                    else
+                        scene.ImagePath = downloaded;
+
+                    Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
+                }
             }
             else
             {
-                var outputPath = Path.Combine(workDir, $"scene{i:D2}-art.png");
-                var prompt = ImageClient.BuildPrompt(
-                    scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                    ImageClient.Orientation.Portrait, matchReference: true);
-                scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
-                    prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
+                if (canReuse && lastImagePath is not null)
+                {
+                    scene.ImagePath = lastImagePath;
+                    Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}");
+                }
+                else
+                {
+                    var outputPath = Path.Combine(workDir, $"scene{i:D2}-art.png");
+                    var prompt = ImageClient.BuildPrompt(
+                        scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
+                        ImageClient.Orientation.Portrait, matchReference: true);
+                    scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
+                        prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
 
-                Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
+                    Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
+                }
+            }
+
+            if (!isIntro)
+            {
+                lastGroup = scene.VisualGroup;
+                lastImagePath = scene.ImagePath;
+                lastClipPath = scene.ClipPath;
             }
         }
     }
@@ -344,14 +395,24 @@ async Task<int> RunDryScriptAsync()
 {
     var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride);
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride, longForm);
 
-    Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"");
+    Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"   IsLongForm: {script.IsLongForm}");
     Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
     Console.WriteLine($"MusicMood: {script.MusicMood}   NarrationStyle: {script.NarrationStyle}");
     Console.WriteLine($"Intro: {script.IntroText}");
     for (var i = 0; i < script.Scenes.Count; i++)
-        Console.WriteLine($"  Scene {i + 1} ({script.Scenes[i].Narration.Length} chars): {script.Scenes[i].Narration}");
+    {
+        var s = script.Scenes[i];
+        var groupTag = script.IsLongForm ? $" [group {s.VisualGroup}]" : "";
+        Console.WriteLine($"  Scene {i + 1} ({s.Narration.Length} chars){groupTag}: {s.Narration}");
+    }
+    if (script.IsLongForm)
+    {
+        var groups = script.Scenes.Select(s => s.VisualGroup).Distinct().Count();
+        var totalChars = script.Scenes.Sum(s => s.Narration.Length);
+        Console.WriteLine($"Long-form: {script.Scenes.Count} scenes, {groups} distinct visual groups, {totalChars} narration chars (~{totalChars / 5.0 / 140.0 * 60.0:0}s at 140wpm).");
+    }
     Console.WriteLine($"Hashtags: {string.Join(" ", script.Tags.Where(t => t.StartsWith('#')))}");
 
     var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script")).FullName;

@@ -9,7 +9,12 @@ using System.Text.Json;
 // and species per video while the art stayed one fixed duckling, so the narration and
 // the picture were describing different characters. Whichever way a character is
 // obtained here, the description returned is the description of the actual image.
-record CharacterBrief(string Name, string Description, string ImagePath);
+//
+// Catchphrase is optional and pool-only: a signature line that follows a cast member
+// across videos so it reads as the same character rather than a design that happens to
+// repeat. Null for a freshly-invented character that hasn't been asked for one, or for
+// an older pool sidecar written before this field existed.
+record CharacterBrief(string Name, string Description, string ImagePath, string? Catchphrase = null);
 
 // Supplies the character for a video, either by picking one out of a pool or by
 // drawing the one the script invented.
@@ -21,7 +26,7 @@ static class CharacterSource
     // licence are not read by anything - they are here because a monetised kids'
     // channel needs to be able to answer where a character came from, and the answer
     // has to live next to the file rather than in someone's memory.
-    private sealed record PoolEntry(string? Name, string? Description, string? Source, string? Licence);
+    private sealed record PoolEntry(string? Name, string? Description, string? Catchphrase, string? Source, string? Licence);
 
     // Null means "no pool configured, invent one instead" - the normal path.
     //
@@ -79,7 +84,7 @@ static class CharacterSource
             throw new Exception($"{Path.GetFileName(sidecarPath)} needs both a \"name\" and a \"description\".");
 
         Console.WriteLine($"  Character: {entry.Name} from the pool ({Path.GetFileName(picked)})");
-        return new CharacterBrief(entry.Name, entry.Description, picked);
+        return new CharacterBrief(entry.Name, entry.Description, picked, entry.Catchphrase);
     }
 
     // Draws the character the script just invented, so the picture matches the words
@@ -182,7 +187,10 @@ static class CharacterSource
 
         File.Copy(imagePath, destination);
         File.WriteAllText(Path.ChangeExtension(destination, ".json"), JsonSerializer.Serialize(
-            new { name = script.CharacterName, description = script.CharacterDescription, source = "generated", licence = "internal" },
+            new {
+                name = script.CharacterName, description = script.CharacterDescription,
+                catchphrase = script.CharacterCatchphrase, source = "generated", licence = "internal",
+            },
             new JsonSerializerOptions { WriteIndented = true }));
 
         Console.WriteLine($"  Character: saved {script.CharacterName} to the pool ({Path.GetFileName(destination)})");

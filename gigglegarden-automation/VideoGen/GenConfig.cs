@@ -8,13 +8,19 @@ record GenConfig
     public string AnthropicApiKey { get; init; } = "";
     public string ClaudeModel { get; init; } = "claude-opus-5";
 
-    // claude (default, zero risk) or groq (free tier - 30 RPM/6,000 TPM/14,400
-    // req/day, no card required, and unlike NVIDIA NIM's free tier Groq's own terms
-    // allow real low-volume production use, not just prototyping). See
-    // GroqScriptProvider/ScriptProviderFactory.
-    public string ScriptProvider { get; init; } = "claude";
+    // hybrid (default - splits one script's acts across Groq for acts 1-2 and
+    // Gemini for acts 3-4, so each provider's daily quota only has to cover half
+    // a script), groq (free tier alone - confirmed 8,000 TPM/model + 200,000 TPD
+    // total, no card required), gemini (free tier alone - confirmed 20
+    // requests/day/model on gemini-3.6-flash, a separate quota bucket from
+    // Groq's), or claude (zero free-tier-quota risk, but paid). See
+    // GroqScriptProvider/GeminiScriptProvider/HybridScriptProvider/
+    // ScriptProviderFactory.
+    public string ScriptProvider { get; init; } = "hybrid";
     public string GroqApiKey { get; init; } = "";
     public string GroqModel { get; init; } = "llama-3.3-70b-versatile";
+    public string GeminiApiKey { get; init; } = "";
+    public string GeminiModel { get; init; } = "gemini-3.6-flash";
 
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
@@ -120,10 +126,19 @@ record GenConfig
         if (googleReachable && (string.IsNullOrWhiteSpace(GoogleCloudTtsApiKey) || GoogleCloudTtsApiKey.StartsWith("PUT-")))
             missing.Add(nameof(GoogleCloudTtsApiKey));
 
-        // "claude" (the default) never touches Groq, so only require the key when
-        // ScriptProvider can actually route there.
+        // "claude" (the default) never touches Groq/Gemini, so only require a key
+        // when ScriptProvider can actually route there.
         var groqReachable = ScriptProvider.Equals("groq", StringComparison.OrdinalIgnoreCase);
         if (groqReachable && (string.IsNullOrWhiteSpace(GroqApiKey) || GroqApiKey.StartsWith("PUT-")))
+            missing.Add(nameof(GroqApiKey));
+
+        // "hybrid" needs both keys - it routes different acts of the same script
+        // to Groq and Gemini (see HybridScriptProvider/ScriptProviderFactory).
+        var hybrid = ScriptProvider.Equals("hybrid", StringComparison.OrdinalIgnoreCase);
+        var geminiReachable = hybrid || ScriptProvider.Equals("gemini", StringComparison.OrdinalIgnoreCase);
+        if (geminiReachable && (string.IsNullOrWhiteSpace(GeminiApiKey) || GeminiApiKey.StartsWith("PUT-")))
+            missing.Add(nameof(GeminiApiKey));
+        if (hybrid && (string.IsNullOrWhiteSpace(GroqApiKey) || GroqApiKey.StartsWith("PUT-")))
             missing.Add(nameof(GroqApiKey));
 
         if (missing.Count > 0)

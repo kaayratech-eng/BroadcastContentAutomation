@@ -1756,26 +1756,749 @@ needed regardless of the Chronicle & Chaos work.
 - [x] `Channels.chronicleandchaos.YouTube.ClientSecretPath` repointed to
       `C:\Secure\ChronicleAndChaos\client_secret.json` (new project, not
       created yet — steps given to user)
-- [ ] User creates the new Google Cloud project + OAuth consent screen
+- [x] User created the new Google Cloud project + OAuth consent screen
       (test user: chronicleandchaos's own email only) + Desktop OAuth
-      client, saves client_secret.json at the path above
+      client, saved client_secret.json at the path above — confirmed via
+      `client_secret.json` on disk at `C:\Secure\ChronicleAndChaos\`
 - [ ] User re-runs TokenCapture for `gigglegarden` (existing project) to
-      replace the dead token
-- [ ] User runs TokenCapture for `chronicleandchaos` against the new project
-- [ ] User creates a new Meta app for Chronicle & Chaos (Business type),
-      adds Instagram Graph API product, generates a long-lived Page token
-      for Chronicle & Chaos's Page, fills in
+      replace the dead token — still open; token at
+      `%APPDATA%\GiggleGarden\gigglegarden` is still the stale Aug 9 one
+      that returns `invalid_grant` on refresh
+- [x] User ran TokenCapture for `chronicleandchaos` against the new
+      project — confirmed via a fresh token file at
+      `%APPDATA%\GiggleGarden\chronicleandchaos` (2026-08-17 05:46)
+- [x] User created a new Meta app for Chronicle & Chaos (Business type),
+      added Instagram Graph API product, generated a long-lived Page token
+      for Chronicle & Chaos's Page (`PageId 1259686303903826`,
+      `IgUserId 17841439599868514`), filled in
       `Channels.chronicleandchaos.{Facebook,Instagram}` + the token in
-      appsettings.Local.json
-- [ ] User creates a new TikTok Developer app for Chronicle & Chaos,
-      adds Content Posting API product, gets ClientKey/ClientSecret
+      appsettings.Local.json. Verified live via `debug_token`: `is_valid
+      true`, expires 2026-10-16 (~60 days out, confirms it's the long-lived
+      exchange, not the short-lived token) — see renewal note below.
+- [x] User created a new TikTok Developer app for Chronicle & Chaos,
+      added Content Posting API product, got ClientKey/ClientSecret
 - [x] Correction: `TikTokTokenCapture` already existed (commit `4c83cb1c`,
       predates this conversation) — a `Glob` false-negative briefly made it
       look missing. It already does the full PKCE + local-redirect OAuth
       flow and already takes an optional per-channel token-store-path arg.
       No code change needed, mirrors YouTube's TokenCapture exactly.
-- [ ] User runs TikTokTokenCapture for both `gigglegarden` and
-      `chronicleandchaos` once their respective TikTok apps exist (each app
-      must register redirect URI `http://localhost:53682/callback` exactly)
+- [x] User ran TikTokTokenCapture for `chronicleandchaos` — refresh token
+      saved to `C:\Secure\GiggleGarden\tiktok-token-chronicleandchaos.json`
+      (confirmed on disk). `gigglegarden`'s own TikTok token status not
+      re-verified in this pass — [ ] still open if it hasn't been re-run
+      since its app was created.
 - [ ] README updated with the Meta/TikTok separate-app steps and
       TikTokTokenCapture usage
+
+### ⚠️ Recurring: Facebook/Instagram long-lived Page token renewal
+
+Chronicle & Chaos's Facebook/Instagram token (shared — Instagram publishing
+goes through the same Page token) is a **long-lived Page token, not
+permanent**. Confirmed via `debug_token` on 2026-08-17: expires
+**2026-10-16**. Facebook offers no non-expiring option on this flow — it
+needs re-exchange roughly every 60 days or uploads will silently start
+failing on that channel.
+
+- [ ] Renew `Channels.chronicleandchaos.{Facebook,Instagram}.AccessToken`
+      before **2026-10-16** — re-run the short-lived → long-lived exchange
+      (`GET /oauth/access_token?grant_type=fb_exchange_token&...`) from a
+      fresh Graph API Explorer token, update `appsettings.Local.json`.
+- [ ] GiggleGarden's own Facebook/Instagram token has the same 60-day
+      expiry mechanics and has not been checked in this pass — worth an
+      equivalent `debug_token` check to know its actual expiry date.
+- Consider: a periodic reminder (calendar or a scheduled check) rather than
+  relying on someone noticing a failed upload after the fact.
+
+---
+
+## Long-form YouTube path for Chronicle & Chaos — plan
+
+Requested: today every render (`RunAssembleAsync`) is the same ~8-scene,
+~75-90s script cut twice — a vertical crop for IG/FB/TikTok and a landscape
+crop for YouTube — both tagged `#Shorts`. YouTube gets no long-form content,
+unlike every real comp in this niche (The Why Files, The Infographics Show),
+which build watch-time on 10-40 min documentaries. Requested: a real
+long-form path (20-40+ scenes / several minutes) for YouTube, keeping the
+current short as the IG/FB/TikTok/Shorts teaser.
+
+Four decisions locked in via `AskUserQuestion` before designing:
+1. Target length: **12-15 minutes**.
+2. Art density: **hybrid** — a shared image sustains ~20-40s of narration via
+   Remotion pan/zoom/hold; fresh manual art only at key story beats (~12-18
+   images/video, not one per scene).
+3. Short/long relationship: the Shorts/Reels teaser is **derived from the
+   long-form script**, not generated independently.
+4. Formats: **all 5** (`retellingArc`, `whatIf`, `topFive`, `explainer`,
+   `mythBust`) get long-form treatment, not just `retellingArc`.
+
+**Investigation before designing** (avoiding a duplicate mechanism):
+`Scene.ImagePath2`/`VerticalImagePath2` + `VideoAssembler.BuildSplitImageClipAsync`
+already do a "second image, internal crossfade" for a long single scene — but
+that mechanism lives entirely in `AssembleAsync`/`AssembleFromClipsAsync`
+(the ffmpeg Ken-Burns path GiggleGarden uses). Chronicle & Chaos renders
+through `AssembleWithRemotionAsync` instead (`AllowsContextScenes = true`),
+which never reads `ImagePath2` — confirmed by reading `VideoAssembler.cs` in
+full. So that mechanism is dead for this profile and **not** being extended.
+
+Read `Assembly.tsx`/`schema.ts`: each `SceneAsset` already gets its own Ken
+Burns pan/zoom computed over its own `durationInSeconds`, driven purely by
+`path`/`durationInSeconds`/`narrationAudioPath`/`captionText`. Nothing stops
+two consecutive scenes pointing at the same image file — Remotion just
+restarts the pan/zoom at each scene boundary, which reads as intentional
+b-roll-style re-establishing shots, not a bug. **Conclusion: the hybrid
+art-density requirement needs zero Remotion/schema changes.** It's a
+script-generation + art-resolution-loop concern only: cluster scenes into
+"visual groups," resolve art once per group, point every scene in the group
+at that same `ImagePath`.
+
+Also confirmed: `RunAssembleAsync`'s existing vertical-cut logic already
+*trims `script.Scenes` to fit `cfg.VerticalMaxSeconds`, from the front*. If
+the long-form script's opening ~8-10 scenes are written as a strong
+self-contained hook (mirroring what the short's scene 1 already has to be),
+that existing trim IS the teaser-derivation decision #3 asks for — no new
+"pick a hook segment" algorithm needed. Landscape already renders whatever
+`script.Scenes` contains, untrimmed — so pointing it at the full long-form
+scene list is also a no-op change to that code path.
+
+### Plan
+
+- [ ] `Scene` (`ScriptGenerator.cs`): add `VisualGroup` (int, default 0) —
+      consecutive scenes sharing a group number reuse one resolved image;
+      a new group number is a fresh art beat.
+- [ ] `VideoScript`: add `IsLongForm` (bool, default false), persisted like
+      every other script-level flag.
+- [ ] `ScriptGenerator.GenerateAsync`: new `longForm` parameter. When true:
+  - scene-count/length instruction changes from "exactly 8 scenes, <115
+    chars each" to a range hitting 12-15 min total narration (~140 wpm),
+    each scene still a natural <180-char beat (so TTS/subtitle timing stays
+    the same shape, just more of them — no new subtitle-wrap logic needed).
+  - new instruction: assign each scene a `visualGroup` int; group narration
+    into ~12-18 groups spanning the whole video, each covering roughly
+    20-40s (a handful of consecutive scenes) — the model clusters by
+    story-beat, not a fixed scene-per-group count.
+  - explicit instruction that the first ~8-10 scenes must work as a
+    self-contained hook, since they double as the teaser once trimmed.
+- [ ] `MythologyProfile.cs`'s `BuildFormatInstructions`: each of the 5
+      formats' `contentRules` needs a long-form variant (e.g. `topFive`'s
+      "1-2 scenes per entry" → "a dedicated multi-scene segment per entry";
+      `mythBust`'s "correct it point by point" → "each point gets its own
+      segment"). Add via a new `LongFormContentRules` field on
+      `FormatInstructionSet` (additive, short-form untouched) rather than a
+      parallel instruction-set type.
+- [ ] `Program.cs`:
+  - new `--long` CLI switch; throws a clear error unless
+    `profile.AllowsContextScenes` (long-form on the Vidu/clip path would be
+    60-90 paid Vidu submissions/video — out of scope, not what was asked).
+  - `RunPrepAsync`'s `AllowsContextScenes` art-resolution loop: track the
+    last-resolved `(VisualGroup, ImagePath, ClipPath)`; when the next
+    scene's `VisualGroup` matches, copy the path instead of calling
+    `StockFootageClient`/`ManualArtClient` again.
+  - `RunAssembleAsync`: no change to the render calls themselves — confirm
+    by test that the existing `shortScenes` trim (teaser) and full
+    `script.Scenes` (landscape/long-form) logic behaves correctly against a
+    70-90-scene long-form script.
+- [ ] Sidecar/title: landscape long-form render should not carry `#Shorts`
+      semantics implied elsewhere (it already doesn't — only the vertical
+      cut's title gets `#Shorts` appended, unchanged).
+
+### Cost/scope, called out explicitly per the user's "real scope" framing
+
+- ~70-90 Azure TTS calls/video instead of ~9 (cheap, character-billed).
+- ~12-18 manual Gemini art generations/video instead of ~9 — this is the
+  accepted human-in-the-loop time cost from decision #2, not a regression.
+- Zero new paid APIs, zero Remotion/schema changes, zero ffmpeg changes.
+
+### Verification (before marking done)
+
+1. `dotnet build` clean.
+2. `script.json` round-trip: old files without `VisualGroup`/`IsLongForm`
+   still deserialize (defaults: group 0, `IsLongForm = false`).
+3. `--dry-script --long` (extended to support the flag, zero spend) across
+   all 5 formats: confirm total narration lands in the 12-15 min band,
+   `visualGroup` values cluster into roughly 12-18 groups, first ~8-10
+   scenes read as a coherent hook standalone.
+4. Reflection-harness check (matching this file's established pattern) that
+   the art-resolution loop's group-reuse logic only calls
+   `StockFootageClient`/`ManualArtClient` once per group, not once per scene.
+5. Review section appended here once run.
+
+No live `--prep --long` run (spends Gemini art time + real API calls) without
+a separate go-ahead, consistent with how every other phase in this file
+gates a real run.
+
+---
+
+## Long-form chunked generation — Groq TPM blocker (plan)
+
+Discovered while running verification step 3 above (`--dry-script --long`):
+`llama-3.3-70b-versatile` (the configured `GroqModel`) now 404s — deprecated on
+Groq's end, unrelated to this feature (repro'd identically without `--long`).
+Live model list (`GET /openai/v1/models`) confirmed the two models you named,
+`openai/gpt-oss-120b` and `qwen/qwen3.6-27b`, both exist and are active
+(131072 ctx). Picked `openai/gpt-oss-120b` — OpenAI's flagship open-weight
+release, stronger public track record on strict-JSON output than the newer,
+smaller Qwen3.6-27B — and updated `appsettings.json`.
+
+That surfaced the real blocker: a single-shot 70-90-scene request needs
+~32-35k tokens (prompt + completion), but Groq's free tier caps **every**
+plain chat model at **8,000 tokens/minute** — confirmed via response
+rate-limit headers on `gpt-oss-120b`, `gpt-oss-20b`, and `qwen3.6-27b` alike
+(only the agentic `compound`/`compound-mini` models get a higher 70k cap, and
+those inject tool-use/search behavior that risks breaking strict JSON output
+— not a safe swap for this). Live 413 confirmed: `Requested 35482, Limit
+8000`. `ClaudeScriptProvider.cs:14`'s hardcoded `max_tokens = 8000` is at the
+same real risk for the same reason, untested until now.
+
+Asked you how to proceed (`AskUserQuestion`); you picked **chunk the
+long-form request into multiple smaller requests ("acts")** over falling
+back to Claude for `--long` or risking `compound-mini`.
+
+### Plan
+
+- [x] `ScriptGenerator.cs`: split long-form generation into 4 acts instead of
+      one shot. Act 1 = the existing single-call prompt, reworded so it asks
+      for full metadata + only ~18-22 scenes ("Act 1 of 4 - the opening/
+      setup"), not the whole 70-90. Acts 2-4 = a new, smaller
+      `GenerateContinuationActAsync` prompt: character description, this
+      format's `effectiveContentRules`/`sceneKindGuidance`/colour rules
+      (unchanged rules, so per-act quality doesn't drift), a short recap (the
+      last few narrated lines) for continuity, the next `visualGroup` number
+      to continue from, and a `{"scenes": [...]}`-only response (new
+      `ScenesOnly` DTO) — no metadata re-asked.
+- [x] Merge: `script.Scenes.AddRange(...)` after each continuation act, ahead
+      of the existing distinct-`visualGroup` sanity check and all the
+      existing post-processing (tags, character validation, `SceneKind`
+      normalization, `MotionPrompt` fallback) so those run once, generically,
+      over the full merged list exactly as they do today.
+- [x] Applies regardless of active `IScriptProvider` — the loop lives in
+      `ScriptGenerator`, not `GroqScriptProvider`, so it also protects
+      Claude's 8000-token `max_tokens` ceiling for free, at the cost of a few
+      more Claude calls if `ScriptProvider` ever switches back.
+- [x] `GroqScriptProvider.cs`: drop the flat `max_completion_tokens = 32000`
+      (sized for the old one-shot approach) down to a per-request cap sized
+      for one act (~6000) — keeps every request's requested-token total
+      (prompt + completion) comfortably under Groq's 8000 TPM ceiling.
+- [ ] Known limitation, not blocking: continuity across acts relies on a
+      short recap (last few lines), not full history — a `topFive`/`mythBust`
+      script could in principle repeat an earlier entry in a later act. Worth
+      watching in the verification dry-runs below; a stronger fix (structured
+      "already covered" breadcrumbs) is future work if it actually shows up.
+
+### Verification
+
+1. `dotnet build` clean.
+2. `--dry-script --long` across all 5 formats on Groq: confirm all 4 acts
+   complete without a 413/429 exhausting retries, total scenes/duration lands
+   near the 70-90/12-15min target, `visualGroup` numbering is contiguous
+   across act boundaries (no duplicate/reset numbers), no obvious repeated
+   beat across acts.
+3. Review appended here once run.
+
+### Review
+
+The 413 (per-minute budget) is fixed. First live run of Act 1 alone still hit
+a 413 (`Requested 9471, Limit 8000`) — the fixed `max_completion_tokens: 6000`
+plus Act 1's own large rules/schema prompt (~3.5k tokens) was still over the
+ceiling, since Act 1's prompt is 3-4x bigger than a continuation act's. Fixed
+properly by sizing `max_completion_tokens` off the actual prompt length in
+`GroqScriptProvider.cs` (`Math.Max(1500, 7500 - prompt.Length / 4)`) instead of
+a flat number, and trimming Act 1's own ask from ~18-22 scenes down to 10-14
+(it also carries the full title/description/character-invention response, so
+it needed a smaller scene budget than the continuation acts) while bumping
+Acts 2-4 to 20-25 each to still land in the 70-90 total range.
+
+That surfaced two more failure modes, both pre-existing weaknesses of
+open-weight-model JSON reliability that chunking simply exposed 4x more often
+(4 calls/script instead of 1): occasional malformed JSON mid-response, and a
+`sceneKind: "context"` scene missing its required `stockQuery`. Both are
+one-off sampling glitches, not deterministic prompt problems, so the fix is a
+bounded retry: `CompleteAndParseAsync` (new helper in `ScriptGenerator.cs`)
+retries the exact same prompt up to 3 times on either a JSON parse failure or
+a caller-supplied `validate` callback throwing `InvalidDataException`; both
+the main script call and every continuation act now route through it, with
+`ValidateContextScenes` reused as the validator for both.
+
+Verified 4 of 5 formats live end-to-end (`--dry-script --long` on
+`chronicleandchaos`, Groq/`gpt-oss-120b`):
+
+| Format | Scenes | Visual groups | Duration | Notes |
+|---|---|---|---|---|
+| retellingArc | 78 | 28 | ~9min | 1 retried JSON glitch on an early run (pre-retry-fix), clean after |
+| whatIf | 79 | 27 | ~10.6min | 1 retried JSON glitch, retry succeeded |
+| topFive | 71 | 31 | ~8.7min | clean |
+| explainer | 81 | 29 | ~11.5min | clean |
+| mythBust | — | — | — | blocked, see below |
+
+All four: no unhandled exceptions, no 413s, `visualGroup` numbering
+contiguous across every act boundary with no resets/duplicates, no obviously
+repeated beat spotted skimming the narration. Scene counts landed inside the
+70-90 target; duration landed under the 12-15min target on 3 of 4 (~9-11.5min
+vs the ~12-15min goal) — narration is coming in noticeably shorter than the
+180-char/scene ceiling allows, not a chunking defect, just the model not
+filling its budget. Not fixed here (out of this task's scope — the blocker
+was TPM/reliability, not pacing) but worth a follow-up if the shorter runtime
+matters: nudge the per-scene guidance to write closer to the cap, or bump the
+per-act scene counts further.
+
+`mythBust` (the 5th format) did not get a clean run: it hit Groq's **daily**
+token cap (`TPD: Limit 200000, Used 197108, Requested 7375` → 429), not the
+per-minute one — the four prior verification runs in this same session each
+burned ~30-40k tokens across their 4 acts, plus everything spent earlier
+diagnosing the original 413/reasoning-token issues, exhausted the day's
+budget. `RetryHandler.cs` retried it 3 times with correct exponential
+backoff (17s/56s/27s/120s/120s/120s) before giving up with a clear FATAL
+error — that's `RetryHandler` working as designed against a genuinely
+exhausted quota, not a bug in the chunking change. Groq's own error reported
+a ~32 minute reset. Not re-run here to avoid spending more of a quota a real
+job may need; the other 4 formats already demonstrate the chunking/retry
+logic holds up across format variety, so this is logged as an open item
+rather than re-run immediately.
+
+**Follow-up, not done in this pass:**
+- Re-run `mythBust --dry-script --long` once the daily quota resets, purely
+  to complete the format matrix (low risk — it exercises the same code path
+  as the other 4).
+- Consider whether Chronicle & Chaos's real `--prep --long` cadence (however
+  often it's meant to run) fits inside Groq's free-tier 200k TPD budget at
+  all — 4 formats' worth of verification alone used nearly the whole day's
+  budget in ~40 minutes. If the real production cadence is more than
+  ~1 long-form video/day on Groq's free tier, this will need either Claude
+  for `--long` specifically, or a paid Groq tier.
+- The known "continuity across acts relies on a short recap" limitation
+  flagged in the Plan above did not visibly surface in any of the 4 runs
+  (skimmed for repeated beats), but wasn't exhaustively checked beat-by-beat.
+
+## Gemini script provider (plan)
+
+Motivation: Groq free tier hit two real ceilings this session (8k TPM/model,
+200k TPD total) — 4 verification runs alone burned most of a day's budget.
+Community-reported Gemini free-tier numbers (unverified against a live
+official table — Google now gates exact figures behind an AI-Studio login)
+are far higher: `gemini-2.5-flash` ~10 RPM/250k TPM/250 RPD,
+`gemini-2.5-flash-lite` ~15 RPM/250k TPM/1000 RPD. Adding Gemini as a second
+`IScriptProvider` lets us test those numbers live the same way Groq's were
+confirmed, and gives `chronicleandchaos` a provider with real headroom for
+`--long` if the numbers hold.
+
+### Plan
+- [x] Add `GeminiApiKey` / `GeminiModel` to `GenConfig.cs`, gate the key
+      requirement in `Validate()` on `ScriptProvider == "gemini"` only
+      (same pattern as the existing Groq gate).
+- [x] Add matching placeholder fields to `appsettings.json`.
+- [x] New `GeminiScriptProvider.cs` implementing `IScriptProvider` against
+      the `generateContent` REST endpoint, reusing `RetryHandler` for
+      429/5xx backoff same as Claude/Groq.
+- [x] Add a `"gemini"` branch to `ScriptProviderFactory.cs`.
+- [x] Build clean, then live-verify with `--dry-script --long` (temporarily
+      set `ScriptProvider: "gemini"`) to see Gemini's *actual* rate-limit
+      headers/errors, not the unverified community numbers above.
+
+### Review
+
+`gemini-2.5-flash` (the originally planned default) turned out to be
+retired for new users - the live API 404s and points to `gemini-3.6-flash`
+instead, so that became the default. First live attempt also hit a
+billing-related 429 ("prepayment credits are depleted") because the
+project (`Giggle Garden`) had a paid billing account linked, even at $0
+spend - Gemini's free tier disappears entirely once a project has ever had
+billing attached to it, confirmed via Google's own forum. Fixed by the user
+disabling billing on the project in Google Cloud Console, which did restore
+free-tier behavior here (contrary to some forum reports that this doesn't
+reliably work - it did in this case).
+
+Second finding: `gemini-3.6-flash` is a thinking model, and hidden
+reasoning tokens count against `maxOutputTokens` (same failure mode
+already solved for Groq's `gpt-oss` models) - the first free-tier run
+truncated mid-JSON on 2 of 4 acts. Fixed in `GeminiScriptProvider.cs` by
+adding `generationConfig.thinkingConfig.thinkingLevel = "low"` and raising
+`maxOutputTokens` from 8000 to 12000 as headroom (thinking can only be
+minimized on Gemini 3 models, not fully disabled).
+
+After both fixes, `retellingArc` and `whatIf` ran clean end-to-end with
+**zero retries and zero 429s** across all 4 acts each (Groq needed retries
+on most runs) - `retellingArc`: 76 scenes/19 groups/~12.1min, landing
+inside the 12-15min target on the first try; `whatIf`: 66 scenes/19
+groups/~11.1min.
+
+Third run (`topFive`, still on `gemini-3.6-flash`) hit a **real, confirmed**
+free-tier quota: `GenerateRequestsPerDayPerProjectPerModel-FreeTier`,
+`quotaValue: 20`. That's 20 requests/day, per project, per model - roughly
+5 long-form scripts/day at 4 requests/script (1 main + 3 continuation acts),
+in the same order of magnitude as Groq's effective ~4-5 scripts/day, **not**
+the large headroom win the earlier community-sourced numbers (250 RPD, for
+the now-retired `gemini-2.5-flash`) suggested. Switching to
+`gemini-3.5-flash-lite` (separate quota bucket, per-model) let `topFive` run
+clean immediately after - that model's real RPD wasn't pushed to failure
+and remains unconfirmed, but at minimum it's a second independent 20+
+request/day budget on the same free account.
+
+**Net finding:** Gemini alone doesn't dissolve the daily-cap problem the
+way the initial research suggested - `gemini-3.6-flash`'s free tier is
+capped at 20 req/day just like Groq's is effectively capped by TPD. What
+Gemini *does* provide is a wholly separate quota bucket (or two, counting
+flash-lite) from Groq's - so alternating providers per script (not
+mid-script act-splitting) could roughly double or triple real daily
+capacity without the tone-consistency risk a mid-script provider switch
+would carry. Not yet decided or implemented - this is a decision for the
+user, not something to build unprompted.
+
+**Follow-up, not done in this pass:**
+- Confirm `gemini-3.5-flash-lite`'s real RPD (currently unconfirmed -
+  only 1 request spent against it before stopping to avoid burning more
+  of a shared daily quota mid-investigation).
+- Decide whether to build provider alternation (e.g. Groq on odd days,
+  Gemini on even; or round-robin per script) - not authorized/built yet.
+- appsettings.json currently has `ScriptProvider: "gemini"` and
+  `GeminiModel: "gemini-3.5-flash-lite"` left over from this test run -
+  revert to `"groq"` / `"openai/gpt-oss-120b"` before any real `--prep`
+  run, unless the user wants Gemini as the active default going forward.
+
+## Hybrid Groq+Gemini provider for a single script (plan)
+
+User explicitly asked for the original idea: one script, first half of the
+acts on one provider, second half fed to the other - not provider
+alternation across different scripts. Long-form scripts always make exactly
+4 sequential `CompleteAsync` calls (main call = act 1, then acts 2-4 via the
+continuation loop in `ScriptGenerator.GenerateAsync`), so a call-counting
+wrapper is enough - no changes needed inside `ScriptGenerator.cs` itself,
+since it already passes each act's recap/context forward regardless of which
+provider produced the prior act.
+
+Split: acts 1-2 on Groq, acts 3-4 on Gemini (one handoff, at the narrative
+midpoint, not one at every act boundary - fewer tone seams than a full
+per-act alternation).
+
+### Plan
+- [x] New `HybridScriptProvider.cs`: `IScriptProvider` that counts calls and
+      routes the first N to one inner provider, the rest to a second.
+- [x] Add a `"hybrid"` branch to `ScriptProviderFactory.cs` wiring
+      Groq (first 2 calls) + Gemini (remaining calls).
+- [x] `GenConfig.Validate()`: require both `GroqApiKey` and `GeminiApiKey`
+      when `ScriptProvider == "hybrid"`.
+- [x] Build clean, then live-verify with `--dry-script --long`
+      (`ScriptProvider: "hybrid"`) - confirm via the `[groq]`/`[gemini]` log
+      prefixes that acts 1-2 hit Groq and acts 3-4 hit Gemini, and skim the
+      output for a jarring tone/voice seam at the handoff.
+
+### Review
+
+Added a `[hybrid] call N -> <ProviderType>` log line to `HybridScriptProvider`
+itself (same style as the existing `[groq]`/`[gemini]` prefixes) so the
+routing is visible in every run, not just this one-off test.
+
+First live run (real `firstProviderCalls: 2` split, `explainer` format):
+call 1 correctly routed to `GroqScriptProvider` per the log, but Groq's
+account-level TPD was still exhausted from earlier same-session testing
+(`196975/200000` used, ~30min to reset) - a real account-state limit, not a
+routing bug, so acts 2-4 never ran in that attempt.
+
+Rather than wait 30 minutes, ran a second diagnostic with
+`firstProviderCalls: 0` (all calls forced to Gemini) to confirm the handoff
+mechanism itself. Result: all 5 raw `CompleteAsync` calls (4 acts + 1
+mid-generation JSON-retry on act 2) routed correctly, and `ScriptGenerator`
+assembled a coherent 72-scene/4-act script ("Minos: The REAL King Behind the
+Labyrinth Monster") with no crash or seam - confirms `ScriptGenerator`'s
+continuation/recap logic really is provider-agnostic as designed.
+
+One real limitation surfaced by this test, not fixed (rare edge case, still
+produces a coherent script either way): the wrapper counts raw
+`CompleteAsync` calls, not acts. If an early act needs a JSON-retry, that
+extra call consumes one slot of the `firstProviderCalls` budget, so the
+Groq/Gemini boundary can silently land one act earlier than the intended
+"acts 1-2 vs 3-4" split. Not worth guarding against for a 2-provider,
+4-call script - the failure mode is "the tone seam moves by one act," not
+a broken script.
+
+Reverted both temporary test edits after verification:
+`ScriptProviderFactory.cs`'s `firstProviderCalls` back to `2`, and
+`appsettings.json` back to `ScriptProvider: "claude"` (the zero-risk
+default) with `GeminiModel` reset to `gemini-3.6-flash` (matches
+`GenConfig.cs`'s default; it had been swapped to `gemini-3.5-flash-lite`
+mid-session only because 3.6-flash's 20 RPD was already exhausted from
+earlier testing). To actually use hybrid generation, set
+`ScriptProvider: "hybrid"` in `appsettings.Local.json` - Groq's TPD resets
+daily, so pick a time when it isn't already spent by other testing.
+
+(2026-08-17) Update: default flipped to `"hybrid"` in both
+`appsettings.json` and `GenConfig.cs`'s fallback, per explicit user request
+("flip default to hybrid") - comments in `GenConfig.cs`/`ScriptProviderFactory.cs`
+updated to describe hybrid as the default rather than claude. Build clean.
+
+---
+
+## GiggleGarden proper channel setup (plan)
+
+User: the initial GiggleGarden setup wasn't done properly and wants it
+redone right, covering five things, in order: (1) a single consistent
+account handle checked for real availability across all 4 platforms before
+committing to it, (2) avatar + banner art, (3) description/tags/settings
+applied correctly on every platform, (4) a properly vetted kids narration
+voice, (5) a real background music pool, sourced via Pixabay Music with
+prompts I provide.
+
+Decisions locked in via `AskUserQuestion` before starting:
+- Name: I propose fresh kid-friendly candidates (not keeping "GiggleGarden"
+  as a given), then check live availability.
+- Platforms: same 4 as Chronicle & Chaos - YouTube, Instagram, Facebook,
+  TikTok.
+- Internal naming: profile id `"gigglegarden"`, file paths, config keys all
+  stay unchanged in code regardless of what public handle is chosen - only
+  the external account name/handle and branding assets change.
+- Avatar/banner: invent ONE fixed channel mascot (name + fixed appearance)
+  used only for avatar/banner/intro-bumper purposes - separate from the
+  per-video invented characters `BuildCharacterInventionInstructions`
+  already generates for video content, which is unchanged.
+- Voice: re-verify live against Azure's `/cognitiveservices/voices/list`
+  (same diligence already applied to Chronicle & Chaos's Eric pick) rather
+  than assume `en-US-JennyNeural`/cheerful is still the best fit - may end
+  up keeping Jenny if it checks out.
+
+Found while surveying current assets: unlike Chronicle & Chaos
+(`assets/branding/chronicle-and-chaos/`), GiggleGarden has **no**
+`assets/branding/` folder at all - no avatar, no banner ever made. Its
+`assets/music/` pool is real but currently empty (README only, confirmed
+this session and in memory from earlier). So this is filling a real gap,
+not redoing something that already existed.
+
+### Plan
+- [x] Brainstorm 6-10 kid-friendly channel name/handle candidates. Went
+      through 5 batches (generic compound, duck-themed, giggle-prefixed,
+      single-word Cocomelon/Blippi-style, and a second single-word round) -
+      ~70 candidates checked total.
+- [x] Check each candidate's live availability on YouTube, Instagram,
+      Facebook, TikTok (read-only browser checks - no accounts created,
+      no logins, per the standing rule against creating accounts).
+- [x] Report an availability table; user picks the final name. **Chosen:
+      `gigglewiggletown`** (giggle-prefixed batch) - verified clear on
+      YouTube, Instagram, TikTok, and likely-clear on Facebook (the
+      logged-out-signal caveat noted earlier in this file still applies).
+      Flagged to the user as long/unwieldy; they picked it anyway.
+- [x] Design one fixed channel mascot: **Giggy** - a round, pudgy garden
+      creature, coiled-spring body in teal/sunshine-yellow stripes, huge
+      round white eyes, giggling open-mouth grin, two wiggly antennae,
+      two stubby feet, no arms - matches `CharacterPortraitStyleSuffix`/
+      `CharacterStyle`. Presented in-chat for sign-off; user moved
+      straight to using the follow-on content, treated as accepted, not
+      re-confirmed with an explicit yes.
+      Also found and fixed in passing: `GiggleGardenProfile.cs`'s
+      `ChannelName` (spoken in every video's intro - "Welcome to
+      {ChannelName}!") was still `"Giggle Garden"`, mismatched against
+      the new public handle. Changed to `"Giggle Wiggle Town"`; internal
+      `Id = "gigglegarden"` and all file paths untouched per the earlier
+      locked decision. `dotnet build` clean after the change.
+- [x] Generate avatar (square) and banner (2560x1440) - user generated
+      both and saved to `assets/branding/giggle-wiggle-town/`. Verified:
+      `Giggle_Wiggle_Town_Avatar.jpeg` is 1024x1024, matches Giggy's
+      design brief well. `Giggle_Wiggle_Town_Banner.jpeg` is 1584x672 -
+      below YouTube's documented banner minimum of 2048x1152 - flagged
+      as a likely upload blocker, but **user uploaded it live and it
+      went through with no issues**, so that documented minimum either
+      doesn't hold in practice or Studio auto-upscales. Corrected here
+      rather than left as an open concern.
+- [x] Draft channel description, tags, and the MadeForKids/audience
+      settings text for each of the 4 platforms - delivered in-chat:
+      YouTube About description + channel Keywords + Studio "Upload
+      defaults" description/tags (screenshot-driven), Instagram bio,
+      Facebook Page About, TikTok bio, plus cross-linking steps for all
+      4 platforms and a MadeForKids-consequences explainer. Applying it
+      is the user's own manual step - not done via Claude-in-Chrome,
+      never asked for. **User confirmed this is applied to the live
+      accounts** (YouTube About/Keywords/upload defaults, Instagram,
+      Facebook, TikTok) - not independently re-verified on my end.
+- [ ] Live-check `en-US-JennyNeural` (current) plus 2-3 kid-oriented
+      alternatives (e.g. `en-US-AnaNeural`, marketed by Microsoft as a
+      child's voice) against `/cognitiveservices/voices/list` for
+      available express-as styles - same process as Chronicle & Chaos's
+      Eric pick - report findings, user picks final voice.
+- [x] Propose ~10-15 Pixabay Music search prompts split across
+      `GiggleGardenProfile`'s existing calm menu ("soft piano lullaby",
+      "gentle music box", "warm ambient") and energetic menu ("upbeat
+      playful", "bright acoustic", "cheerful ukulele") - user downloads,
+      I organize into `assets/music/` per the existing README's licensing/
+      format rules (instrumental, ≥90s, CC0/no-attribution preferred).
+      User populated all 6 mood folders (29 tracks total); verified via
+      `ffprobe` - all `.mp3` (accepted format). 6 tracks under the 90s
+      guideline (`cheerful-ukulele` worst hit, only 1 of 5 tracks clears
+      90s); not a functional blocker since `MixBackgroundMusicAsync`
+      loops with `-stream_loop -1`, but short loops repeat audibly.
+      Two tracks flagged for a manual listen before shipping:
+      `bright-acoustic/jonasblakewood-extraordinary-custom-vocal-294010.mp3`
+      (filename said "vocal" - README is instrumental-only) and
+      `gentle-music-box/leberch-horror-music-box-511181.mp3` (filename
+      said "horror" - possibly too unsettling for the calm bucket).
+      **User listened to both - confirmed fine, no vocals, no mood
+      mismatch.** Renamed to drop the misleading words:
+      `jonasblakewood-extraordinary-custom-294010.mp3` and
+      `leberch-gentle-music-box-511181.mp3`.
+- [x] Live-check `en-US-JennyNeural` (current) plus 2-3 kid-oriented
+      alternatives (e.g. `en-US-AnaNeural`, marketed by Microsoft as a
+      child's voice) against `/cognitiveservices/voices/list` for
+      available express-as styles - same process as Chronicle & Chaos's
+      Eric pick - report findings, user picks final voice.
+      Live-queried all 109 en-US voices; Jenny (current, style
+      "cheerful") still valid. Confirmed `en-US-AnaNeural` is Microsoft's
+      only true "Female, Child" tagged en-US voice, but has zero
+      express-as styles - generated side-by-side samples (Jenny, Ana,
+      Aria, Jane, Sara, all same line) via the Azure TTS REST API and
+      sent them to the user. **User picked Ana.** Updated
+      `GiggleGardenProfile.cs`'s `VoiceOverride["en"]` to
+      `("en-US", "en-US-AnaNeural", null)` - `Style` is `null` (not
+      "cheerful") since Ana has no supported express-as styles; a
+      non-null style on a voice that doesn't support it fails the Azure
+      call outright (see `AzureTtsProvider.cs`'s SynthesizeAsync
+      comment). `dotnet build` clean after the change.
+- [x] Review section appended here once run.
+
+## Review - GiggleGarden proper channel setup
+
+All 5 phases complete:
+- **Name**: `gigglewiggletown`, chosen by the user over my "long/
+  unwieldy" flag; verified clear on YouTube/Instagram/TikTok, likely
+  clear on Facebook (logged-out-signal caveat).
+- **Mascot/branding**: "Giggy" designed and accepted; `ChannelName`
+  fixed to "Giggle Wiggle Town" in `GiggleGardenProfile.cs` (internal
+  `Id`/paths stay `gigglegarden`). Avatar and banner generated by the
+  user, saved to `assets/branding/giggle-wiggle-town/`. Avatar verified
+  good (1024x1024). Banner's scene is good but its resolution
+  (1584x672) is below YouTube's documented banner minimum
+  (2048x1152) - **needs a higher-res regenerate/upscale before
+  uploading**.
+- **Descriptions/tags/links**: full copy delivered for YouTube (About +
+  Keywords + Studio upload defaults), Instagram, Facebook, TikTok, plus
+  cross-linking checklist and MadeForKids explainer. User confirmed
+  it's applied to all 4 live accounts (not independently re-verified).
+- **Voice**: switched from `en-US-JennyNeural` to `en-US-AnaNeural`
+  (Style: null) after live-verifying styles and the user picking Ana
+  from generated audio samples. Since Ana has no express-as styles to
+  supply the "cheerful" boost Jenny had, compensated via prosody:
+  bumped `pitch` from `+6%` to `+9%` on the 4 non-calm formats
+  (educational/rhyme/singAlong/countingSong) in `BuildFormats()` after
+  the user A/B'd +6/+9/+12 samples and picked +9. This table is shared
+  across languages, so it also nudges `hi-IN-SwaraNeural` (stacks with
+  her existing "cheerful" style - worth an ear-check next Hindi render)
+  and `pa-IN-VaaniNeural` (style-less like Ana, same benefit). `dotnet
+  build` clean after the change.
+- **Background music**: all 6 mood folders populated (29 tracks total),
+  verified via `ffprobe` for format/duration against `assets/music/
+  README.md`. Two tracks flagged for a manual listen over misleading
+  filenames ("vocal", "horror") - user listened, confirmed both are
+  fine (instrumental, calm), renamed to drop the misleading words.
+  `cheerful-ukulele` is thin on tracks that clear the README's ~90s
+  guideline (1 of 5) - not a functional blocker since music loops,
+  just a quality note.
+
+All 5 phases are now fully done, including manual follow-through
+(images generated, copy applied to live accounts, banner uploaded
+clean, flagged music tracks cleared). Nothing left open on this plan.
+
+**Still open, not part of this plan's scope but worth tracking:**
+regenerating the banner at ≥2048x1152, and the two flagged music
+tracks' manual listen (vocal/mood check).
+
+---
+
+## Plan — recurring character cast for retention
+
+Every video currently invents a brand-new character (`ScriptGenerator.cs`
+lines 50-54 say this explicitly: "the channel, not a mascot, is what
+viewers are meant to recognise"). Research (both `research-kids-channels.md`
+and fresh search this session) says the opposite is true for this genre:
+a recognizable recurring character is the strongest loyalty/retention lever
+CoComelon, Vlad and Niki, and Ryan's World all share, and Made-for-Kids CPM
+ceilings mean retention matters more here than per-view yield. The pool
+build-up/mix/reuse machinery in `CharacterSource.Resolve` already exists but
+is tuned for variety (buildup 15, max 40, cooldown 10) rather than
+recognizability. Goal: shrink to a small fixed cast that gets reused
+consistently, and give each cast member a stable identity trait so it reads
+as the "same" character across videos, without touching the per-scene
+parallel-generation architecture (`todo.md` lines 59-84's rationale for one
+reference frame per video stands untouched).
+
+- [x] `GiggleGardenProfile.cs`: `CharacterPoolBuildupSize` 15→6,
+      `CharacterPoolMaxSize` 40→6 (removes the 50/50 mixing zone - once 6
+      are built, every video reuses from the cast of 6 rather than still
+      inventing new ones), `CharacterPoolCooldown` 10→2 (meaningful rotation
+      among only 6, vs. 10 which always fell through to full-list fallback).
+- [x] `CharacterSource.cs`: add optional `Catchphrase` to `CharacterBrief`
+      and the pool sidecar schema (`PoolEntry`); `FromPool` reads it,
+      `SaveToPool` writes it from `script.CharacterCatchphrase`. Missing on
+      existing sidecars (gigi-the-duckling, milo-the-fox, etc.) just
+      deserializes to null - no migration needed.
+- [x] `ScriptGenerator.cs`: add `VideoScript.CharacterCatchphrase` (nullable,
+      not required - no throw if empty), add it to the JSON schema block,
+      have the pooled-character prompt path tell the model this is a
+      *returning* character and work its catchphrase in naturally, have the
+      invention-path prompt (via `BuildCharacterInventionInstructions`) ask
+      for one for brand-new characters, and override
+      `script.CharacterCatchphrase` from the pool sidecar the same way
+      Name/Description are already overridden (pool wins over model output).
+      Update the stale "different character each video is the point" comment.
+- [x] `GiggleGardenProfile.cs`: reword `BuildCharacterInventionInstructions`
+      - it currently tells the model "the next video gets a different
+        character entirely," which is no longer true once the cast is
+        built; ask for `characterCatchphrase` too.
+- [x] `dotnet build` clean.
+- [x] Review section appended here once run.
+
+## Review - recurring character cast for retention
+
+`dotnet build` clean, 0 warnings/errors. Changes:
+- `GiggleGardenProfile.cs`: pool knobs `CharacterPoolBuildupSize`/
+  `CharacterPoolMaxSize` 15/40 → 6/6 (removes the mixing zone; once 6 exist
+  every video reuses one instead of still inventing), `CharacterPoolCooldown`
+  10 → 2. `BuildCharacterInventionInstructions` reworded off "the next video
+  gets a different character entirely" and now also asks for
+  `characterCatchphrase`.
+- `CharacterSource.cs`: `CharacterBrief` and the pool sidecar (`PoolEntry`)
+  both gained an optional `Catchphrase`; `FromPool` reads it, `SaveToPool`
+  writes it from `script.CharacterCatchphrase`. Backward compatible - the 6
+  existing sidecars (gigi-the-duckling, mascot-bunny, milo-the-fox,
+  ruby-the-bunny, splash-the-otter, teddy-bear) have no `catchphrase` key and
+  deserialize it as null with no error.
+- `ScriptGenerator.cs`: added `VideoScript.CharacterCatchphrase` (nullable,
+  not required - no throw on empty, unlike Name/Description), added to the
+  JSON schema block, pooled-character prompt path now says "a returning
+  character the audience already knows" and works the catchphrase in when
+  one exists, the pool sidecar's catchphrase overrides whatever the model
+  wrote (same as Name/Description already did). Updated the two comments
+  that documented the old "different character every video, channel not
+  mascot is what's recognised" design.
+
+**Not done, and deliberately not part of this change:** no code touches how
+the reference frame is generated or how scenes are seeded - the per-video
+parallel `img2video` submission this was built around (`todo.md` 59-84)
+still holds; reuse just means *picking* an existing pool portrait instead of
+drawing a new one, same as it already did during the old "mix" zone.
+
+**Still open before this pays off:**
+- Untested end-to-end: no `--prep` run exercised the new pooled-character
+  prompt path or the invention-path catchphrase field yet.
+
+### Update - pool finalized (all 10 new characters + catchphrases)
+
+All 10 user-generated characters (Pip, Nari, Quill, Kiwi née Coco, Bandit,
+Sunny, Pebbles, Stretch, Willow, Hazel) came back from the "plain uncluttered
+background" regeneration clean - ran `remove-background.py` on all 10
+(71-84% of pixels cleared, in line with Pip's earlier-verified 80.7%),
+visually spot-checked all 10 composited on a checkerboard (only the same
+minor unclearable grass-shadow ellipse under the feet already accepted for
+Pip). Finalized into the pool: kebab-case `.png` + `.json` sidecar
+(`name`/`description`/`catchphrase`/`source`/`licence`) for each, raw source
+JPEGs moved to `character-pool/_raw-source/` (non-recursive
+`Directory.EnumerateFiles` in `CharacterSource.cs` doesn't see subfolders,
+so this keeps them out of the enumerated pool without deleting anything).
+Found and fixed a name collision along the way - the koala was independently
+named "Coco" while the existing `mascot-bunny.json` is already "Coco the
+Bunny" - renamed to "Kiwi the Koala" (file and JSON both) before it could
+confuse two cast members with the same name.
+
+Pool is now **16 characters**, all sidecar'd, no orphaned image or JSON on
+either side (verified by directory diff). This is larger than the
+`CharacterPoolMaxSize = 6` set earlier in this plan - that config only gates
+when the *build-up* phase stops inventing new ones, it does not cap how many
+images `FromPool` will pick from once reuse mode kicks in (pool size 16 ≥
+max 6, so every video is now in "always reuse" mode, drawing from all 16).
+Effectively the recurring cast is 16, not 6 - still a large reduction from
+the old 40-character ceiling, but worth knowing rather than assuming 6.
+Left as-is rather than trimmed, since deleting finalized character art
+without being asked is not this task's call.

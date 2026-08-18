@@ -7,7 +7,7 @@ static class GiggleGardenProfile
     public static readonly ContentProfile Value = new()
     {
         Id = "gigglegarden",
-        ChannelName = "Giggle Garden",
+        ChannelName = "Giggle Wiggle Town",
         UsesCharacterMascot = true,
         MadeForKids = true,
 
@@ -32,10 +32,11 @@ static class GiggleGardenProfile
             "lyrics - public-domain rhymes only, and write your own verses around them.",
 
         BuildCharacterInventionInstructions = (langName, avoidLine) => $"""
-            Invent ONE brand-new character for THIS VIDEO ONLY - a fresh name and a fresh
-            animal/species, different from anything obvious or generic. This is not a returning
-            mascot; the next video gets a different character entirely, so do not write it as
-            though the viewer already knows who it is.
+            Invent ONE brand-new character - a fresh name and a fresh animal/species, different
+            from anything obvious or generic. This character is going into the channel's
+            recurring cast, so it will likely come back in future videos once introduced -
+            give it a clear, simple identity a toddler can latch onto rather than a
+            one-off throwaway design.
             {avoidLine}
             Return it as:
             - characterName: the character's name, written in the Latin alphabet even when the
@@ -48,6 +49,11 @@ static class GiggleGardenProfile
               (a scarf, a hat, spots, a flower). This exact sentence is used to draw the
               picture that every scene animates from, so it must be concrete and visual.
               No personality, no backstory, no actions - appearance only.
+            - characterCatchphrase: ONE short, simple, repeatable phrase or greeting in
+              {langName} that feels like THIS character's own signature line (a favourite
+              exclamation, a giggle, a way it says hello). Keep it toddler-simple - this
+              phrase follows the character into every future video it appears in, so it must
+              work outside today's specific topic, not just fit this one scene.
             """,
 
         Formats = BuildFormats(),
@@ -103,7 +109,7 @@ static class GiggleGardenProfile
 
         VoiceOverride = new Dictionary<string, (string Locale, string Voice, string? Style)>
         {
-            ["en"] = ("en-US", "en-US-JennyNeural", "cheerful"),
+            ["en"] = ("en-US", "en-US-AnaNeural", null),
             ["hi"] = ("hi-IN", "hi-IN-SwaraNeural", "cheerful"),
             ["pa"] = ("pa-IN", "pa-IN-VaaniNeural", null),
         },
@@ -121,9 +127,15 @@ static class GiggleGardenProfile
 
         CharacterStyle = "Cute 2D children's cartoon style, flat colors, thick outlines, bright cheerful palette",
         CharacterPoolPath = @"D:\Business\gigglegarden-automation\VideoGen\assets\character-pool",
-        CharacterPoolBuildupSize = 15,
-        CharacterPoolMaxSize = 40,
-        CharacterPoolCooldown = 10,
+        // A small fixed cast the audience learns to recognise, not a large pool optimised
+        // for variety: build 10, then every video reuses one of those 10 rather than still
+        // inventing new ones (CoComelon/Vlad and Niki/Ryan's World all run a recurring cast,
+        // and it is the strongest loyalty lever in the genre - see
+        // tasks/research-kids-channels.md). Cooldown of 2 still rotates within that cast of
+        // 10 rather than letting the same one repeat back-to-back.
+        CharacterPoolBuildupSize = 10,
+        CharacterPoolMaxSize = 10,
+        CharacterPoolCooldown = 2,
 
         TrendQueries =
         [
@@ -144,17 +156,17 @@ static class GiggleGardenProfile
     // CamelCase JsonStringEnumConverter, so nothing already on disk needs a migration.
     private static IReadOnlyList<ContentFormatDef> BuildFormats() =>
     [
-        BuildFormat("educational", weight: 30, isCalm: false, rate: "-4%", pitch: "+6%",
+        BuildFormat("educational", weight: 30, isCalm: false, rate: "-4%", pitch: "+9%",
             narrationStyleLabel: "bright, lively"),
-        BuildFormat("rhyme", weight: 20, isCalm: false, rate: "-4%", pitch: "+6%",
+        BuildFormat("rhyme", weight: 20, isCalm: false, rate: "-4%", pitch: "+9%",
             narrationStyleLabel: "bright, playful"),
         BuildFormat("poem", weight: 10, isCalm: true, rate: "-12%", pitch: "+2%",
             narrationStyleLabel: "gentle, measured"),
         BuildFormat("bedtime", weight: 15, isCalm: true, rate: "-22%", pitch: "-6%",
             narrationStyleLabel: "calm, slow, soft"),
-        BuildFormat("singAlong", weight: 15, isCalm: false, rate: "-4%", pitch: "+6%",
+        BuildFormat("singAlong", weight: 15, isCalm: false, rate: "-4%", pitch: "+9%",
             narrationStyleLabel: "bright, singable"),
-        BuildFormat("countingSong", weight: 10, isCalm: false, rate: "-4%", pitch: "+6%",
+        BuildFormat("countingSong", weight: 10, isCalm: false, rate: "-4%", pitch: "+9%",
             narrationStyleLabel: "bright, playful"),
     ];
 

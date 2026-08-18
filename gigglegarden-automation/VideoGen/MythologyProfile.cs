@@ -113,11 +113,13 @@ static class MythologyProfile
 
         VoiceOverride = new Dictionary<string, (string Locale, string Voice, string? Style)>
         {
-            // Verified live against Azure's /cognitiveservices/voices/list (canadacentral):
-            // en-US-AriaNeural supports "narration-professional" among its styles. Only "en" is
-            // populated - this channel is US/UK-weighted English, unlike GiggleGarden's
-            // hi/pa reach.
-            ["en"] = ("en-US", "en-US-AriaNeural", "narration-professional"),
+            // Verified live against Azure's /cognitiveservices/voices/list: en-US-EricNeural
+            // has no express-as styles at all, so Style is null and prosody (rate/pitch) is
+            // the only lever - deliberately chosen over AriaNeural (female, calm) for a bolder,
+            // deeper "documentary narrator" read matching this channel's biggest comps (The Why
+            // Files, The Infographics Show, both male-narrated). Only "en" is populated - this
+            // channel is US/UK-weighted English, unlike GiggleGarden's hi/pa reach.
+            ["en"] = ("en-US", "en-US-EricNeural", null),
         },
 
         BaseTags =
@@ -210,7 +212,7 @@ static class MythologyProfile
             ? """"somber orchestral", "ancient drone", "tense atmospheric""""
             : """"driving epic", "curious ambient", "mysterious tense", "tense atmospheric"""";
 
-        string contentRules, introThird, hashtagExamples;
+        string contentRules, introThird, hashtagExamples, longFormContentRules;
         switch (id)
         {
             case "retellingArc":
@@ -230,6 +232,29 @@ static class MythologyProfile
                     - Where the historical or mythological record is genuinely disputed or
                       unknown, say so once in the narration itself ("some say...") rather than
                       presenting invention as settled fact.
+                    """;
+                longFormContentRules = """
+                    - Scene 1 opens in the middle of the action or at a moment of tension (in
+                      medias res) - not "Long ago, in a land far away." Ground the viewer in a
+                      concrete image or moment within the first line, since these opening scenes
+                      also double as the short teaser.
+                    - Structure the full runtime as a real multi-act dramatic arc: a real setup
+                      (who they are, what they want), a rising middle with more than one genuine
+                      complication or setback (not just one obstacle stretched thin), a clear
+                      turning point roughly two-thirds through, and a consequence/resolution act
+                      at the end - the extra length exists to develop the world, supporting
+                      figures, and stakes properly, not to pad the same three beats slower.
+                    - State the figure's want or motivation early, and let the story's tension
+                      come from what stands in the way of it (a rival, a curse, a law, their own
+                      flaw) - develop that obstacle across several scenes rather than resolving
+                      it in one line.
+                    - End on the story's actual consequence or fate - what it explains, what
+                      changed, what the figure became known for - not a vague "and that is the
+                      legend of..." non-ending.
+                    - Where the historical or mythological record is genuinely disputed or
+                      unknown, say so in the narration itself ("some say...") rather than
+                      presenting invention as settled fact - a long-form telling has room to
+                      briefly weigh competing versions where the short cannot.
                     """;
                 introThird = "a one-line teaser of the story's central tension or twist, without " +
                              "giving away the ending (\"A god who could not be named - and the " +
@@ -254,6 +279,26 @@ static class MythologyProfile
                       "imagine", "perhaps", "what if" rather than asserting the counterfactual as
                       fact.
                     """;
+                longFormContentRules = """
+                    - Frame the whole video around one clear speculative premise stated in the
+                      first line ("What if the Trojan War was never about Helen at all?", "What
+                      if Rome had never fallen in the West?") - this opening also has to work as
+                      the short teaser, so the premise must land immediately.
+                    - Treat the premise as a genuine thought experiment grounded in real
+                      historical or mythological detail - spend real scenes laying out what we
+                      actually know before departing from it, so the departure has weight.
+                    - Build the full runtime as a chain of consequences across several distinct
+                      stages, not just 8 beats stretched out: each stage should follow logically
+                      from the premise and the stage before it - "and because of that, this
+                      happened" - with room to actually develop each consequence rather than
+                      naming it in passing.
+                    - Land on a genuinely thought-provoking final beat - what the world, the myth,
+                      or history would look like now, or what it reveals about the real version -
+                      and give it real space rather than a rushed closing line.
+                    - Keep the tone curious and speculative rather than definitive throughout -
+                      use "imagine", "perhaps", "what if" rather than asserting the counterfactual
+                      as fact.
+                    """;
                 introThird = "a one-line statement of tonight's premise as a direct question " +
                              "(\"What if the underworld had a door - and someone left it open?\")";
                 hashtagExamples = "#whatif #alternatehistory #mythology";
@@ -272,6 +317,23 @@ static class MythologyProfile
                       it does, not just a list of facts.
                     - The final entry (#1) should land as a genuine payoff, not just "and that's
                       the list."
+                    """;
+                longFormContentRules = """
+                    - Structure the video as a countdown or ranked list (state the exact framing
+                      and count in the first line) of the most dramatic, terrifying, strange or
+                      consequential examples within tonight's topic - expand the list itself to
+                      8-12 entries so the extra runtime goes into more entries, not padding.
+                    - Give each entry a dedicated multi-scene segment: name it clearly, develop
+                      the one story or detail that earns its place, and let it breathe as its own
+                      mini-narrative rather than a single punchy line.
+                    - Keep pace brisk within each entry even as the list runs longer - short,
+                      punchy sentences, minimal throat-clearing - the extra length buys more
+                      entries and more depth per entry, not slower pacing.
+                    - Rank with an actual point of view - state why each entry ranks where it
+                      does, and let stronger entries get visibly more development than weaker
+                      ones.
+                    - The final entry (#1) should land as a genuine payoff with real space to
+                      develop it, not just "and that's the list."
                     """;
                 introThird = "a one-line tease of the list itself, without revealing #1 (\"Five " +
                              "gods you really don't want to owe a favour.\")";
@@ -296,6 +358,25 @@ static class MythologyProfile
                       explaining a mystery, teaching a lesson, justifying power, remembering a
                       real disaster.
                     """;
+                longFormContentRules = """
+                    - Open by stating the myth or legend plainly, then pivot to the real question
+                      this video answers: what actually inspired it, what it was really
+                      explaining, or what modern historians or archaeologists now think.
+                    - Alternate between "the myth says..." and "but the evidence/history
+                      suggests..." beats across several full cycles - the extra runtime means
+                      more evidence, more competing theories, and more of the historical/
+                      archaeological detail behind each, not just a slower repeat of the same
+                      two beats.
+                    - Cite the kind of evidence in plain language (a real ruin, an old text, a
+                      natural phenomenon, a real historical event) and give the strongest pieces
+                      of evidence a real scene or two to actually explain, rather than a single
+                      namedrop.
+                    - Stay honest about uncertainty throughout - where scholars disagree, lay out
+                      the competing views rather than presenting one theory as the final answer.
+                    - Land on what the myth was really doing for the people who told it -
+                      explaining a mystery, teaching a lesson, justifying power, remembering a
+                      real disaster - with room to actually make that case, not just assert it.
+                    """;
                 introThird = "a one-line hook framing tonight's real question (\"Every culture " +
                              "has a flood myth. Here's what they might actually be remembering.\")";
                 hashtagExamples = "#mythologyexplained #history #ancientmysteries";
@@ -317,6 +398,24 @@ static class MythologyProfile
                       served a purpose, it got repeated until it stuck - not just "so now you
                       know."
                     """;
+                longFormContentRules = """
+                    - Open by stating the popular version of the myth or history everyone thinks
+                      they know, clearly and fairly - not a strawman - since this opening also
+                      has to work as the short teaser.
+                    - Give each point being corrected its own dedicated segment: what's actually
+                      true, what's exaggerated, what's a later invention (a Victorian
+                      embellishment, a Hollywood addition, a mistranslation) - the extra runtime
+                      means more points get busted, and each one gets real room to build its
+                      case, not a rapid-fire list.
+                    - Keep a wry, slightly contrarian energy throughout - the fun of this format
+                      is the reveal, not a dry correction, even across a longer runtime.
+                    - Back each correction with the kind of source in plain language (the earliest
+                      text, the archaeological record, a historian's consensus) and let the
+                      strongest corrections get a real scene or two to lay out the evidence.
+                    - Land on why the popular version persists anyway - it's a better story, it
+                      served a purpose, it got repeated until it stuck - and give that closing
+                      idea real space rather than a one-line button.
+                    """;
                 introThird = "a one-line challenge to the popular version (\"Everything you think " +
                              "you know about the Trojan Horse is wrong.\")";
                 hashtagExamples = "#mythbusting #mythology #actuallyhistory";
@@ -326,6 +425,6 @@ static class MythologyProfile
                 throw new ArgumentOutOfRangeException(nameof(id), id, "Unknown format id.");
         }
 
-        return new FormatInstructionSet(contentRules, colourGuidance, thumbnailGuidance, introThird, musicMenu, hashtagExamples);
+        return new FormatInstructionSet(contentRules, colourGuidance, thumbnailGuidance, introThird, musicMenu, hashtagExamples, longFormContentRules);
     }
 }

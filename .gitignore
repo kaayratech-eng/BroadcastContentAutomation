@@ -44,3 +44,8 @@ graphify-out/20*-*-*/
 node_modules/
 ffmpeg-8.1.2-full_build/
 ruvector.db
+
+# --- Dev/debug scratch, never product state ---
+**/scratch-bgtest/
+**/__pycache__/
+*.pyc
