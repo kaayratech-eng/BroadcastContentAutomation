@@ -3,9 +3,15 @@ namespace GiggleGarden.Uploader;
 record AppConfig
 {
     public string WatchDirectory { get; init; } = @"D:\Business\Videos";
-    public string DoneDirectory { get; init; } = @"D:\Business\Videos\done";
-    public string FailedDirectory { get; init; } = @"D:\Business\Videos\failed";
     public string LogDirectory { get; init; } = @"D:\Business\Videos\logs";
+
+    // Per-channel done/failed folders, alongside that channel's own live videos
+    // under WatchDirectory\<channel>\ (see "Per-channel path segregation" in
+    // tasks/todo.md). LogDirectory above stays flat/shared on purpose - every log
+    // line is already channel-prefixed, so splitting it would only fragment one
+    // run's story across files with no real benefit.
+    public string DoneDirFor(string channel) => Path.Combine(WatchDirectory, channel, "done");
+    public string FailedDirFor(string channel) => Path.Combine(WatchDirectory, channel, "failed");
 
     public bool RequireApproval { get; init; } = true;
 
@@ -19,6 +25,17 @@ record AppConfig
     // Optional pause between posts so a batch does not look like a burst to any
     // platform's spam heuristics. 0 disables.
     public int StaggerSecondsBetweenPosts { get; init; }
+
+    // A video whose per-video processing throws (as opposed to a single platform
+    // failing, which is handled per-target above) gets this many crash attempts,
+    // spread across separate scheduled runs, before it is moved to \failed. State is
+    // persisted to a `.retry.json` marker next to the video since the Uploader is not
+    // a long-running process — it exits after each Task Scheduler invocation.
+    public int MaxCrashRetries { get; init; } = 3;
+
+    // Minimum wait between crash attempts for the same video, so a transient outage
+    // (e.g. a platform API blip) gets a real chance to clear before the next attempt.
+    public int CrashRetryBackoffMinutes { get; init; } = 30;
 
     // Metadata fallback (only used for videos dropped in without a sidecar).
     public string AnthropicApiKey { get; init; } = "";

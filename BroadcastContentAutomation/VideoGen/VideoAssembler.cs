@@ -9,67 +9,6 @@ using GiggleGarden.Shared;
 
 static partial class VideoAssembler
 {
-    // Builds each scene clip (image + zoompan + narration audio + wrapped subtitle),
-    // crossfades them together, then mixes background music under the narration.
-    public static async Task AssembleAsync(
-        ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
-        string workDir, string outputPath, int w, int h, bool preferVerticalImages,
-        string? musicMood = null)
-    {
-        if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
-
-        // Resolved up front, not at the mix step several minutes of encoding later, so a
-        // bad path fails before any work is done rather than after all of it.
-        var music = ResolveBackgroundMusic(profile, workDir, musicMood);
-
-        var sceneClips = new List<string>();
-        var durations = new List<double>();
-        var tag = $"{w}x{h}";
-
-        for (var i = 0; i < scenes.Count; i++)
-        {
-            var s = scenes[i];
-            var duration = s.DurationSeconds + 0.5;              // breathing room
-            var clip = Path.Combine(workDir, $"clip{i:D2}-{tag}.mp4");
-
-            var image = preferVerticalImages && s.VerticalImagePath is { } vertical && File.Exists(vertical)
-                ? vertical
-                : s.ImagePath ?? throw new InvalidOperationException($"Scene {i} has no image.");
-
-            var image2 = preferVerticalImages && s.VerticalImagePath2 is { } vertical2 && File.Exists(vertical2)
-                ? vertical2
-                : s.ImagePath2 is { } landscape2 && File.Exists(landscape2) ? landscape2 : null;
-
-            var fontSize = h > w ? 52 : 46;                       // slightly larger on vertical
-            var subtitle = BuildSubtitleFilter(cfg, s.Narration, language, workDir, i, tag, w, h, fontSize);
-
-            // Rotate through 4 distinct Ken Burns moves instead of just 2, so adjacent
-            // scenes don't all breathe the same way.
-            var pattern = i % 4;
-
-            var videoOnly = image2 is not null
-                ? await BuildSplitImageClipAsync(cfg, image, image2, duration, w, h, subtitle, pattern, (pattern + 2) % 4, workDir, tag, i)
-                : await BuildImageClipAsync(cfg, image, duration, w, h, subtitle, pattern, Path.Combine(workDir, $"clip{i:D2}-{tag}-video.mp4"));
-
-            // Mux narration audio onto the (video-only, already exactly `duration` long) clip.
-            // apad pads the audio with silence to match — using -shortest here (as before)
-            // would cut the clip the instant narration audio ends, silently discarding the
-            // breathing room and hard-cutting mid-beat into the next scene.
-            await RunFfmpegAsync(cfg,
-                $"-y -i \"{videoOnly}\" -i \"{s.AudioPath}\" -af \"apad\" -t {Text.Invariant(duration)} " +
-                $"-c:v copy -c:a aac -b:a 128k \"{clip}\"");
-
-            sceneClips.Add(clip);
-            durations.Add(duration);
-        }
-
-        // Crossfade scene clips together instead of hard-cutting between them.
-        var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
-        var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
-
-        await MixBackgroundMusicAsync(profile, cfg, concatPath, music, total, outputPath);
-    }
-
     // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
     // still with a camera move over it. Same crossfade/subtitle/music treatment as the
     // image path, so the two produce interchangeable output.
@@ -129,9 +68,17 @@ static partial class VideoAssembler
 
         var music = ResolveBackgroundMusic(profile, workDir, musicMood);
 
-        // All paths must be absolute - Remotion resolves relative `src` paths against its
-        // own public/ folder, not this process's working directory (see the
-        // remotion-assembler README's invocation contract).
+        // Headless Chromium's Fetch implementation refuses file:// srcs outright
+        // (net::ERR_UNKNOWN_URL_SCHEME - not a CORS/web-security setting, the Fetch spec
+        // itself only allows http(s)/data/blob), so absolute filesystem paths never work
+        // for <Img>/<Audio>/<Video> during a real `remotion render`. The supported path is
+        // `--public-dir` (set by RunNpxRemotionRenderAsync to this job's workDir, since
+        // every scene's ImagePath/ClipPath/AudioPath already lands there) plus staticFile()
+        // in Assembly.tsx, which Remotion serves over its own local HTTP dev server -
+        // so every path in props must be relative to workDir, forward-slashed for the URL.
+        string ToPublicDirRelative(string absolutePath) =>
+            Path.GetRelativePath(workDir, Path.GetFullPath(absolutePath)).Replace('\\', '/');
+
         var assets = scenes.Select(s =>
         {
             var isVideo = s.ClipPath is { } clip && File.Exists(clip);
@@ -141,24 +88,36 @@ static partial class VideoAssembler
 
             return new RemotionSceneAsset(
                 Kind: isVideo ? "video" : "image",
-                Path: Path.GetFullPath(path),
+                Path: ToPublicDirRelative(path),
                 DurationInSeconds: s.DurationSeconds + 0.5,        // same breathing room as AssembleFromClipsAsync
-                NarrationAudioPath: s.AudioPath is { } a ? Path.GetFullPath(a) : null,
+                NarrationAudioPath: s.AudioPath is { } a ? ToPublicDirRelative(a) : null,
                 CaptionText: s.Narration,
                 // Context/b-roll scenes read better with a slower pan than the wider push
                 // used for a character moment - see remotion-assembler/src/Assembly.tsx.
                 MotionIntensity: s.SceneKind == "context" ? "subtle" : "normal");
         }).ToList();
 
+        // The one asset that does NOT already live under workDir - copied in rather than
+        // pointed at directly, so it lands under the same --public-dir root as everything
+        // else above instead of needing a second public dir Remotion can't take.
+        string? musicRelative = null;
+        if (music is not null)
+        {
+            var musicDest = Path.Combine(workDir, Path.GetFileName(music));
+            if (!string.Equals(Path.GetFullPath(music), Path.GetFullPath(musicDest), StringComparison.OrdinalIgnoreCase))
+                File.Copy(music, musicDest, overwrite: true);
+            musicRelative = ToPublicDirRelative(musicDest);
+        }
+
         var props = new RemotionAssemblyProps(
-            Scenes: assets, WidthPx: w, HeightPx: h,
-            BackgroundMusicPath: music is not null ? Path.GetFullPath(music) : null,
+            Scenes: assets, WidthPx: w, HeightPx: h, Fps: 30,
+            BackgroundMusicPath: musicRelative,
             BackgroundMusicVolume: 0.15);
 
         var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
         await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
 
-        await RunNpxRemotionRenderAsync(cfg, propsPath, outputPath);
+        await RunNpxRemotionRenderAsync(cfg, workDir, propsPath, outputPath);
     }
 
     // camelCase to match remotion-assembler/src/schema.ts's zod field names exactly -
@@ -175,7 +134,7 @@ static partial class VideoAssembler
         string? NarrationAudioPath, string? CaptionText, string MotionIntensity);
 
     private sealed record RemotionAssemblyProps(
-        List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx,
+        List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx, int Fps,
         string? BackgroundMusicPath, double BackgroundMusicVolume);
 
     // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. Routed through
@@ -183,7 +142,7 @@ static partial class VideoAssembler
     // CreateProcess (what Process.Start ultimately calls) can only launch .exe files
     // directly, not .cmd shims - the same reason a bare `Process.Start("npm", ...)` fails
     // on Windows while `Process.Start("cmd.exe", "/c npm ...")` works.
-    private static async Task RunNpxRemotionRenderAsync(GenConfig cfg, string propsPath, string outputPath)
+    private static async Task RunNpxRemotionRenderAsync(GenConfig cfg, string workDir, string propsPath, string outputPath)
     {
         if (string.IsNullOrWhiteSpace(cfg.RemotionProjectPath) || !Directory.Exists(cfg.RemotionProjectPath))
             throw new Exception(
@@ -191,8 +150,12 @@ static partial class VideoAssembler
                 "Point it at the remotion-assembler project (see appsettings.json) - the no-Vidu " +
                 "Chronicle & Chaos pipeline renders through it instead of ffmpeg's Ken Burns path.");
 
+        // Every path in propsPath is relative to workDir (see AssembleWithRemotionAsync) -
+        // this is what makes those relative paths resolvable: Remotion serves --public-dir
+        // over its own local HTTP server, which staticFile()/getAbsoluteSrc resolve against
+        // in Assembly.tsx, instead of the browser trying (and failing) to load file:// srcs.
         var psi = new ProcessStartInfo("cmd.exe",
-            $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\"")
+            $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\"")
         {
             WorkingDirectory = cfg.RemotionProjectPath,
             RedirectStandardOutput = true,
@@ -201,12 +164,47 @@ static partial class VideoAssembler
         };
 
         using var p = StartOrThrow(psi, "npx (via cmd.exe)");
-        var stdout = await p.StandardOutput.ReadToEndAsync();
-        var stderr = await p.StandardError.ReadToEndAsync();
-        await p.WaitForExitAsync();
+
+        // Remotion prints per-chunk/frame progress on stdout as it renders - stream it
+        // live instead of buffering with ReadToEndAsync, so a long render (tens of
+        // minutes for a long-form landscape cut, all of it headless-Chromium frame
+        // rendering with no other signal of life) shows visible progress rather than
+        // going completely silent until it finishes or fails.
+        var tail = new StringBuilder();
+        void OnLine(object? _, DataReceivedEventArgs e)
+        {
+            if (e.Data is null) return;
+            Console.WriteLine($"  [remotion] {e.Data}");
+            lock (tail)
+            {
+                tail.AppendLine(e.Data);
+                if (tail.Length > 4000) tail.Remove(0, tail.Length - 4000);
+            }
+        }
+        p.OutputDataReceived += OnLine;
+        p.ErrorDataReceived += OnLine;
+        p.BeginOutputReadLine();
+        p.BeginErrorReadLine();
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromMinutes(cfg.RemotionRenderTimeoutMinutes));
+        try
+        {
+            await p.WaitForExitAsync(cts.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            // cmd.exe spawns npx, which spawns node, which spawns headless Chromium -
+            // killing just the cmd.exe process leaves the actual renderer running
+            // orphaned. entireProcessTree takes the whole chain down together.
+            try { p.Kill(entireProcessTree: true); } catch { /* already exited */ }
+            throw new Exception(
+                $"remotion render timed out after {cfg.RemotionRenderTimeoutMinutes}m rendering {outputPath}. " +
+                $"Raise RemotionRenderTimeoutMinutes in appsettings.json if this job is just large, not stuck. " +
+                $"Last output:\n{Text.Tail(tail.ToString(), 2000)}");
+        }
 
         if (p.ExitCode != 0)
-            throw new Exception($"remotion render failed (exit {p.ExitCode}):\n{Text.Tail(stdout + stderr, 2000)}");
+            throw new Exception($"remotion render failed (exit {p.ExitCode}):\n{Text.Tail(tail.ToString(), 2000)}");
     }
 
     private const double MusicFadeSeconds = 1.5;
@@ -376,20 +374,8 @@ static partial class VideoAssembler
 
         await RunFfmpegAsync(cfg,
             $"-y -i \"{sourceClip}\" -t {Text.Invariant(duration)} " +
-            $"-filter_complex \"[0:v]{vf}[v]\" -map \"[v]\" -r 25 -pix_fmt yuv420p " +
+            $"-filter_complex \"[0:v]{vf}[v]\" -map \"[v]\" -r 30 -pix_fmt yuv420p " +
             $"-an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"");
-    }
-
-    // The last frame of scene N seeds scene N+1's generation, which is what keeps the
-    // mascot on-model across a whole video without paying for reference-to-video mode.
-    // JPEG rather than PNG purely to keep the base64 request payload small.
-    public static async Task ExtractLastFrameAsync(GenConfig cfg, string videoPath, string outputPath)
-    {
-        await RunFfmpegAsync(cfg,
-            $"-y -sseof -0.4 -i \"{videoPath}\" -update 1 -frames:v 1 -q:v 3 \"{outputPath}\"");
-
-        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
-            throw new Exception($"Could not extract a last frame from {Path.GetFileName(videoPath)}.");
     }
 
     // Thumbnail source frame, pulled from the finished render instead of a separately
@@ -478,60 +464,6 @@ static partial class VideoAssembler
         return sb.ToString();
     }
 
-    // 4 distinct moves instead of the original 2 (zoom-in/zoom-out only), so a run of
-    // scenes doesn't all breathe identically. Pan patterns hold zoom constant at a mild
-    // 1.12 and drift the crop window across the frame, clamped to stay in-bounds — d is
-    // a deliberately oversized frame budget (safe up to ~50s of output; real clips are
-    // always shorter) so -t truncates the motion mid-sweep rather than looping it.
-    private static string ZoomPanFilter(int pattern) => pattern switch
-    {
-        0 => "zoompan=z='min(zoom+0.0012,1.15)':d=125*10:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
-        1 => "zoompan=z='if(lte(zoom,1.0),1.15,max(1.0,zoom-0.0012))':d=125*10:x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)'",
-        2 => "zoompan=z='1.12':d=125*10:x='max(0,(iw-iw/zoom)-on*1.5)':y='ih/2-(ih/zoom/2)'",
-        _ => "zoompan=z='1.12':d=125*10:x='min((iw-iw/zoom),on*1.5)':y='ih/2-(ih/zoom/2)'",
-    };
-
-    // Renders one still image into a video-only (no audio) clip of exactly `duration`
-    // seconds with a Ken Burns move and the burned-in subtitle applied.
-    private static async Task<string> BuildImageClipAsync(
-        GenConfig cfg, string image, double duration, int w, int h, string subtitleFilter, int pattern, string outputPath)
-    {
-        var vf = $"scale={w * 2}:{h * 2}:force_original_aspect_ratio=increase," +
-                 $"crop={w * 2}:{h * 2},{ZoomPanFilter(pattern)},scale={w}:{h}{subtitleFilter}";
-
-        await RunFfmpegAsync(cfg,
-            $"-y -loop 1 -i \"{image}\" -t {Text.Invariant(duration)} " +
-            $"-vf \"{vf}\" -r 25 -pix_fmt yuv420p -an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"");
-
-        return outputPath;
-    }
-
-    // Long-narration scenes get two images instead of one: build each half as its own
-    // Ken Burns clip, then crossfade between them internally so a single static photo
-    // doesn't have to carry the whole line. Each half runs slightly over duration/2 so
-    // the crossfade's overlap doesn't shorten the combined clip below `duration`.
-    private static async Task<string> BuildSplitImageClipAsync(
-        GenConfig cfg, string imageA, string imageB, double duration, int w, int h, string subtitleFilter,
-        int patternA, int patternB, string workDir, string tag, int sceneIndex)
-    {
-        const double innerFade = 0.35;
-        var half = duration / 2 + innerFade / 2;
-
-        var subA = await BuildImageClipAsync(cfg, imageA, half, w, h, subtitleFilter, patternA,
-            Path.Combine(workDir, $"clip{sceneIndex:D2}-{tag}-a.mp4"));
-        var subB = await BuildImageClipAsync(cfg, imageB, half, w, h, subtitleFilter, patternB,
-            Path.Combine(workDir, $"clip{sceneIndex:D2}-{tag}-b.mp4"));
-
-        var combined = Path.Combine(workDir, $"clip{sceneIndex:D2}-{tag}-combined.mp4");
-        var offset = half - innerFade;
-        await RunFfmpegAsync(cfg,
-            $"-y -i \"{subA}\" -i \"{subB}\" " +
-            $"-filter_complex \"[0:v][1:v]xfade=transition=fade:duration={Text.Invariant(innerFade)}:offset={Text.Invariant(offset)}[v]\" " +
-            $"-map \"[v]\" -r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 20 \"{combined}\"");
-
-        return combined;
-    }
-
     // Replaces a hard-cut concat with a real dissolve between every scene. Each input
     // clip's exact duration is already known (set by the apad fix above), so the
     // pairwise xfade/acrossfade offsets can be computed directly instead of probed.
@@ -574,7 +506,7 @@ static partial class VideoAssembler
         await RunFfmpegAsync(cfg,
             $"-y {inputs} -filter_complex \"{string.Join(";", filters)}\" " +
             $"-map \"[{vLabel}]\" -map \"[{aLabel}]\" " +
-            $"-r 25 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
+            $"-r 30 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
             $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"");
 
         return cumulative;

@@ -2502,3 +2502,286 @@ Effectively the recurring cast is 16, not 6 - still a large reduction from
 the old 40-character ceiling, but worth knowing rather than assuming 6.
 Left as-is rather than trimmed, since deleting finalized character art
 without being asked is not this task's call.
+
+---
+
+## Plan — full-codebase audit fixes (runtime bugs + dead code removal)
+
+Source: two parallel background audits (VideoGen+Shared, Uploader+TokenCapture+
+remotion-assembler), reviewed with the user, decisions taken per item below.
+
+### Runtime bugs
+- [ ] `Program.cs` `RunVisualLoopAsync` — `canReuse` ignores `SceneKind`; add a
+      `lastSceneKind` check so a context (stock) scene can never reuse a
+      character-art path or vice versa.
+- [ ] `Uploader/Program.cs` — sidecar is saved only once after the whole
+      per-video target loop; move to saving after every target's result so a
+      mid-loop exception can't discard already-recorded successes.
+- [ ] `Uploader/Publishing/TikTokPublisher.cs` — `ReadTikTokResponseAsync`'s
+      `GetProperty("data")`/`GetProperty("publish_id")` etc. can throw
+      `KeyNotFoundException`/`JsonException` on a malformed response, uncaught
+      by `PublishAsync`'s catch clauses; add a catch that turns it into
+      `PublishResult.Retry` like the transport-error case.
+- [ ] `Uploader/Publishing/YouTubePublisher.cs` `GetServiceAsync` — no
+      `IsNullOrWhiteSpace` guard on `ClientSecretPath`/`TokenStorePath` unlike
+      the other three publishers; add one, mirroring `InstagramPublisher`'s
+      pattern (`PublishResult.Fatal` before any I/O).
+- [ ] `VideoGen/GenConfig.cs` `Validate()` — never checks `PexelsApiKey`
+      despite `StockFootageClient` being live for every `AllowsContextScenes`
+      profile; add the check, conditioned on `profile.AllowsContextScenes`
+      (mirrors the existing `GroqApiKey`/`GeminiApiKey` conditional-reachability
+      pattern). Requires passing `profile` into `Validate()`.
+- [ ] `Uploader/Program.cs` — add bounded automatic retry for videos that hit
+      the outer per-video catch (uncaught exceptions), instead of moving
+      straight to `\failed`. Design: a small `.retry.json` marker file next to
+      the video tracking `attempts`/`lastAttemptUtc`; on catch, increment and
+      leave the video in place (do not move it) until `MaxCrashRetries` is
+      exceeded, with a `CrashRetryBackoffMinutes` cooldown between attempts
+      enforced by the watch-directory scan filter. Marker is deleted on a
+      subsequent clean pass and added to `MoveWithSiblings`'s sibling list so
+      it travels with the video if it's ever finally moved to `\failed`.
+      (This is independent from the existing per-platform retry, which already
+      works via `PublishStatus.Failed` staying non-terminal.)
+- [x] TikTok inbox-draft vs `Published` gating — **user chose to keep current
+      behavior**, no change.
+
+### Video-quality decision
+- [ ] Standardize frame rate across the whole pipeline at **30fps** (matches
+      the native/expected rate for YouTube Shorts, TikTok and IG Reels — the
+      25fps in the ffmpeg paths has no documented rationale, just an
+      unexamined default): change the four `-r 25` occurrences in
+      `VideoAssembler.cs` (`BuildVideoClipAsync`, `BuildImageClipAsync`,
+      `BuildSplitImageClipAsync`, `BuildCrossfadedConcatAsync`) to `-r 30`, and
+      add an explicit `Fps = 30` field to `RemotionAssemblyProps` (currently
+      relies on `schema.ts`'s implicit `.default(30)` — makes the already-in-
+      use value deliberate instead of accidental, no `schema.ts` change
+      needed).
+
+### Dead code removal (user approved removing now)
+- [ ] `VideoGen/ImageClient.cs` — remove `GenerateAsync`,
+      `GenerateWithReferenceAsync`, `OpenAiAsync`, `OpenAiEditAsync`,
+      `StabilityAsync`, `StabilityImageToImageAsync`. Keep the static
+      `BuildPrompt` and the `Orientation` enum (both still used).
+- [ ] `VideoGen/VideoAssembler.cs` — remove `AssembleAsync`,
+      `BuildImageClipAsync`, `BuildSplitImageClipAsync`, `ZoomPanFilter`,
+      `ExtractLastFrameAsync` (all confirmed unreachable from `Program.cs` for
+      both channels).
+- [ ] `VideoGen/ScriptGenerator.cs` — remove `Scene.ImagePath2` and
+      `Scene.VerticalImagePath2` (only ever read by the `AssembleAsync` being
+      removed above; zero writers anywhere).
+- [ ] `VideoGen/GenConfig.cs` — remove `SplitLongSceneAfterSeconds` (only
+      appears in a comment) and `GenerateVerticalImages` (zero references
+      outside its own declaration); remove the matching
+      `"GenerateVerticalImages"` key from `appsettings.json`.
+- [ ] `VideoGen/ViduClient.cs` — fix the stale header comment (lines 6-10)
+      describing the old last-frame-chaining design; replace with the current
+      shared-start-frame design already documented in `Program.cs`'s
+      `RunViduLoopAsync` and `CharacterSource.cs`.
+- [ ] `Uploader/Logger.cs` — remove unused `Warn` method (zero callers
+      repo-wide).
+
+### Verification
+- [ ] `dotnet build` on both `VideoGen` and `Uploader` — 0 warnings, 0 errors.
+- [ ] Diff review before reporting done.
+- [ ] Ask before commit/push (standing rule — prior approvals don't carry
+      forward to a new batch of changes).
+
+---
+
+## Per-channel path segregation (video output, work/script folders, done/failed)
+
+Requested: `gigglegarden` and `chronicleandchaos` currently share every flat
+folder (`VideoGen/work/job-*`, `D:\Business\Videos\*.mp4`,
+`Videos\done`, `Videos\failed`), so there is no way to tell which video/script
+belongs to which channel just by where it sits on disk. Deferred until the
+in-flight chronicle generation finished; that run is done now (`8 maritime
+disasters...` rendered into `D:\Business\Videos` on 2026-08-18), so this
+starts.
+
+### Current flat state (confirmed by listing, not guessed)
+
+- `VideoGen/work/`: 6 job folders. 4 pre-date the `script.Profile` field
+  (all gigglegarden content — Pip/Gigi mascots); one has `Profile:
+  gigglegarden` explicitly; one has `Profile: chronicleandchaos` (today's
+  maritime-disasters job). One empty job folder (`job-20260812-142302`, no
+  script.json — a dead/abandoned run). Plus `dry-script/` and `tts-test/`,
+  two flat diagnostic-only folders that never get read by `--resume`/
+  `--assemble`/`--status` (they don't match the `job-*` glob).
+- `D:\Business\Videos\`: 2 files at the root right now, both
+  chronicleandchaos (`8-maritime-disasters...`, `Channel` confirmed in the
+  sidecar JSON). `done\` holds 7 folders, all gigglegarden content (pre-date
+  the `Channel` field, so it's blank in those sidecars — identity confirmed
+  from filenames/titles instead). `failed\` is empty. `logs\` holds 4 daily
+  log files mixing both channels' lines (already channel-prefixed per line,
+  e.g. `[gigglegarden/youtube]`).
+
+### Design
+
+```
+VideoGen\work\<channel>\job-YYYYMMDD-HHMMSS\...     (was: work\job-*)
+VideoGen\work\dry-script\, work\tts-test\           (unchanged — diagnostic only, out of scope)
+Videos\<channel>\*.mp4 / .json / .srt / .thumb.jpg  (was: Videos\*.mp4 flat)
+Videos\<channel>\done\<video-name>\...              (was: Videos\done\*)
+Videos\<channel>\failed\<video-name>\...            (was: Videos\failed\*)
+Videos\logs\                                        (unchanged — shared, see note below)
+```
+
+`<channel>` is `profile.Id` (`"gigglegarden"` / `"chronicleandchaos"`).
+
+**Logs stay flat/shared — deliberate, not an oversight.** Every log line is
+already prefixed `[channel/platform]`, so one combined operational log stays
+searchable; splitting it would only fragment "what happened this run" across
+files with no benefit. Will split on request if that turns out wrong.
+
+**`dry-script`/`tts-test` stay flat — deliberate, not an oversight.** They're
+throwaway diagnostic output (`--dry-script`, `--test-tts`), never read by
+`--resume`, `--assemble`, or `--status`, and don't match the `job-*` glob
+those scan for. Not what "scripts when scripts are generated" refers to —
+that's the real per-job `script.json` files under `work\<channel>\job-*\`.
+
+### Code changes
+
+**`VideoGen/Program.cs`**
+- [ ] `RunPrepAsync` (job dir creation, ~line 136) and `RunManualAsync`
+      (~line 491): job folder becomes
+      `Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{...}")`.
+- [ ] `ResolveJobDirectory()`: explicit `--job` still resolves without
+      needing `--profile` set correctly — tries the CLI-resolved profile's
+      subfolder first, then falls back to searching every channel
+      subfolder for a directory with that name. No-arg "newest job"
+      default unions job folders across every channel subfolder before
+      picking the newest, so `--resume`/`--assemble` with no `--job` keeps
+      working regardless of which channel actually generated the latest job
+      (today: if you don't pass `--profile`, it defaults to gigglegarden,
+      but the newest real job is chronicleandchaos — this fixes that).
+- [ ] Render section (~line 726): output goes to
+      `Path.Combine(cfg.OutputDirectory, profile.Id, ...)` instead of
+      `cfg.OutputDirectory` directly, for both the vertical and landscape
+      renders.
+- [ ] `RunStatusAsync` (~line 825): job-folder scan unioned across channel
+      subfolders (same helper as `ResolveJobDirectory`); per-job
+      done/failed/live-video lookup keyed off `script.Profile` (falls back
+      to `"gigglegarden"` for the pre-migration jobs missing that field,
+      matching where they're being moved to below).
+
+**`Uploader/AppConfig.cs`**
+- [ ] Drop `DoneDirectory`/`FailedDirectory` as fixed config properties —
+      they were always a trivial `WatchDirectory\done` /
+      `WatchDirectory\failed` convention, now channel-scoped instead:
+      `DoneDirFor(channel)` / `FailedDirFor(channel)` →
+      `WatchDirectory\<channel>\done` / `\failed`.
+
+**`Uploader/Program.cs`**
+- [ ] Startup directory creation: loop known channels
+      (`cfg.Channels.Keys` ∪ `cfg.DefaultChannel`) instead of one
+      done/failed pair.
+- [ ] Video discovery (~line 74): scan `WatchDirectory\<channel>\*.mp4`
+      per known channel (top-directory-only, so it never re-descends into
+      that channel's own `done`/`failed`) instead of one flat
+      `Directory.GetFiles(cfg.WatchDirectory, "*.mp4")`. Each discovered
+      video now carries its origin channel from the folder it was found
+      in.
+- [ ] **Behavior change, called out explicitly:** the per-video `channel`
+      used for publisher routing and the done/failed destination becomes
+      the *origin folder's* channel instead of `sidecar.Channel ??
+      cfg.DefaultChannel`. In every real case these already agree (VideoGen
+      always writes `Channel = profile.Id` into the same folder it renders
+      to), so this is a no-op for generated content. It only changes the
+      one edge case — a manually dropped video with no sidecar — which now
+      publishes through whichever channel folder you dropped it into
+      instead of always `cfg.DefaultChannel`; `ResolveSidecarAsync`'s
+      fallback-metadata path takes that channel as a parameter instead of
+      hardcoding `cfg.DefaultChannel`.
+- [ ] `MoveWithSiblings` call sites (done, failed, crash-path failed):
+      destination becomes `cfg.DoneDirFor(channel)` /
+      `cfg.FailedDirFor(channel)`. `channel` is resolved once at the top of
+      the per-video try block (from the origin folder) so it's available
+      even if the crash happens before the sidecar is resolved.
+
+**`appsettings.json` (both projects)** — no changes needed; `WorkDirectory`/
+`OutputDirectory`/`WatchDirectory` stay as roots, channel subfolders are
+appended in code, not configured per-channel.
+
+### Migration of existing files (one-time, done alongside the code change)
+
+- [ ] `VideoGen/work/job-20260809-021127`, `-030142`, `-150322`,
+      `-20260817-234145`, and the empty `job-20260812-142302` →
+      `VideoGen/work/gigglegarden/`.
+- [ ] `VideoGen/work/job-20260818-125747` (maritime disasters) →
+      `VideoGen/work/chronicleandchaos/`.
+- [ ] `Videos\8-maritime-disasters...*` (mp4/json/srt/thumb) →
+      `Videos\chronicleandchaos\`.
+- [ ] `Videos\done\*` (7 folders, all gigglegarden) →
+      `Videos\gigglegarden\done\`.
+- [ ] `Videos\failed\` — empty, nothing to move; recreated under each
+      channel by the code above on next run.
+- [ ] `Videos\logs\` — left in place (see design note above).
+
+### Verification
+
+- [ ] `dotnet build` on both `VideoGen` and `Uploader` — 0 warnings, 0
+      errors.
+- [ ] `VideoGen --status` (no Vidu/Claude spend) after migration reports the
+      same outstanding items as before the move — proves the channel-unioned
+      job scan and the done/failed lookup still find everything.
+- [ ] `VideoGen --job job-20260818-125747` (no `--profile` passed) still
+      resolves to the chronicleandchaos job under its new nested path —
+      proves the "search other channels" fallback in `ResolveJobDirectory`.
+- [ ] Confirm no orphaned files left behind at the old flat locations after
+      migration (`Videos\*.mp4` at root, `VideoGen\work\job-*` at root).
+- [ ] Diff review before reporting done.
+- [ ] Ask before commit/push.
+
+### Review
+
+Implemented as designed. Code changes:
+- `ContentProfileRegistry.cs`: exposed `Ids` (was private `All.Keys`) so
+  Program.cs can walk every channel subfolder without hardcoding the two
+  profiles.
+- `VideoGen/Program.cs`: `RunPrepAsync`/`RunManualAsync` create
+  `work\<channel>\job-*`; `ResolveJobDirectory()` tries the CLI-hinted
+  channel first, then searches every channel for an explicit `--job`, and
+  unions all channels (sorted by job-folder name, not full path) for the
+  no-arg "newest" default; render output goes to
+  `Videos\<channel>\...`; `RunStatusAsync` scans all channel subfolders and
+  keys each job's done/failed/live lookup off `script.Profile` (defaulting
+  to gigglegarden for the pre-migration jobs that predate that field).
+- `Uploader/AppConfig.cs`: `DoneDirectory`/`FailedDirectory` replaced with
+  `DoneDirFor(channel)`/`FailedDirFor(channel)` → `WatchDirectory\<channel>\
+  done|failed`. `LogDirectory` untouched (flat/shared, as designed).
+- `Uploader/Program.cs`: discovers videos per channel subfolder instead of
+  one flat scan; the per-video channel is now the folder it was found in
+  (checked, and `--failed`-routed, *before* `ResolveSidecarAsync` runs) —
+  the intended behavior change from sidecar-derived to location-derived
+  channel resolution. `ResolveSidecarAsync` takes the resolved channel
+  instead of always falling back to `cfg.DefaultChannel`. All three
+  `MoveWithSiblings` call sites and the `TopicHistory.AppendAsync` call
+  switched to the folder-derived channel.
+
+Migration: 5 pre-migration gigglegarden job folders + the empty
+`job-20260812-142302` → `work\gigglegarden\`; the chronicleandchaos maritime
+job → `work\chronicleandchaos\`; the live maritime-disasters render files →
+`Videos\chronicleandchaos\`; the 7 `done\` folders → `Videos\gigglegarden\
+done\`. `dry-script\`, `tts-test\`, `Videos\logs\`, and the stray
+`job-20260818-125747-recovered-script.md` file were deliberately left in
+place (all out of scope per the design notes above).
+
+### Verification
+
+- [x] `dotnet build` on `VideoGen` — 0 warnings, 0 errors.
+- [x] `dotnet build` on `Uploader` — 0 warnings, 0 errors.
+- [x] `VideoGen --status` after migration: 4 items flagged (2 for the
+      never-rendered gigglegarden balloons job, 2 for the awaiting-approval
+      chronicleandchaos maritime job) — the same set that was true before
+      migration; none of the 7 already-published gigglegarden `done\`
+      videos are (correctly) flagged.
+- [x] `VideoGen --resume --job job-20260818-125747 --profile gigglegarden`
+      (deliberately mismatched channel hint) resolved to
+      `work\chronicleandchaos\job-20260818-125747` via the fallback search,
+      confirmed by the printed Workspace line — proves `ResolveJobDirectory`
+      no longer depends on the CLI-supplied `--profile` being correct. Zero
+      spend: every scene was already on disk.
+- [x] No orphaned files at the old flat locations: `VideoGen\work\` root has
+      no `job-*` folders left, `Videos\` root has no `.mp4` files left.
+- [x] Diff reviewed.
+- [ ] Commit/push — not yet asked.

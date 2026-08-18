@@ -4,10 +4,11 @@ using GiggleGarden.Shared;
 
 // Vidu image-to-video (https://platform.vidu.com/docs/image-to-video).
 //
-// The submitted image becomes the clip's FIRST FRAME, which is what makes
-// last-frame chaining work: scene N's final frame is scene N+1's input, so the
-// character stays on-model across a whole video without paying for the much
-// pricier reference-to-video mode.
+// The submitted image becomes the clip's FIRST FRAME. Every scene in a video
+// submits the same single character reference image (Scene.StartFramePath, set
+// from VideoScript.CharacterImagePath in Program.cs's RunViduLoopAsync) rather
+// than chaining scene N's last frame into scene N+1 - a shared start frame keeps
+// the character on-model without paying for reference-to-video mode.
 //
 // Generation is asynchronous. With OffPeak enabled (half price) Vidu only
 // guarantees delivery within 48 hours, so submission and collection are separate

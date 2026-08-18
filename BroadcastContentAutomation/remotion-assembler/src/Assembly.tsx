@@ -6,6 +6,7 @@ import {
   Sequence,
   Video,
   interpolate,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
@@ -34,7 +35,7 @@ const KenBurnsImage: React.FC<{ asset: SceneAsset; durationInFrames: number }> =
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
       <Img
-        src={asset.path}
+        src={staticFile(asset.path)}
         style={{
           width: "100%",
           height: "100%",
@@ -59,7 +60,7 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
       <Video
-        src={asset.path}
+        src={staticFile(asset.path)}
         muted
         style={{ width: "100%", height: "100%", objectFit: "cover", transform: `scale(${scale})` }}
       />
@@ -96,7 +97,7 @@ const Scene: React.FC<{ asset: SceneAsset; durationInFrames: number }> = ({
     ) : (
       <KenBurnsImage asset={asset} durationInFrames={durationInFrames} />
     )}
-    {asset.narrationAudioPath ? <Audio src={asset.narrationAudioPath} /> : null}
+    {asset.narrationAudioPath ? <Audio src={staticFile(asset.narrationAudioPath)} /> : null}
     {asset.captionText ? <Caption text={asset.captionText} /> : null}
   </AbsoluteFill>
 );
@@ -112,7 +113,7 @@ export const Assembly: React.FC<AssemblyProps> = ({
   return (
     <AbsoluteFill>
       {backgroundMusicPath ? (
-        <Audio src={backgroundMusicPath} volume={backgroundMusicVolume} loop />
+        <Audio src={staticFile(backgroundMusicPath)} volume={backgroundMusicVolume} loop />
       ) : null}
       {scenes.map((asset, i) => {
         const durationInFrames = Math.round(asset.durationInSeconds * fps);

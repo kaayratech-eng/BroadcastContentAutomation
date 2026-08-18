@@ -16,4 +16,9 @@ static class ContentProfileRegistry
         All.TryGetValue(id, out var profile) ? profile
             : throw new InvalidOperationException(
                 $"Unknown --profile \"{id}\". Available profiles: {string.Join(", ", All.Keys)}.");
+
+    // Every known channel id - used to walk per-channel subfolders under
+    // WorkDirectory/OutputDirectory (see the "Per-channel path segregation" plan
+    // in tasks/todo.md) without hardcoding the two current profiles.
+    public static IEnumerable<string> Ids => All.Keys;
 }

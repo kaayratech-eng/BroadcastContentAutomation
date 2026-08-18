@@ -122,11 +122,6 @@ class Scene
     public string? AudioPath { get; set; }
     public string? ImagePath { get; set; }
     public string? VerticalImagePath { get; set; }
-
-    // Second image for scenes whose narration runs long (see GenConfig.SplitLongSceneAfterSeconds) —
-    // shown via an internal crossfade partway through so a long line isn't one static photo start to finish.
-    public string? ImagePath2 { get; set; }
-    public string? VerticalImagePath2 { get; set; }
     public double DurationSeconds { get; set; }
 
     // Vidu image-to-video state. StartFramePath is the frame this scene animates from —

@@ -123,6 +123,16 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
         {
             return PublishResult.Retry($"TikTok transport error: {ex.Message}");
         }
+        // A 200 response whose body doesn't have the shape this client expects (a
+        // TikTok API change, a proxy/CDN error page returned with a success status,
+        // etc.) previously escaped uncaught here and crashed the whole video's
+        // processing instead of just this one target - see the crash-retry path in
+        // Uploader/Program.cs, which exists to bound retries for exactly this kind
+        // of unexpected failure.
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException)
+        {
+            return PublishResult.Retry($"TikTok returned an unexpected response shape: {ex.Message}");
+        }
     }
 
     private async Task<PublishResult> WaitForPublishAsync(HttpClient http, string publishId, CancellationToken ct)
