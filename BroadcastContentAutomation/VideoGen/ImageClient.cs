@@ -53,7 +53,8 @@ class ImageClient(GenConfig cfg)
             : "Horizontal 16:9 composition, subject centred, empty space in the lower third for subtitles.";
 
         var consistency = matchReference
-            ? " Keep the main character's appearance, proportions, colors and art style identical to the attached reference image."
+            ? " Match the reference image's face, identity, body build, robe design/colors and overall art style. " +
+              "Do not copy the reference image's pose, camera angle or framing - use a new pose and camera angle that fits the scene description above."
             : "";
 
         return $"{stylePrompt}. {scenePrompt}. {framing} {portraitStyleSuffix}{consistency}";
