@@ -74,7 +74,8 @@ static partial class VideoAssembler
     public static async Task AssembleWithRemotionAsync(
         ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes,
         string workDir, string outputPath, int w, int h, string? musicMood = null,
-        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null)
+        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null,
+        bool isCalm = false)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
@@ -160,7 +161,8 @@ static partial class VideoAssembler
             BackgroundMusicVolume: musicVolume,
             OutroSeconds: outroSeconds,
             OutroLines: outroLines?.ToList() ?? [],
-            OutroAudioPath: outroAudioRelative);
+            OutroAudioPath: outroAudioRelative,
+            IsCalm: isCalm);
 
         var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
         await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
@@ -184,7 +186,7 @@ static partial class VideoAssembler
     private sealed record RemotionAssemblyProps(
         List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx, int Fps,
         string? BackgroundMusicPath, double BackgroundMusicVolume, double OutroSeconds,
-        List<string> OutroLines, string? OutroAudioPath);
+        List<string> OutroLines, string? OutroAudioPath, bool IsCalm);
 
     // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. Routed through
     // cmd.exe rather than launched directly: npx resolves to npx.cmd on Windows, and

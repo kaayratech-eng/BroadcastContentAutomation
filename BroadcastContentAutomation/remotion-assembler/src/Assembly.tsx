@@ -3,14 +3,28 @@ import {
   AbsoluteFill,
   Audio,
   Img,
-  Sequence,
   Video,
   interpolate,
   staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
+import { TransitionSeries, linearTiming } from "@remotion/transitions";
+import { fade } from "@remotion/transitions/fade";
 import type { AssemblyProps, SceneAsset } from "./schema";
+
+// Every scene asset is resolved once (see Program.cs) and reused for both the 9:16 short
+// and the 16:9 landscape master - so a portrait character still is inevitably rendered into
+// a landscape frame at some point. A plain objectFit:"cover" in that case forces a ~2.5x
+// blow-up that crops most of the subject out (e.g. a full-body portrait loses the head and
+// most of the lower robe, leaving only a torso-width band). Both layers below fix that:
+// a blurred cover-fill behind a contain-fit copy of the same asset, so the frame is always
+// full-bleed but the subject itself is never cropped, regardless of which orientation it's
+// rendered into. When the asset's aspect ratio already matches the frame (the short's own
+// case), the contain layer covers the frame edge-to-edge and the blur layer never shows.
+const BlurPadBackground: React.FC<{ children: React.ReactNode }> = ({ children }) => (
+  <AbsoluteFill style={{ overflow: "hidden" }}>{children}</AbsoluteFill>
+);
 
 // Ken-Burns style slow pan/zoom for stills - the motion Vidu used to provide for every
 // scene, now needed for character portraits and stock photos, neither of which has any
@@ -33,17 +47,29 @@ const KenBurnsImage: React.FC<{ asset: SceneAsset; durationInFrames: number }> =
   });
 
   return (
-    <AbsoluteFill style={{ overflow: "hidden" }}>
+    <BlurPadBackground>
       <Img
         src={staticFile(asset.path)}
         style={{
           width: "100%",
           height: "100%",
           objectFit: "cover",
+          filter: "blur(60px) brightness(0.55)",
+          transform: "scale(1.15)",
+        }}
+      />
+      <Img
+        src={staticFile(asset.path)}
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
           transform: `scale(${scale}) translateX(${translateX}px)`,
         }}
       />
-    </AbsoluteFill>
+    </BlurPadBackground>
   );
 };
 
@@ -58,13 +84,31 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
   });
 
   return (
-    <AbsoluteFill style={{ overflow: "hidden" }}>
+    <BlurPadBackground>
       <Video
         src={staticFile(asset.path)}
         muted
-        style={{ width: "100%", height: "100%", objectFit: "cover", transform: `scale(${scale})` }}
+        style={{
+          width: "100%",
+          height: "100%",
+          objectFit: "cover",
+          filter: "blur(60px) brightness(0.55)",
+          transform: "scale(1.15)",
+        }}
       />
-    </AbsoluteFill>
+      <Video
+        src={staticFile(asset.path)}
+        muted
+        style={{
+          position: "absolute",
+          inset: 0,
+          width: "100%",
+          height: "100%",
+          objectFit: "contain",
+          transform: `scale(${scale})`,
+        }}
+      />
+    </BlurPadBackground>
   );
 };
 
@@ -155,30 +199,49 @@ export const Assembly: React.FC<AssemblyProps> = ({
   outroSeconds,
   outroLines,
   outroAudioPath,
+  isCalm,
 }) => {
   const { fps } = useVideoConfig();
-  let startFrame = 0;
+
+  // Every scene carries a 0.5s silent tail after its narration ends (see RemotionSceneAsset
+  // in VideoAssembler.cs: DurationInSeconds is the audio length plus a fixed 0.5s buffer), so
+  // keeping the transition under that avoids two scenes' narration overlapping mid-dissolve.
+  // Calm formats (retellingArc) get a slow dissolve; brisk ones (topFive) get a quick blend
+  // that still smooths the cut without dulling the pace.
+  const transitionTiming = linearTiming({
+    durationInFrames: Math.round(fps * (isCalm ? 0.45 : 0.2)),
+  });
 
   return (
     <AbsoluteFill>
       {backgroundMusicPath ? (
         <Audio src={staticFile(backgroundMusicPath)} volume={backgroundMusicVolume} loop />
       ) : null}
-      {scenes.map((asset, i) => {
-        const durationInFrames = Math.round(asset.durationInSeconds * fps);
-        const from = startFrame;
-        startFrame += durationInFrames;
-        return (
-          <Sequence key={i} from={from} durationInFrames={durationInFrames}>
-            <Scene asset={asset} durationInFrames={durationInFrames} />
-          </Sequence>
-        );
-      })}
-      {outroSeconds > 0 ? (
-        <Sequence from={startFrame} durationInFrames={Math.round(outroSeconds * fps)}>
-          <Outro lines={outroLines} audioPath={outroAudioPath} />
-        </Sequence>
-      ) : null}
+      <TransitionSeries>
+        {scenes.flatMap((asset, i) => {
+          const durationInFrames = Math.round(asset.durationInSeconds * fps);
+          const elements = [
+            <TransitionSeries.Sequence key={`scene-${i}`} durationInFrames={durationInFrames}>
+              <Scene asset={asset} durationInFrames={durationInFrames} />
+            </TransitionSeries.Sequence>,
+          ];
+          if (i < scenes.length - 1 || outroSeconds > 0) {
+            elements.push(
+              <TransitionSeries.Transition
+                key={`transition-${i}`}
+                presentation={fade()}
+                timing={transitionTiming}
+              />
+            );
+          }
+          return elements;
+        })}
+        {outroSeconds > 0 ? (
+          <TransitionSeries.Sequence durationInFrames={Math.round(outroSeconds * fps)}>
+            <Outro lines={outroLines} audioPath={outroAudioPath} />
+          </TransitionSeries.Sequence>
+        ) : null}
+      </TransitionSeries>
     </AbsoluteFill>
   );
 };
