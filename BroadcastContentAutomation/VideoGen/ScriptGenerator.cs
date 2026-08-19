@@ -295,12 +295,13 @@ static class ScriptGenerator
               """
             : "";
 
-        var moodGuidance = profile.NarrationMoodStyles.Count > 0
+        var moodStyles = profile.NarrationMoodStyles.GetValueOrDefault(language, []);
+        var moodGuidance = moodStyles.Count > 0
             ? $"""
 
               Each scene also gets a mood: ONE tag chosen EXACTLY from this list (do not invent
               your own wording), matching what is actually happening in THAT scene's narration -
-              {string.Join(", ", profile.NarrationMoodStyles)}. A calm setup beat and a sudden
+              {string.Join(", ", moodStyles)}. A calm setup beat and a sudden
               disaster should NOT sound the same; vary mood scene to scene as the story's emotion
               actually shifts. Omit mood entirely (leave it out of the JSON) for a scene that is
               genuinely neutral and needs no particular emotional read.
@@ -472,7 +473,7 @@ Respond ONLY with JSON, no markdown fences:
   "characterCatchphrase": "...",
   "musicMood": "...",
   "tags": ["..."],
-  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}{{(longForm ? ", \"visualGroup\": 0" : "")}}{{(profile.NarrationMoodStyles.Count > 0 ? ", \"mood\": \"...\"" : "")}} } ]
+  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}{{(longForm ? ", \"visualGroup\": 0" : "")}}{{(moodStyles.Count > 0 ? ", \"mood\": \"...\"" : "")}} } ]
 }
 """;
 
@@ -493,7 +494,7 @@ Respond ONLY with JSON, no markdown fences:
             {
                 var scenes = await GenerateContinuationActAsync(
                     profile, formatDef, effectiveContentRules, sceneKindGuidance, colourGuidance,
-                    langName, provider, script, act, actRoles[act - 2]);
+                    langName, provider, script, act, actRoles[act - 2], moodStyles);
                 script.Scenes.AddRange(scenes);
             }
         }
@@ -562,7 +563,7 @@ Respond ONLY with JSON, no markdown fences:
                     "that scene has nothing for StockFootageClient to search for.");
         }
 
-        NormalizeSceneMoods(script.Scenes, profile);
+        NormalizeSceneMoods(script.Scenes, moodStyles);
 
         // A scene with no motion still has to animate - falling back to the still's
         // description plus idle movement beats submitting an empty prompt to Vidu. The
@@ -588,18 +589,18 @@ Respond ONLY with JSON, no markdown fences:
     static async Task<List<Scene>> GenerateContinuationActAsync(
         ContentProfile profile, ContentFormatDef formatDef, string effectiveContentRules,
         string sceneKindGuidance, string colourGuidance, string langName, IScriptProvider provider,
-        VideoScript scriptSoFar, int actNumber, string actRole)
+        VideoScript scriptSoFar, int actNumber, string actRole, IReadOnlyList<string> moodStyles)
     {
         var nextVisualGroup = scriptSoFar.Scenes.Max(s => s.VisualGroup) + 1;
 
         var recap = string.Join(" ", scriptSoFar.Scenes.TakeLast(4).Select(s => s.Narration));
 
-        var moodGuidance = profile.NarrationMoodStyles.Count > 0
+        var moodGuidance = moodStyles.Count > 0
             ? $"""
 
               Each scene also gets a mood: ONE tag chosen EXACTLY from this list (do not invent
               your own wording), matching what is actually happening in THAT scene's narration -
-              {string.Join(", ", profile.NarrationMoodStyles)}. Vary it scene to scene as the
+              {string.Join(", ", moodStyles)}. Vary it scene to scene as the
               story's emotion actually shifts; omit it entirely for a genuinely neutral scene.
               """
             : "";
@@ -659,7 +660,7 @@ Universal requirements (apply to every scene):
 
 Respond ONLY with JSON, no markdown fences:
 {
-  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}, "visualGroup": 0{{(profile.NarrationMoodStyles.Count > 0 ? ", \"mood\": \"...\"" : "")}} } ]
+  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}, "visualGroup": 0{{(moodStyles.Count > 0 ? ", \"mood\": \"...\"" : "")}} } ]
 }
 """;
 
@@ -679,7 +680,7 @@ Respond ONLY with JSON, no markdown fences:
     // formatId is required rather than weighted-random picked, since a human choosing to
     // hand-write a script has already chosen its tone. Does not touch the character pool -
     // a manual script already names a specific figure, so the caller always draws fresh.
-    public static VideoScript FinalizeManualScript(ContentProfile profile, VideoScript script, string formatId)
+    public static VideoScript FinalizeManualScript(ContentProfile profile, VideoScript script, string formatId, string language)
     {
         if (script.Scenes.Count == 0) throw new Exception("Manual script has no scenes.");
         if (string.IsNullOrWhiteSpace(script.Title)) throw new Exception("Manual script has no title.");
@@ -721,7 +722,7 @@ Respond ONLY with JSON, no markdown fences:
                     $"Scene \"{badContextScene.Narration}\" is sceneKind \"context\" but has no stockQuery.");
         }
 
-        NormalizeSceneMoods(script.Scenes, profile);
+        NormalizeSceneMoods(script.Scenes, profile.NarrationMoodStyles.GetValueOrDefault(language, []));
 
         foreach (var scene in script.Scenes)
             if (scene.SceneKind == "character" && string.IsNullOrWhiteSpace(scene.MotionPrompt))
@@ -791,11 +792,11 @@ Respond ONLY with JSON, no markdown fences:
     // that scene's whole TTS call. Nulled rather than thrown/retried: an occasional off-menu
     // tag is not worth burning a script-generation attempt over, it just falls back to the
     // same neutral read every scene had before this feature existed.
-    static void NormalizeSceneMoods(IEnumerable<Scene> scenes, ContentProfile profile)
+    static void NormalizeSceneMoods(IEnumerable<Scene> scenes, IReadOnlyList<string> moodStyles)
     {
         foreach (var scene in scenes)
             if (scene.Mood is not null &&
-                !profile.NarrationMoodStyles.Any(m => m.Equals(scene.Mood, StringComparison.OrdinalIgnoreCase)))
+                !moodStyles.Any(m => m.Equals(scene.Mood, StringComparison.OrdinalIgnoreCase)))
                 scene.Mood = null;
     }
 }

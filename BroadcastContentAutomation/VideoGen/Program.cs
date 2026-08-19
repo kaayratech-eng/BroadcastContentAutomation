@@ -507,7 +507,7 @@ async Task<int> RunManualAsync()
         new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
         ?? throw new InvalidDataException($"{scriptFile} is not valid script JSON.");
 
-    var script = ScriptGenerator.FinalizeManualScript(profile, draft, formatOverride);
+    var script = ScriptGenerator.FinalizeManualScript(profile, draft, formatOverride, language!);
     script.Language = language!;
     script.Profile = profile.Id;
 

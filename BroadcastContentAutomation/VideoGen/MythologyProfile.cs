@@ -131,10 +131,13 @@ static class MythologyProfile
         // ScriptGenerator's per-scene mood tagging (see Scene.Mood) so narration style actually
         // shifts with what's happening in the scene, instead of one flat rate/pitch for the
         // whole video.
-        NarrationMoodStyles =
-        [
-            "angry", "sad", "excited", "hopeful", "terrified", "shouting", "whispering", "cheerful", "friendly",
-        ],
+        NarrationMoodStyles = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["en"] =
+            [
+                "angry", "sad", "excited", "hopeful", "terrified", "shouting", "whispering", "cheerful", "friendly",
+            ],
+        },
 
         BaseTags =
         [

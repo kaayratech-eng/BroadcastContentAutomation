@@ -169,13 +169,18 @@ record ContentProfile
     public required string OutroDestinationSpoken { get; init; }
 
     // Closed menu of Azure express-as styles this profile's active voice actually supports
-    // (verified live against /cognitiveservices/voices/list - see VoiceOverride). Empty (the
-    // default) means "don't ask the model for a per-scene mood, don't touch narration style" -
-    // ScriptGenerator only emits the mood-tagging prompt block when this is non-empty, so a
-    // profile whose voice has no styles (or that routes through Google, which has none at all)
-    // is untouched. Non-empty only makes sense paired with an AzureTtsProvider voice that
-    // actually has an express-as StyleList; an unverified style string risks a failed Azure call.
-    public IReadOnlyList<string> NarrationMoodStyles { get; init; } = [];
+    // (verified live against /cognitiveservices/voices/list - see VoiceOverride), keyed by
+    // the same language code VoiceOverride uses. Per-language because a profile's languages
+    // can point at voices with completely different (or zero) style capability - e.g.
+    // GiggleGarden's en voice has 14 styles but its hi/pa voices have 3 and 0. A language
+    // with no key (or an empty list) means "don't ask the model for a per-scene mood for
+    // this language, don't touch narration style" - ScriptGenerator only emits the
+    // mood-tagging prompt block when the resolved list for the active language is non-empty.
+    // Non-empty only makes sense paired with an AzureTtsProvider voice that actually has an
+    // express-as StyleList for that language; an unverified style string risks a failed
+    // Azure call.
+    public IReadOnlyDictionary<string, IReadOnlyList<string>> NarrationMoodStyles { get; init; } =
+        new Dictionary<string, IReadOnlyList<string>>();
 
     public void Validate()
     {
