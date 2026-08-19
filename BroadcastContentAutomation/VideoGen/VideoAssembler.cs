@@ -15,7 +15,8 @@ static partial class VideoAssembler
     public static async Task AssembleFromClipsAsync(
         ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
         string workDir, string outputPath, int w, int h, string? musicMood = null,
-        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null)
+        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null,
+        bool isCalm = false)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
@@ -57,8 +58,13 @@ static partial class VideoAssembler
             durations.Add(outroDuration);
         }
 
+        // Every clip carries the same 0.5s silent audio tail as the Remotion path (the
+        // "breathing room" padding above), so keeping the crossfade under that avoids two
+        // scenes' narration overlapping mid-blend. Calm formats (poem, bedtime) get a slower
+        // dissolve; brisk ones (educational, rhyme, singAlong, countingSong) get a quicker one.
+        var fadeSeconds = isCalm ? 0.45 : 0.2;
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
-        var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
+        var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath, fadeSeconds);
 
         await MixBackgroundMusicAsync(profile, cfg, concatPath, music, total, outputPath);
     }
@@ -563,7 +569,8 @@ static partial class VideoAssembler
     // pairwise xfade/acrossfade offsets can be computed directly instead of probed.
     // Returns the finished length, which the caller needs to time the music fade-out.
     private static async Task<double> BuildCrossfadedConcatAsync(
-        GenConfig cfg, IReadOnlyList<string> clips, IReadOnlyList<double> durations, string outputPath)
+        GenConfig cfg, IReadOnlyList<string> clips, IReadOnlyList<double> durations, string outputPath,
+        double fade)
     {
         if (clips.Count == 1)
         {
@@ -571,7 +578,6 @@ static partial class VideoAssembler
             return durations[0];
         }
 
-        const double fade = 0.4;
         var inputs = string.Join(" ", clips.Select(c => $"-i \"{c}\""));
         var vLabel = "0:v";
         var aLabel = "0:a";

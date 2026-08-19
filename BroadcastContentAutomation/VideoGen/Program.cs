@@ -791,7 +791,7 @@ async Task<int> RunAssembleAsync()
     else
     {
         await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood,
-            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
     }
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
@@ -825,7 +825,7 @@ async Task<int> RunAssembleAsync()
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
     else
         await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood,
-            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 
