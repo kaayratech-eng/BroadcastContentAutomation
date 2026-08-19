@@ -11,6 +11,7 @@ const defaultProps: AssemblyProps = {
   backgroundMusicVolume: 0.15,
   outroSeconds: 0,
   outroLines: [],
+  isCalm: false,
 };
 
 // durationInFrames/width/height/fps must be known before render starts, but they're a

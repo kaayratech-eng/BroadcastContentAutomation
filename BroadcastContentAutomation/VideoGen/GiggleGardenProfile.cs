@@ -109,11 +109,31 @@ static class GiggleGardenProfile
             "Children's book illustration, bright cheerful colors, soft rounded shapes, no text, " +
             "no words, no letters anywhere in the image.",
 
+        // en swapped from AnaNeural to Harper (MAI-Voice-2-Flash, Preview) - verified live
+        // against Azure's /cognitiveservices/voices/list that Ana has zero express-as styles
+        // (same dead end EricNeural had for Chronicle & Chaos), while Harper has 14. Picked
+        // by the user after sampling both at this profile's actual "educational" rate/pitch.
+        // hi/pa left untouched - out of scope for this pick (see NarrationMoodStyles below
+        // for why their mood menus stay empty too).
         VoiceOverride = new Dictionary<string, (string Locale, string Voice, string? Style)>
         {
-            ["en"] = ("en-US", "en-US-AnaNeural", null),
+            ["en"] = ("en-US", "en-US-Harper:MAI-Voice-2-Flash", null),
             ["hi"] = ("hi-IN", "hi-IN-SwaraNeural", "cheerful"),
             ["pa"] = ("pa-IN", "pa-IN-VaaniNeural", null),
+        },
+
+        // Gentle/positive subset of Harper's verified live style list (angry, confused,
+        // determined, embarrassed, excited, happy, hopeful, joyful, regretful, relieved,
+        // sad, shouting, softvoice, whispering) - drops everything with a negative or tense
+        // register (angry, confused, determined, embarrassed, regretful, sad, shouting) as
+        // wrong for a MadeForKids 2-6-year-old audience regardless of what the voice can
+        // technically do. hi/pa have no entry here on purpose: hi-IN-SwaraNeural's live
+        // style list (newscast, cheerful, empathetic) and pa-IN-VaaniNeural's (none) don't
+        // overlap this menu at all, so asking the model for a mood on those languages would
+        // risk an unverified express-as value reaching Azure and failing that scene's TTS.
+        NarrationMoodStyles = new Dictionary<string, IReadOnlyList<string>>
+        {
+            ["en"] = ["happy", "joyful", "hopeful", "excited", "softvoice", "whispering"],
         },
 
         // Both CoComelon and Vlad and Niki run exactly this architecture - an unchanging

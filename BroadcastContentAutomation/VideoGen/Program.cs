@@ -507,7 +507,7 @@ async Task<int> RunManualAsync()
         new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true })
         ?? throw new InvalidDataException($"{scriptFile} is not valid script JSON.");
 
-    var script = ScriptGenerator.FinalizeManualScript(profile, draft, formatOverride);
+    var script = ScriptGenerator.FinalizeManualScript(profile, draft, formatOverride, language!);
     script.Language = language!;
     script.Profile = profile.Id;
 
@@ -678,6 +678,7 @@ async Task<int> RunAssembleAsync()
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
     profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
+    var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
 
     // The no-Vidu hybrid pipeline (Deliverable 6) resolves every scene's visual
     // synchronously during --prep - stock footage and manual art are both already on
@@ -785,7 +786,7 @@ async Task<int> RunAssembleAsync()
             $"Like, follow, and subscribe. Watch the full video on YouTube — {profile.OutroDestinationSpoken}.";
         var shortOutroAudio = await ResolveOutroAudioAsync(shortOutroSpoken);
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
-            outroLines: shortOutroLines, outroAudioPath: shortOutroAudio);
+            outroLines: shortOutroLines, outroAudioPath: shortOutroAudio, isCalm: formatDef.IsCalm);
     }
     else
     {
@@ -821,7 +822,7 @@ async Task<int> RunAssembleAsync()
     var landscape = Path.Combine(outputDir, $"{slug}-{language}.mp4");
     if (profile.AllowsContextScenes)
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood,
-            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
     else
         await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood,
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);

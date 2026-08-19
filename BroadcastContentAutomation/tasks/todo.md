@@ -3236,3 +3236,116 @@ reliably as `musicMood`'s already does, and whether the resulting audio
 audibly improves on the flat read. First real chronicleandchaos `--prep`
 is the actual test.
 
+## Kids-voice swap (GiggleGarden) + extending mood modulation to it
+
+User picked `en-US-Harper:MAI-Voice-2-Flash` over the current
+`en-US-AnaNeural` (verified live: Ana has no `express-as` styles at all,
+same dead end `EricNeural` had — see the Chronicle & Chaos section
+above) and asked for mood modulation to be built for GiggleGarden too.
+Verified live against Azure's `/cognitiveservices/voices/list`: Harper's
+StyleList is `angry, confused, determined, embarrassed, excited, happy,
+hopeful, joyful, regretful, relieved, sad, shouting, softvoice,
+whispering` (14 styles) — `Status: "Preview"`, same caveat as any
+preview-tier voice: broader style range, less proven consistency than a
+GA voice.
+
+Root-cause complication `NarrationMoodStyles` doesn't yet handle:
+GiggleGarden has 3 `VoiceOverride` languages (en/hi/pa) sharing ONE
+profile, but `ContentProfile.NarrationMoodStyles` is a single flat list
+applied regardless of language — safe for Mythology (English-only
+channel) but not here. Confirmed live: `hi-IN-SwaraNeural`'s StyleList is
+only `newscast, cheerful, empathetic` (already pinned to `cheerful`) and
+`pa-IN-VaaniNeural` has none at all — neither overlaps Harper's English
+menu at all. If the flat-list design were reused as-is, a hi/pa script
+could get tagged with e.g. `"happy"` and `AzureTtsProvider` would send an
+unverified `express-as` style to Swara/Vaani, which risks failing that
+scene's whole TTS call. `NarrationMoodStyles` needs to become
+language-aware before GiggleGarden can safely use it.
+
+### Plan
+
+1. **`ContentProfile.cs`** — change `NarrationMoodStyles` from
+   `IReadOnlyList<string>` to
+   `IReadOnlyDictionary<string, IReadOnlyList<string>>` (default empty
+   dict), keyed by the same language codes `VoiceOverride` uses. Update
+   its doc comment to explain the per-language keying and why (a
+   profile's languages can point at voices with completely different
+   style capabilities).
+2. **`MythologyProfile.cs`** — wrap its existing list as
+   `["en"] = [...]` (Mythology only ever populated `en` anyway; pure
+   reshape, no behavior change).
+3. **`GiggleGardenProfile.cs`** —
+   - `VoiceOverride["en"]` → `("en-US", "en-US-Harper:MAI-Voice-2-Flash", null)`.
+   - `NarrationMoodStyles = { ["en"] = ["happy", "joyful", "hopeful", "excited", "softvoice", "whispering"] }`
+     — the gentle/positive subset of Harper's 14 styles only (drops
+     angry, confused, determined, embarrassed, regretful, sad, shouting
+     — wrong register for a `MadeForKids` 2-6-year-old audience regardless
+     of what the voice can technically do). `hi`/`pa` deliberately
+     omitted (no key), not set to `[]` explicitly — same effect
+     (`GetValueOrDefault` returns empty), but omitting makes it visually
+     obvious in the source that those languages were considered and
+     excluded, not forgotten.
+4. **`ScriptGenerator.cs`**:
+   - `GenerateAsync`: resolve
+     `var moodStyles = profile.NarrationMoodStyles.GetValueOrDefault(language, []);`
+     once, use `moodStyles` (not `profile.NarrationMoodStyles`) for the
+     `moodGuidance` block, the JSON-schema mood field condition, and the
+     `NormalizeSceneMoods` call. Pass `moodStyles` through to
+     `GenerateContinuationActAsync`.
+   - `GenerateContinuationActAsync`: add a `moodStyles` parameter (caller
+     already resolved it — no need to re-resolve or thread `language`
+     through), use it the same way in its own `moodGuidance`/JSON-schema
+     spots.
+   - `FinalizeManualScript`: add a `string language` parameter (the
+     caller, `Program.cs`'s `RunManualAsync`, already has `language` in
+     scope), resolve `moodStyles` the same way, pass to
+     `NormalizeSceneMoods`.
+   - `NormalizeSceneMoods`: change signature from
+     `(IEnumerable<Scene> scenes, ContentProfile profile)` to
+     `(IEnumerable<Scene> scenes, IReadOnlyList<string> moodStyles)` —
+     it only ever needed the resolved list, not the whole profile.
+5. **`Program.cs`** — update the one `FinalizeManualScript` call site to
+   pass `language!` as the new trailing argument.
+
+### Not doing
+
+- No change to `hi`/`pa` narration at all — `SwaraNeural` keeps its
+  existing fixed `"cheerful"` style, `VaaniNeural` stays styleless, both
+  exactly as before. Matches the user's explicit "we do not care about
+  Hindi and Punjabi" scope for this request.
+- No separate gentler style menu needed for Mythology — its reshape into
+  the dictionary is mechanical, same single `en` entry, same 9 styles,
+  same behavior.
+- Not swapping Harper for the non-Flash `en-US-Harper:MAI-Voice-2`
+  variant (also live-verified, identical StyleList, `VoiceType:
+  "NeuralHD"` instead of `"Neural"`) — Flash is what was actually
+  sampled and sent to the user for the pick, so that's what ships.
+
+### Verification plan
+
+`dotnet build` clean. Then a real `--prep --profile gigglegarden
+--language en` run to confirm: Harper's audio quality holds up in
+practice (preview-tier voice, not yet heard outside the single sample
+line), the model returns varied `mood` tags scene-to-scene from the
+6-style gentle menu, and a `--prep --language hi` (or `pa`) run to
+confirm hi/pa scripts come back with no `mood` field at all (proving the
+language-scoping actually works, not just compiles).
+
+### Review
+
+Implemented as planned, all 5 files (`ContentProfile.cs`,
+`MythologyProfile.cs`, `GiggleGardenProfile.cs`, `ScriptGenerator.cs`,
+`Program.cs`). No deviations. `dotnet build` clean (0 warnings, 0
+errors). `NarrationMoodStyles` is now per-language everywhere it's read
+or written; `hi`/`pa` for GiggleGarden and every other language on every
+other profile resolve to an empty list via `GetValueOrDefault`, so their
+prompt/JSON-schema/TTS behavior is unchanged.
+
+**Not verified — needs live runs before trusting it:** no `--prep` has
+been run since this change. Unverified: Harper's actual audio quality
+across a full script (only one sample line has been heard), whether the
+model reliably picks from the 6-style gentle menu, and whether hi/pa
+`--prep` runs really come back with no `mood` field (the language-keyed
+lookup compiles correctly but its runtime behavior across all 3
+GiggleGarden languages hasn't been exercised).
+

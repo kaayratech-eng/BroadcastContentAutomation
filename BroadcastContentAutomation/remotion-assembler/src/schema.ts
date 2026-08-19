@@ -29,6 +29,9 @@ export const assemblyPropsSchema = z.object({
   outroSeconds: z.number().min(0).default(0),
   outroLines: z.array(z.string()).default([]),
   outroAudioPath: z.string().optional(),
+  // Drives scene-transition style/duration - calm formats (retellingArc) get a slower
+  // dissolve, brisk formats (topFive) get a quick one. See ContentFormatDef.IsCalm.
+  isCalm: z.boolean().default(false),
 });
 
 export type SceneAsset = z.infer<typeof sceneAssetSchema>;
