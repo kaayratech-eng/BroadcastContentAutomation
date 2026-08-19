@@ -32,7 +32,8 @@ static class CharacterSource
     // background music is picked: --assemble may run days after --prep and has to
     // reproduce the same choice, and a resubmitted scene must not come back as a
     // different character.
-    public static CharacterBrief? FromPool(ContentProfile profile, string workDir, IReadOnlySet<string>? exclude = null)
+    public static async Task<CharacterBrief?> FromPool(
+        ContentProfile profile, GenConfig cfg, string workDir, IReadOnlySet<string>? exclude = null)
     {
         if (string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return null;
 
@@ -81,8 +82,44 @@ static class CharacterSource
         if (string.IsNullOrWhiteSpace(entry?.Name) || string.IsNullOrWhiteSpace(entry.Description))
             throw new Exception($"{Path.GetFileName(sidecarPath)} needs both a \"name\" and a \"description\".");
 
+        var imagePath = await EnsurePortraitAsync(cfg, picked);
+
         Console.WriteLine($"  Character: {entry.Name} from the pool ({Path.GetFileName(picked)})");
-        return new CharacterBrief(entry.Name, entry.Description, picked, entry.Catchphrase);
+        return new CharacterBrief(entry.Name, entry.Description, imagePath, entry.Catchphrase);
+    }
+
+    // DrawAsync always fits a freshly-generated character to true 1080x1920 before it
+    // reaches the pool (SaveToPool), but a pool is also meant to take hand-dropped art
+    // (see FromPool's "no images in it" message above) - nothing enforced that art
+    // actually be portrait. A landscape or square image sent to Vidu as the start frame
+    // comes back landscape too, and the vertical assembly's fill+crop (VideoAssembler.
+    // BuildVideoClipAsync) then has to cut most of the width off to force it back to
+    // 9:16. Fitting in place here, once, the first time a mis-shaped pool image is
+    // picked, means it never needs fixing again and every later video that draws this
+    // character gets it for free.
+    private static async Task<string> EnsurePortraitAsync(GenConfig cfg, string imagePath)
+    {
+        var (width, height) = await VideoAssembler.GetImageDimensionsAsync(cfg, imagePath);
+        if (Math.Abs(width / (double)height - 9.0 / 16.0) < 0.02) return imagePath;
+
+        Console.WriteLine(
+            $"  Character: {Path.GetFileName(imagePath)} is {width}x{height}, not 9:16 - fitting to portrait in place.");
+
+        // Always lands on .png regardless of the source extension - matches what
+        // DrawAsync/SaveToPool already produce for every other pool entry. The sidecar
+        // is found by base name (Path.ChangeExtension(picked, ".json")), so renaming the
+        // image here doesn't orphan it. Fits into a distinct temp file first since ffmpeg
+        // is still reading imagePath as the source while writing it.
+        var directory = Path.GetDirectoryName(imagePath) ?? "";
+        var baseName = Path.GetFileNameWithoutExtension(imagePath);
+        var temp = Path.Combine(directory, baseName + "-fitting.png");
+        var finalPath = Path.Combine(directory, baseName + ".png");
+
+        await VideoAssembler.FitToPortraitAsync(cfg, imagePath, temp);
+        File.Delete(imagePath);
+        File.Move(temp, finalPath, overwrite: true);
+
+        return finalPath;
     }
 
     // Draws the character the script just invented, so the picture matches the words
@@ -255,16 +292,16 @@ static class CharacterSource
     // instead of staying a stranger every video. Only CharacterPoolPath being a *folder*
     // engages this; empty (always invent) and a single file (always pin) are exactly as
     // they were before this existed.
-    public static (CharacterBrief? Pooled, bool AddToPool) Resolve(ContentProfile profile, GenConfig cfg, string workDir)
+    public static async Task<(CharacterBrief? Pooled, bool AddToPool)> Resolve(ContentProfile profile, GenConfig cfg, string workDir)
     {
         if (string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return (null, false);
-        if (File.Exists(profile.CharacterPoolPath)) return (FromPool(profile, workDir), false);
+        if (File.Exists(profile.CharacterPoolPath)) return (await FromPool(profile, cfg, workDir), false);
 
         var size = PoolSize(profile);
         if (size < profile.CharacterPoolBuildupSize) return (null, true);
 
         if (size >= profile.CharacterPoolMaxSize)
-            return (FromPool(profile, workDir, RecentPoolPicks(profile, cfg, workDir, profile.CharacterPoolCooldown)), false);
+            return (await FromPool(profile, cfg, workDir, RecentPoolPicks(profile, cfg, workDir, profile.CharacterPoolCooldown)), false);
 
         // The mixing zone: still occasionally let a new character in, but mostly reuse.
         // This flip doesn't need to be reproducible across --prep/--assemble the way the
@@ -273,7 +310,7 @@ static class CharacterSource
         // downstream.
         return Random.Shared.Next(2) == 0
             ? (null, true)
-            : (FromPool(profile, workDir, RecentPoolPicks(profile, cfg, workDir, profile.CharacterPoolCooldown)), false);
+            : (await FromPool(profile, cfg, workDir, RecentPoolPicks(profile, cfg, workDir, profile.CharacterPoolCooldown)), false);
     }
 
     private static int StableIndex(string workDir, int count)

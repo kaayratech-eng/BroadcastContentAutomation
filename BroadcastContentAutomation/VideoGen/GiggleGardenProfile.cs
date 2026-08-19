@@ -8,6 +8,8 @@ static class GiggleGardenProfile
     {
         Id = "gigglegarden",
         ChannelName = "Giggle Wiggle Town",
+        OutroDestinationText = "Giggle Wiggle Town",
+        OutroDestinationSpoken = "Giggle Wiggle Town",
         UsesCharacterMascot = true,
         MadeForKids = true,
 

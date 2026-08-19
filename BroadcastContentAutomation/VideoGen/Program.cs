@@ -143,7 +143,7 @@ async Task<int> RunPrepAsync()
     //    with the words and the artwork describing the same creature, which is the
     //    whole point - they used to disagree.
     var (pooled, addToPool) = profile.UsesCharacterMascot
-        ? CharacterSource.Resolve(profile, cfg, workDir)
+        ? await CharacterSource.Resolve(profile, cfg, workDir)
         : (null, false);
     var recentNames = profile.UsesCharacterMascot && pooled is null
         ? CharacterSource.RecentNames(cfg, workDir) : [];
@@ -255,7 +255,7 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
             continue;
         }
 
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
         scene.AudioPath = audioPath;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
@@ -264,6 +264,29 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
 
     var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
     Console.WriteLine($"Narration total: {total:0}s");
+}
+
+// The "like, follow & subscribe" outro line is fixed per channel (see
+// ContentProfile.OutroDestinationSpoken) rather than per-video, so it is synthesized once
+// and cached on disk under VideoGen/assets/audio/outro - every later render for the same
+// profile/language/text reuses the same file instead of paying TTS again for words that
+// never change.
+async Task<string> ResolveOutroAudioAsync(string spokenText)
+{
+    // Same hardcoded-absolute-path convention as BackgroundMusicPath/CharacterPoolPath in
+    // GiggleGardenProfile.cs/MythologyProfile.cs, not one relative to the build output dir.
+    const string outroAudioDir = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\audio\outro";
+    Directory.CreateDirectory(outroAudioDir);
+
+    var key = new string(spokenText.ToLowerInvariant()
+        .Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray());
+    var audioPath = Path.Combine(outroAudioDir, $"{profile.Id}-{language}-{key}.mp3");
+    if (File.Exists(audioPath)) return audioPath;
+
+    var tts = TtsProviderFactory.Create(cfg, profile, language!);
+    await tts.SynthesizeAsync(spokenText, language!, audioPath, "-4%", "+6%");
+    Console.WriteLine($"Outro audio synthesized: {audioPath}");
+    return audioPath;
 }
 
 // The no-Vidu hybrid pipeline's visuals (Deliverable 6, tasks/todo.md): a "context" scene's
@@ -554,7 +577,7 @@ async Task<int> RunRettsAsync()
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
         scene.AudioPath = audioPath;
 
         var before = scene.DurationSeconds;
@@ -742,11 +765,33 @@ async Task<int> RunAssembleAsync()
     if (shortScenes.Count < script.Scenes.Count)
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
 
+    // "LIKE, FOLLOW & SUBSCRIBE" outro card/voiceover appended to every render (see
+    // ContentProfile.OutroDestinationText/-Spoken) - AllowsContextScenes profiles (today:
+    // chronicleandchaos) additionally fold in a "watch the full video" line on the vertical
+    // short only, since that render is a trimmed teaser for the landscape master rather
+    // than the full video itself.
+    var baseOutroLines = new[] { "LIKE, FOLLOW & SUBSCRIBE", profile.OutroDestinationText };
+    var baseOutroSpoken = $"Like, follow, and subscribe on YouTube — {profile.OutroDestinationSpoken}!";
+    var baseOutroAudio = await ResolveOutroAudioAsync(baseOutroSpoken);
+
     var vertical = Path.Combine(outputDir, $"{slug}-{language}-short.mp4");
     if (profile.AllowsContextScenes)
-        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood);
+    {
+        var shortOutroLines = new[]
+        {
+            "LIKE, FOLLOW & SUBSCRIBE", "Watch the full video on YouTube", profile.OutroDestinationText,
+        };
+        var shortOutroSpoken =
+            $"Like, follow, and subscribe. Watch the full video on YouTube — {profile.OutroDestinationSpoken}.";
+        var shortOutroAudio = await ResolveOutroAudioAsync(shortOutroSpoken);
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
+            outroLines: shortOutroLines, outroAudioPath: shortOutroAudio);
+    }
     else
-        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
+    {
+        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
+    }
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
@@ -775,9 +820,11 @@ async Task<int> RunAssembleAsync()
     // than generating a second orientation, which would double the per-video spend.
     var landscape = Path.Combine(outputDir, $"{slug}-{language}.mp4");
     if (profile.AllowsContextScenes)
-        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood);
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     else
-        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
+        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 

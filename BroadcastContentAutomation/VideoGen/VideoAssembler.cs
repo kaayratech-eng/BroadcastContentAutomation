@@ -14,7 +14,8 @@ static partial class VideoAssembler
     // image path, so the two produce interchangeable output.
     public static async Task AssembleFromClipsAsync(
         ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes, string language,
-        string workDir, string outputPath, int w, int h, string? musicMood = null)
+        string workDir, string outputPath, int w, int h, string? musicMood = null,
+        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
@@ -46,6 +47,16 @@ static partial class VideoAssembler
             durations.Add(duration);
         }
 
+        // "LIKE, FOLLOW & SUBSCRIBE" card appended as one more clip ahead of the crossfaded
+        // concat, so it rides through the same crossfade/music-duck/mix pipeline as every
+        // real scene instead of needing its own audio-mixing logic.
+        if (outroLines is { Count: > 0 })
+        {
+            var (outroClip, outroDuration) = await BuildOutroClipAsync(cfg, outroLines, outroAudioPath, w, h, workDir, tag);
+            sceneClips.Add(outroClip);
+            durations.Add(outroDuration);
+        }
+
         var concatPath = Path.Combine(workDir, $"concat-{tag}.mp4");
         var total = await BuildCrossfadedConcatAsync(cfg, sceneClips, durations, concatPath);
 
@@ -62,7 +73,8 @@ static partial class VideoAssembler
     // two pipelines stay easy to compare.
     public static async Task AssembleWithRemotionAsync(
         ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes,
-        string workDir, string outputPath, int w, int h, string? musicMood = null)
+        string workDir, string outputPath, int w, int h, string? musicMood = null,
+        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
@@ -109,10 +121,46 @@ static partial class VideoAssembler
             musicRelative = ToPublicDirRelative(musicDest);
         }
 
+        // Was a hardcoded 0.15 linear multiplier applied to whatever loudness the picked
+        // track file happens to have - no normalization, unlike MixBackgroundMusicAsync's
+        // ffmpeg path below, which is exactly the "fixed multiplier suits one track and not
+        // another" failure mode described there. Measuring here and converting the same
+        // dB gain to a linear multiplier (Remotion's <Audio volume=> is linear, not dB)
+        // makes BackgroundMusicLufs finally do something on this pipeline too.
+        var musicVolume = 0.0;
+        if (music is not null)
+        {
+            var gainDb = profile.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, music);
+            musicVolume = Math.Clamp(Math.Pow(10, gainDb / 20), 0.0, 1.0);
+        }
+
+        // Same copy-in-then-relativize treatment as the music track above - the cached
+        // outro voiceover (see Program.cs's ResolveOutroAudioAsync) lives outside workDir,
+        // so it needs to land under --public-dir too before staticFile() can reach it.
+        double outroSeconds = 0;
+        string? outroAudioRelative = null;
+        if (outroLines is { Count: > 0 })
+        {
+            outroSeconds = outroAudioPath is not null
+                ? await GetAudioDurationAsync(cfg, outroAudioPath) + 0.75   // trailing beat
+                : 3.0;
+
+            if (outroAudioPath is not null)
+            {
+                var outroAudioDest = Path.Combine(workDir, Path.GetFileName(outroAudioPath));
+                if (!string.Equals(Path.GetFullPath(outroAudioPath), Path.GetFullPath(outroAudioDest), StringComparison.OrdinalIgnoreCase))
+                    File.Copy(outroAudioPath, outroAudioDest, overwrite: true);
+                outroAudioRelative = ToPublicDirRelative(outroAudioDest);
+            }
+        }
+
         var props = new RemotionAssemblyProps(
             Scenes: assets, WidthPx: w, HeightPx: h, Fps: 30,
             BackgroundMusicPath: musicRelative,
-            BackgroundMusicVolume: 0.15);
+            BackgroundMusicVolume: musicVolume,
+            OutroSeconds: outroSeconds,
+            OutroLines: outroLines?.ToList() ?? [],
+            OutroAudioPath: outroAudioRelative);
 
         var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
         await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
@@ -135,7 +183,8 @@ static partial class VideoAssembler
 
     private sealed record RemotionAssemblyProps(
         List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx, int Fps,
-        string? BackgroundMusicPath, double BackgroundMusicVolume);
+        string? BackgroundMusicPath, double BackgroundMusicVolume, double OutroSeconds,
+        List<string> OutroLines, string? OutroAudioPath);
 
     // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. Routed through
     // cmd.exe rather than launched directly: npx resolves to npx.cmd on Windows, and
@@ -374,8 +423,51 @@ static partial class VideoAssembler
 
         await RunFfmpegAsync(cfg,
             $"-y -i \"{sourceClip}\" -t {Text.Invariant(duration)} " +
-            $"-filter_complex \"[0:v]{vf}[v]\" -map \"[v]\" -r 30 -pix_fmt yuv420p " +
+            $"-filter_complex \"[0:v]{vf}[v]\" -map \"[v]\" -r 30 -pix_fmt yuv420p -color_range tv " +
             $"-an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"");
+    }
+
+    // "LIKE, FOLLOW & SUBSCRIBE" outro card for the ffmpeg pipeline (GiggleGarden has no
+    // Remotion equivalent - see AssembleWithRemotionAsync's Outro Sequence for that path).
+    // A black background with stacked drawtext lines, muxed with the cached voiceover (or
+    // silence if none was given) into one clip of the same shape as a real scene clip, so
+    // the caller can append it to sceneClips/durations and let it ride through the existing
+    // crossfade/music-duck pipeline unchanged.
+    private static async Task<(string Path, double Duration)> BuildOutroClipAsync(
+        GenConfig cfg, IReadOnlyList<string> lines, string? audioPath, int w, int h, string workDir, string tag)
+    {
+        var duration = audioPath is not null
+            ? await GetAudioDurationAsync(cfg, audioPath) + 0.75   // trailing beat
+            : 3.0;
+
+        var fontSize = h > w ? 56 : 48;
+        var lineHeight = (int)(fontSize * 1.4);
+        var totalTextHeight = lines.Count * lineHeight;
+        var font = FilterPath(cfg.SubtitleFontPath);
+        var sb = new StringBuilder();
+
+        for (var i = 0; i < lines.Count; i++)
+        {
+            var textFile = Path.Combine(workDir, $"outro-{tag}-{i}.txt");
+            File.WriteAllText(textFile, lines[i], new UTF8Encoding(false));
+
+            var y = $"(h-{totalTextHeight})/2+{i * lineHeight}";
+            if (sb.Length > 0) sb.Append(',');
+            sb.Append($"drawtext=textfile='{FilterPath(textFile)}':fontfile='{font}':")
+              .Append($"fontsize={fontSize}:fontcolor=white:borderw=3:bordercolor=black:")
+              .Append($"x=(w-text_w)/2:y={y}");
+        }
+
+        var audioInput = audioPath is not null ? $"-i \"{audioPath}\"" : "-f lavfi -i anullsrc=r=44100:cl=stereo";
+        var outputPath = Path.Combine(workDir, $"outro-{tag}.mp4");
+
+        await RunFfmpegAsync(cfg,
+            $"-y -f lavfi -i \"color=c=black:s={w}x{h}:d={Text.Invariant(duration)}\" {audioInput} " +
+            $"-filter_complex \"[0:v]{sb}[v]\" -map \"[v]\" -map 1:a " +
+            $"-t {Text.Invariant(duration)} -r 30 -pix_fmt yuv420p -color_range tv " +
+            $"-c:v libx264 -preset medium -crf 20 -c:a aac -b:a 128k -ar 44100 -shortest \"{outputPath}\"");
+
+        return (outputPath, duration);
     }
 
     // Thumbnail source frame, pulled from the finished render instead of a separately
@@ -506,7 +598,7 @@ static partial class VideoAssembler
         await RunFfmpegAsync(cfg,
             $"-y {inputs} -filter_complex \"{string.Join(";", filters)}\" " +
             $"-map \"[{vLabel}]\" -map \"[{aLabel}]\" " +
-            $"-r 30 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
+            $"-r 30 -pix_fmt yuv420p -color_range tv -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
             $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"");
 
         return cumulative;
@@ -554,6 +646,28 @@ static partial class VideoAssembler
             throw new Exception($"ffprobe returned no usable duration for {Path.GetFileName(audioPath)} (got \"{stdout.Trim()}\").");
 
         return seconds;
+    }
+
+    public static async Task<(int Width, int Height)> GetImageDimensionsAsync(GenConfig cfg, string imagePath)
+    {
+        var ffprobe = string.IsNullOrEmpty(cfg.FfprobePath) ? "ffprobe" : cfg.FfprobePath;
+        var psi = new ProcessStartInfo(ffprobe,
+            $"-v error -select_streams v:0 -show_entries stream=width,height -of csv=p=0 \"{imagePath}\"")
+        { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+
+        using var p = StartOrThrow(psi, ffprobe);
+        var stdout = await p.StandardOutput.ReadToEndAsync();
+        var stderr = await p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+
+        if (p.ExitCode != 0)
+            throw new Exception($"ffprobe failed (exit {p.ExitCode}) on {Path.GetFileName(imagePath)}:\n{Text.Tail(stderr, 500)}");
+
+        var parts = stdout.Trim().Split(',');
+        if (parts.Length != 2 || !int.TryParse(parts[0], out var width) || !int.TryParse(parts[1], out var height))
+            throw new Exception($"ffprobe returned no usable dimensions for {Path.GetFileName(imagePath)} (got \"{stdout.Trim()}\").");
+
+        return (width, height);
     }
 
     // Returns stderr, which is where ffmpeg puts everything interesting - including the

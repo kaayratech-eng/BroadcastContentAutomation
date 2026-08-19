@@ -68,6 +68,8 @@ static async Task RunAsync(AppConfig cfg, Logger log)
             new InstagramPublisher(kv.Value.Instagram, log),
             new FacebookPublisher(kv.Value.Facebook, log),
             new TikTokPublisher(kv.Value.TikTok, log),
+            new InstagramStoryPublisher(kv.Value.Instagram, log),
+            new FacebookStoryPublisher(kv.Value.Facebook, log),
         }.ToDictionary(p => p.Platform, StringComparer.OrdinalIgnoreCase),
         StringComparer.OrdinalIgnoreCase);
 

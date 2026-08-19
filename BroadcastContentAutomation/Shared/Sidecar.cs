@@ -9,8 +9,10 @@ public static class Platforms
     public const string Instagram = "instagram";
     public const string Facebook = "facebook";
     public const string TikTok = "tiktok";
+    public const string InstagramStory = "instagram_story";
+    public const string FacebookStory = "facebook_story";
 
-    public static readonly string[] All = [YouTube, Instagram, Facebook, TikTok];
+    public static readonly string[] All = [YouTube, Instagram, Facebook, TikTok, InstagramStory, FacebookStory];
 }
 
 public enum PublishStatus

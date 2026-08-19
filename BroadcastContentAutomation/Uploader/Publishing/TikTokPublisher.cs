@@ -99,7 +99,7 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
             var uploadUrl = data.GetProperty("upload_url").GetString()!;
 
             log.Info($"  [tiktok] publish {publishId}, uploading {Text.Bytes(info.Length)}");
-            log.Info($"  [tiktok] caption saved to {Path.GetFileName(captionFile)} - copy-paste it when you open the draft in the app");
+            log.Info($"  [tiktok] caption (also saved to {Path.GetFileName(captionFile)}) - copy-paste into the draft:\n{caption}");
 
             await using (var stream = File.OpenRead(request.VideoPath))
             using (var content = new StreamContent(stream))

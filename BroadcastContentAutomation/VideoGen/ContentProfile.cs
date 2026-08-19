@@ -158,6 +158,25 @@ record ContentProfile
     // louder music.
     public required double BackgroundMusicLufs { get; init; }
 
+    // Burned-in destination line for the "LIKE, FOLLOW & SUBSCRIBE" outro card appended to
+    // every render (see VideoAssembler's outro clip/Sequence) - e.g. "@chronicleandchaoshq"
+    // or "Giggle Wiggle Town".
+    public required string OutroDestinationText { get; init; }
+
+    // TTS-friendly form of the same destination, used only for the outro's spoken line -
+    // e.g. "Chronicle and Chaos" instead of the literal "@chronicleandchaoshq" handle, which
+    // Azure/Google would otherwise spell out letter by letter.
+    public required string OutroDestinationSpoken { get; init; }
+
+    // Closed menu of Azure express-as styles this profile's active voice actually supports
+    // (verified live against /cognitiveservices/voices/list - see VoiceOverride). Empty (the
+    // default) means "don't ask the model for a per-scene mood, don't touch narration style" -
+    // ScriptGenerator only emits the mood-tagging prompt block when this is non-empty, so a
+    // profile whose voice has no styles (or that routes through Google, which has none at all)
+    // is untouched. Non-empty only makes sense paired with an AzureTtsProvider voice that
+    // actually has an express-as StyleList; an unverified style string risks a failed Azure call.
+    public IReadOnlyList<string> NarrationMoodStyles { get; init; } = [];
+
     public void Validate()
     {
         // Everything below only matters for profiles that actually use the character-pool
