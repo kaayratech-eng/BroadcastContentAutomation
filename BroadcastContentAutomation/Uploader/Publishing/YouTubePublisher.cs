@@ -105,7 +105,14 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         {
             using var stream = new FileStream(thumbPath, FileMode.Open, FileAccess.Read);
             var set = youtube.Thumbnails.Set(videoId, stream, "image/jpeg");
-            await set.UploadAsync(ct);
+            var progress = await set.UploadAsync(ct);
+
+            // UploadAsync doesn't throw on failure - it catches internally and reports
+            // through IUploadProgress instead, so an unchecked call here silently logs
+            // success even when the thumbnail was rejected (e.g. channel not phone-verified).
+            if (progress.Status == UploadStatus.Failed)
+                throw progress.Exception ?? new Exception("thumbnail upload failed with no further detail");
+
             log.Info("  [youtube] custom thumbnail set");
         }
         catch (Exception ex)
