@@ -8,6 +8,8 @@ static class MythologyProfile
     {
         Id = "chronicleandchaos",
         ChannelName = "Chronicle & Chaos",
+        OutroDestinationText = "@chronicleandchaoshq",
+        OutroDestinationSpoken = "Chronicle and Chaos",
         UsesCharacterMascot = true,
         MadeForKids = false,
 
@@ -113,14 +115,26 @@ static class MythologyProfile
 
         VoiceOverride = new Dictionary<string, (string Locale, string Voice, string? Style)>
         {
-            // Verified live against Azure's /cognitiveservices/voices/list: en-US-EricNeural
-            // has no express-as styles at all, so Style is null and prosody (rate/pitch) is
-            // the only lever - deliberately chosen over AriaNeural (female, calm) for a bolder,
-            // deeper "documentary narrator" read matching this channel's biggest comps (The Why
-            // Files, The Infographics Show, both male-narrated). Only "en" is populated - this
+            // Verified live against Azure's /cognitiveservices/voices/list: en-US-DavisNeural
+            // supports express-as styles (angry, sad, excited, terrified, shouting, whispering,
+            // etc.), unlike EricNeural which had none - picked after sampling both for a deeper,
+            // more cinematic "documentary narrator" read matching this channel's biggest comps
+            // (The Why Files, The Infographics Show, both male-narrated), and because the style
+            // list is what per-scene mood modulation will need. Only "en" is populated - this
             // channel is US/UK-weighted English, unlike GiggleGarden's hi/pa reach.
-            ["en"] = ("en-US", "en-US-EricNeural", null),
+            ["en"] = ("en-US", "en-US-DavisNeural", null),
         },
+
+        // Dramatic subset of Davis's verified live style list (angry, cheerful, excited,
+        // friendly, hopeful, sad, shouting, terrified, unfriendly, whispering) - drops "chat"
+        // and "unfriendly" as not useful for documentary/mythology narration. Drives
+        // ScriptGenerator's per-scene mood tagging (see Scene.Mood) so narration style actually
+        // shifts with what's happening in the scene, instead of one flat rate/pitch for the
+        // whole video.
+        NarrationMoodStyles =
+        [
+            "angry", "sad", "excited", "hopeful", "terrified", "shouting", "whispering", "cheerful", "friendly",
+        ],
 
         BaseTags =
         [
@@ -154,14 +168,13 @@ static class MythologyProfile
 
         BackgroundMusicPath = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\music-mythology",
 
-        // Placeholder pending real measurement: no narration has actually been synthesized with
-        // en-US-AriaNeural yet (see tasks/todo.md - blocked on Claude credits/Groq key for
-        // --dry-script, though a --test-tts pass doesn't need those and could confirm this
-        // sooner). GiggleGarden's -36 was tuned against a lighter, higher-pitched preschool
-        // narrator; a firmer documentary narrator can likely sit a bit more forward, hence -30
-        // rather than copying -36 verbatim - but this needs to be checked by ear once real
-        // narration and real music assets exist, same as GiggleGarden's was.
-        BackgroundMusicLufs = -30.0,
+        // Was -30.0, tuned against nothing (see the now-fixed bug in
+        // VideoAssembler.AssembleWithRemotionAsync where this value was declared but never
+        // actually read - the Remotion mix used a flat 0.15 linear multiplier regardless).
+        // Lowered to -34.0, closer to GiggleGarden's -36.0, in direct response to a "the
+        // background music is loud" report on real rendered output. Still a placeholder to
+        // check by ear against more videos, not a final measurement.
+        BackgroundMusicLufs = -34.0,
     };
 
     // Builds all 5 Chronicle & Chaos formats as ContentFormatDef entries, mirroring

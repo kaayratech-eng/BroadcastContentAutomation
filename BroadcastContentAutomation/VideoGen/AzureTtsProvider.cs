@@ -22,22 +22,24 @@ partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (strin
     [GeneratedRegex(@"\p{Lu}{2,}")]
     private static partial Regex AllCapsRun();
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
 
-        var (locale, voice, style) = voices.TryGetValue(language, out var v) ? v : voices["en"];
+        var (locale, voice, profileStyle) = voices.TryGetValue(language, out var v) ? v : voices["en"];
         var escaped = System.Security.SecurityElement.Escape(SpeakableCase(text));
 
         // Rate/pitch come from the caller's resolved ContentFormatDef (see
         // ScriptGenerator.PickFormat) so a format's pacing can't drift between what the
-        // script says (NarrationStyle) and what actually gets spoken. The voice's
-        // express-as style (below) is deliberately left untouched by format - only styles
-        // verified live against Azure for a given voice (e.g. "cheerful" for GiggleGarden's
-        // voices, "narration-professional" for en-US-AriaNeural) should ever appear in a
-        // profile's VoiceOverride, since an unverified style value risks a failed Azure call
+        // script says (NarrationStyle) and what actually gets spoken. The style is either
+        // this scene's own mood tag (styleOverride, see Scene.Mood/ContentProfile.
+        // NarrationMoodStyles - already validated against the voice's real StyleList by
+        // ScriptGenerator before it gets here) or, absent one, the profile's fixed
+        // VoiceOverride style - only styles verified live against Azure for a given voice
+        // should ever appear in either, since an unverified value risks a failed Azure call
         // outright.
+        var style = styleOverride ?? profileStyle;
         var prosody = $"<prosody rate='{rate}' pitch='{pitch}'>{escaped}</prosody>";
         var voiceContent = style is null
             ? prosody

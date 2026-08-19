@@ -55,12 +55,11 @@ record GenConfig
     public string StabilityApiKey { get; init; } = "";
 
     // Pexels stock photo/video search (see StockFootageClient) - the auto-fetched
-    // "context/b-roll moment" visual source for the stock-footage/Remotion pipeline
-    // (Deliverable 6, tasks/todo.md). Free API, no card required; license permits
-    // commercial/monetized use with no attribution needed (checked live before
-    // adopting). Not yet required in Validate() below - nothing calls this client
-    // until the pipeline is wired up, so an unset key must not block the existing
-    // Vidu-based runs from starting.
+    // "context/b-roll moment" visual source for the stock-footage/Remotion pipeline.
+    // Free API, no card required; license permits commercial/monetized use with no
+    // attribution needed (checked live before adopting). Only required by Validate()
+    // below for profiles with AllowsContextScenes = true (chronicleandchaos) - the
+    // Vidu-only gigglegarden profile never calls StockFootageClient.
     public string PexelsApiKey { get; init; } = "";
 
     // Absolute path to the remotion-assembler sibling project (Deliverable 6,
@@ -70,16 +69,18 @@ record GenConfig
     // Vidu/ffmpeg path never reaches it, so an unset value doesn't block that channel.
     public string RemotionProjectPath { get; init; } = "";
 
+    // Ceiling on a single `npx remotion render` call - headless-Chromium frame rendering
+    // has no other progress signal once it's running, so without a bound a genuine hang
+    // (Chromium wedged, npx stuck resolving) would wait forever. A long-form landscape
+    // render (many scenes, full narration length rather than the ~90s vertical cap) is
+    // legitimately slow, not stuck - keep this generous rather than tune it tight.
+    public int RemotionRenderTimeoutMinutes { get; init; } = 180;
+
     // Public YouTube Data API key (no OAuth - Google Cloud Console -> Credentials ->
     // API key, with "YouTube Data API v3" enabled) used to pull real trending kids'
     // titles as topic inspiration when --topic is not given. Separate from the
     // Uploader's OAuth client secret, which is a heavier credential for a different job.
     public string YouTubeApiKey { get; init; } = "";
-
-    // Render a second, natively-vertical image set for the 9:16 cut. Without this the
-    // vertical render centre-crops a 3:2 landscape frame and reliably decapitates the
-    // character. Costs one extra image per scene; set false to trade quality for spend.
-    public bool GenerateVerticalImages { get; init; } = true;
 
     // Which ContentProfile this run's content identity comes from. "gigglegarden" is
     // the only one that exists today; --profile overrides this per invocation.
@@ -106,19 +107,21 @@ record GenConfig
     // form is the point. Scenes past the limit are dropped from the vertical render only.
     public int VerticalMaxSeconds { get; init; } = 89;
 
-    // Scenes whose narration runs longer than this get a second image generated and
-    // shown via an internal crossfade partway through, instead of one static photo
-    // sitting on screen for the whole line. Costs one extra image (per orientation)
-    // for every scene that qualifies — raise this or set a high value to trade the
-    // extra motion back for lower image spend.
-    public double SplitLongSceneAfterSeconds { get; init; } = 8.0;
-
-    public void Validate()
+    public void Validate(ContentProfile profile)
     {
         var missing = new List<string>();
         if (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-")) missing.Add(nameof(AnthropicApiKey));
         if (string.IsNullOrWhiteSpace(AzureSpeechKey) || AzureSpeechKey.StartsWith("PUT-")) missing.Add(nameof(AzureSpeechKey));
-        if (string.IsNullOrWhiteSpace(ViduApiKey) || ViduApiKey.StartsWith("PUT-")) missing.Add(nameof(ViduApiKey));
+
+        // Only a profile still on the Vidu image-to-video path (gigglegarden) ever
+        // constructs a ViduClient (see Program.cs's `!profile.AllowsContextScenes`
+        // gates) - the no-Vidu hybrid pipeline never touches it.
+        if (!profile.AllowsContextScenes && (string.IsNullOrWhiteSpace(ViduApiKey) || ViduApiKey.StartsWith("PUT-")))
+            missing.Add(nameof(ViduApiKey));
+
+        // Only the context-scene pipeline (chronicleandchaos) calls StockFootageClient.
+        if (profile.AllowsContextScenes && (string.IsNullOrWhiteSpace(PexelsApiKey) || PexelsApiKey.StartsWith("PUT-")))
+            missing.Add(nameof(PexelsApiKey));
 
         // "azure" forces every language onto Azure, so Google's key is genuinely unused
         // in that mode - only require it when routing can actually reach Google.

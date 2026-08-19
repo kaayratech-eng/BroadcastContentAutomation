@@ -24,7 +24,7 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         ["hi"] = ("hi-IN", "hi-IN-Standard-A"),
     };
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
@@ -39,7 +39,8 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         // rate/pitch come from the caller's resolved ContentFormatDef, same as
         // AzureTtsProvider, so a format's pacing can't drift between providers. Google
         // Standard voices have no equivalent to Azure's express-as "cheerful" style tag,
-        // so that dimension is simply absent here rather than approximated.
+        // so that dimension is simply absent here rather than approximated - styleOverride
+        // (a scene's mood tag, see ITtsProvider) is intentionally unused.
         var ssml = $"<speak><prosody rate='{rate}' pitch='{pitch}'>{escaped}</prosody></speak>";
 
         using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [google-tts] {m}")))

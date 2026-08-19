@@ -2502,3 +2502,737 @@ Effectively the recurring cast is 16, not 6 - still a large reduction from
 the old 40-character ceiling, but worth knowing rather than assuming 6.
 Left as-is rather than trimmed, since deleting finalized character art
 without being asked is not this task's call.
+
+---
+
+## Plan — full-codebase audit fixes (runtime bugs + dead code removal)
+
+Source: two parallel background audits (VideoGen+Shared, Uploader+TokenCapture+
+remotion-assembler), reviewed with the user, decisions taken per item below.
+
+### Runtime bugs
+- [ ] `Program.cs` `RunVisualLoopAsync` — `canReuse` ignores `SceneKind`; add a
+      `lastSceneKind` check so a context (stock) scene can never reuse a
+      character-art path or vice versa.
+- [ ] `Uploader/Program.cs` — sidecar is saved only once after the whole
+      per-video target loop; move to saving after every target's result so a
+      mid-loop exception can't discard already-recorded successes.
+- [ ] `Uploader/Publishing/TikTokPublisher.cs` — `ReadTikTokResponseAsync`'s
+      `GetProperty("data")`/`GetProperty("publish_id")` etc. can throw
+      `KeyNotFoundException`/`JsonException` on a malformed response, uncaught
+      by `PublishAsync`'s catch clauses; add a catch that turns it into
+      `PublishResult.Retry` like the transport-error case.
+- [ ] `Uploader/Publishing/YouTubePublisher.cs` `GetServiceAsync` — no
+      `IsNullOrWhiteSpace` guard on `ClientSecretPath`/`TokenStorePath` unlike
+      the other three publishers; add one, mirroring `InstagramPublisher`'s
+      pattern (`PublishResult.Fatal` before any I/O).
+- [ ] `VideoGen/GenConfig.cs` `Validate()` — never checks `PexelsApiKey`
+      despite `StockFootageClient` being live for every `AllowsContextScenes`
+      profile; add the check, conditioned on `profile.AllowsContextScenes`
+      (mirrors the existing `GroqApiKey`/`GeminiApiKey` conditional-reachability
+      pattern). Requires passing `profile` into `Validate()`.
+- [ ] `Uploader/Program.cs` — add bounded automatic retry for videos that hit
+      the outer per-video catch (uncaught exceptions), instead of moving
+      straight to `\failed`. Design: a small `.retry.json` marker file next to
+      the video tracking `attempts`/`lastAttemptUtc`; on catch, increment and
+      leave the video in place (do not move it) until `MaxCrashRetries` is
+      exceeded, with a `CrashRetryBackoffMinutes` cooldown between attempts
+      enforced by the watch-directory scan filter. Marker is deleted on a
+      subsequent clean pass and added to `MoveWithSiblings`'s sibling list so
+      it travels with the video if it's ever finally moved to `\failed`.
+      (This is independent from the existing per-platform retry, which already
+      works via `PublishStatus.Failed` staying non-terminal.)
+- [x] TikTok inbox-draft vs `Published` gating — **user chose to keep current
+      behavior**, no change.
+
+### Video-quality decision
+- [ ] Standardize frame rate across the whole pipeline at **30fps** (matches
+      the native/expected rate for YouTube Shorts, TikTok and IG Reels — the
+      25fps in the ffmpeg paths has no documented rationale, just an
+      unexamined default): change the four `-r 25` occurrences in
+      `VideoAssembler.cs` (`BuildVideoClipAsync`, `BuildImageClipAsync`,
+      `BuildSplitImageClipAsync`, `BuildCrossfadedConcatAsync`) to `-r 30`, and
+      add an explicit `Fps = 30` field to `RemotionAssemblyProps` (currently
+      relies on `schema.ts`'s implicit `.default(30)` — makes the already-in-
+      use value deliberate instead of accidental, no `schema.ts` change
+      needed).
+
+### Dead code removal (user approved removing now)
+- [ ] `VideoGen/ImageClient.cs` — remove `GenerateAsync`,
+      `GenerateWithReferenceAsync`, `OpenAiAsync`, `OpenAiEditAsync`,
+      `StabilityAsync`, `StabilityImageToImageAsync`. Keep the static
+      `BuildPrompt` and the `Orientation` enum (both still used).
+- [ ] `VideoGen/VideoAssembler.cs` — remove `AssembleAsync`,
+      `BuildImageClipAsync`, `BuildSplitImageClipAsync`, `ZoomPanFilter`,
+      `ExtractLastFrameAsync` (all confirmed unreachable from `Program.cs` for
+      both channels).
+- [ ] `VideoGen/ScriptGenerator.cs` — remove `Scene.ImagePath2` and
+      `Scene.VerticalImagePath2` (only ever read by the `AssembleAsync` being
+      removed above; zero writers anywhere).
+- [ ] `VideoGen/GenConfig.cs` — remove `SplitLongSceneAfterSeconds` (only
+      appears in a comment) and `GenerateVerticalImages` (zero references
+      outside its own declaration); remove the matching
+      `"GenerateVerticalImages"` key from `appsettings.json`.
+- [ ] `VideoGen/ViduClient.cs` — fix the stale header comment (lines 6-10)
+      describing the old last-frame-chaining design; replace with the current
+      shared-start-frame design already documented in `Program.cs`'s
+      `RunViduLoopAsync` and `CharacterSource.cs`.
+- [ ] `Uploader/Logger.cs` — remove unused `Warn` method (zero callers
+      repo-wide).
+
+### Verification
+- [ ] `dotnet build` on both `VideoGen` and `Uploader` — 0 warnings, 0 errors.
+- [ ] Diff review before reporting done.
+- [ ] Ask before commit/push (standing rule — prior approvals don't carry
+      forward to a new batch of changes).
+
+---
+
+## Per-channel path segregation (video output, work/script folders, done/failed)
+
+Requested: `gigglegarden` and `chronicleandchaos` currently share every flat
+folder (`VideoGen/work/job-*`, `D:\Business\Videos\*.mp4`,
+`Videos\done`, `Videos\failed`), so there is no way to tell which video/script
+belongs to which channel just by where it sits on disk. Deferred until the
+in-flight chronicle generation finished; that run is done now (`8 maritime
+disasters...` rendered into `D:\Business\Videos` on 2026-08-18), so this
+starts.
+
+### Current flat state (confirmed by listing, not guessed)
+
+- `VideoGen/work/`: 6 job folders. 4 pre-date the `script.Profile` field
+  (all gigglegarden content — Pip/Gigi mascots); one has `Profile:
+  gigglegarden` explicitly; one has `Profile: chronicleandchaos` (today's
+  maritime-disasters job). One empty job folder (`job-20260812-142302`, no
+  script.json — a dead/abandoned run). Plus `dry-script/` and `tts-test/`,
+  two flat diagnostic-only folders that never get read by `--resume`/
+  `--assemble`/`--status` (they don't match the `job-*` glob).
+- `D:\Business\Videos\`: 2 files at the root right now, both
+  chronicleandchaos (`8-maritime-disasters...`, `Channel` confirmed in the
+  sidecar JSON). `done\` holds 7 folders, all gigglegarden content (pre-date
+  the `Channel` field, so it's blank in those sidecars — identity confirmed
+  from filenames/titles instead). `failed\` is empty. `logs\` holds 4 daily
+  log files mixing both channels' lines (already channel-prefixed per line,
+  e.g. `[gigglegarden/youtube]`).
+
+### Design
+
+```
+VideoGen\work\<channel>\job-YYYYMMDD-HHMMSS\...     (was: work\job-*)
+VideoGen\work\dry-script\, work\tts-test\           (unchanged — diagnostic only, out of scope)
+Videos\<channel>\*.mp4 / .json / .srt / .thumb.jpg  (was: Videos\*.mp4 flat)
+Videos\<channel>\done\<video-name>\...              (was: Videos\done\*)
+Videos\<channel>\failed\<video-name>\...            (was: Videos\failed\*)
+Videos\logs\                                        (unchanged — shared, see note below)
+```
+
+`<channel>` is `profile.Id` (`"gigglegarden"` / `"chronicleandchaos"`).
+
+**Logs stay flat/shared — deliberate, not an oversight.** Every log line is
+already prefixed `[channel/platform]`, so one combined operational log stays
+searchable; splitting it would only fragment "what happened this run" across
+files with no benefit. Will split on request if that turns out wrong.
+
+**`dry-script`/`tts-test` stay flat — deliberate, not an oversight.** They're
+throwaway diagnostic output (`--dry-script`, `--test-tts`), never read by
+`--resume`, `--assemble`, or `--status`, and don't match the `job-*` glob
+those scan for. Not what "scripts when scripts are generated" refers to —
+that's the real per-job `script.json` files under `work\<channel>\job-*\`.
+
+### Code changes
+
+**`VideoGen/Program.cs`**
+- [ ] `RunPrepAsync` (job dir creation, ~line 136) and `RunManualAsync`
+      (~line 491): job folder becomes
+      `Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{...}")`.
+- [ ] `ResolveJobDirectory()`: explicit `--job` still resolves without
+      needing `--profile` set correctly — tries the CLI-resolved profile's
+      subfolder first, then falls back to searching every channel
+      subfolder for a directory with that name. No-arg "newest job"
+      default unions job folders across every channel subfolder before
+      picking the newest, so `--resume`/`--assemble` with no `--job` keeps
+      working regardless of which channel actually generated the latest job
+      (today: if you don't pass `--profile`, it defaults to gigglegarden,
+      but the newest real job is chronicleandchaos — this fixes that).
+- [ ] Render section (~line 726): output goes to
+      `Path.Combine(cfg.OutputDirectory, profile.Id, ...)` instead of
+      `cfg.OutputDirectory` directly, for both the vertical and landscape
+      renders.
+- [ ] `RunStatusAsync` (~line 825): job-folder scan unioned across channel
+      subfolders (same helper as `ResolveJobDirectory`); per-job
+      done/failed/live-video lookup keyed off `script.Profile` (falls back
+      to `"gigglegarden"` for the pre-migration jobs missing that field,
+      matching where they're being moved to below).
+
+**`Uploader/AppConfig.cs`**
+- [ ] Drop `DoneDirectory`/`FailedDirectory` as fixed config properties —
+      they were always a trivial `WatchDirectory\done` /
+      `WatchDirectory\failed` convention, now channel-scoped instead:
+      `DoneDirFor(channel)` / `FailedDirFor(channel)` →
+      `WatchDirectory\<channel>\done` / `\failed`.
+
+**`Uploader/Program.cs`**
+- [ ] Startup directory creation: loop known channels
+      (`cfg.Channels.Keys` ∪ `cfg.DefaultChannel`) instead of one
+      done/failed pair.
+- [ ] Video discovery (~line 74): scan `WatchDirectory\<channel>\*.mp4`
+      per known channel (top-directory-only, so it never re-descends into
+      that channel's own `done`/`failed`) instead of one flat
+      `Directory.GetFiles(cfg.WatchDirectory, "*.mp4")`. Each discovered
+      video now carries its origin channel from the folder it was found
+      in.
+- [ ] **Behavior change, called out explicitly:** the per-video `channel`
+      used for publisher routing and the done/failed destination becomes
+      the *origin folder's* channel instead of `sidecar.Channel ??
+      cfg.DefaultChannel`. In every real case these already agree (VideoGen
+      always writes `Channel = profile.Id` into the same folder it renders
+      to), so this is a no-op for generated content. It only changes the
+      one edge case — a manually dropped video with no sidecar — which now
+      publishes through whichever channel folder you dropped it into
+      instead of always `cfg.DefaultChannel`; `ResolveSidecarAsync`'s
+      fallback-metadata path takes that channel as a parameter instead of
+      hardcoding `cfg.DefaultChannel`.
+- [ ] `MoveWithSiblings` call sites (done, failed, crash-path failed):
+      destination becomes `cfg.DoneDirFor(channel)` /
+      `cfg.FailedDirFor(channel)`. `channel` is resolved once at the top of
+      the per-video try block (from the origin folder) so it's available
+      even if the crash happens before the sidecar is resolved.
+
+**`appsettings.json` (both projects)** — no changes needed; `WorkDirectory`/
+`OutputDirectory`/`WatchDirectory` stay as roots, channel subfolders are
+appended in code, not configured per-channel.
+
+### Migration of existing files (one-time, done alongside the code change)
+
+- [ ] `VideoGen/work/job-20260809-021127`, `-030142`, `-150322`,
+      `-20260817-234145`, and the empty `job-20260812-142302` →
+      `VideoGen/work/gigglegarden/`.
+- [ ] `VideoGen/work/job-20260818-125747` (maritime disasters) →
+      `VideoGen/work/chronicleandchaos/`.
+- [ ] `Videos\8-maritime-disasters...*` (mp4/json/srt/thumb) →
+      `Videos\chronicleandchaos\`.
+- [ ] `Videos\done\*` (7 folders, all gigglegarden) →
+      `Videos\gigglegarden\done\`.
+- [ ] `Videos\failed\` — empty, nothing to move; recreated under each
+      channel by the code above on next run.
+- [ ] `Videos\logs\` — left in place (see design note above).
+
+### Verification
+
+- [ ] `dotnet build` on both `VideoGen` and `Uploader` — 0 warnings, 0
+      errors.
+- [ ] `VideoGen --status` (no Vidu/Claude spend) after migration reports the
+      same outstanding items as before the move — proves the channel-unioned
+      job scan and the done/failed lookup still find everything.
+- [ ] `VideoGen --job job-20260818-125747` (no `--profile` passed) still
+      resolves to the chronicleandchaos job under its new nested path —
+      proves the "search other channels" fallback in `ResolveJobDirectory`.
+- [ ] Confirm no orphaned files left behind at the old flat locations after
+      migration (`Videos\*.mp4` at root, `VideoGen\work\job-*` at root).
+- [ ] Diff review before reporting done.
+- [ ] Ask before commit/push.
+
+### Review
+
+Implemented as designed. Code changes:
+- `ContentProfileRegistry.cs`: exposed `Ids` (was private `All.Keys`) so
+  Program.cs can walk every channel subfolder without hardcoding the two
+  profiles.
+- `VideoGen/Program.cs`: `RunPrepAsync`/`RunManualAsync` create
+  `work\<channel>\job-*`; `ResolveJobDirectory()` tries the CLI-hinted
+  channel first, then searches every channel for an explicit `--job`, and
+  unions all channels (sorted by job-folder name, not full path) for the
+  no-arg "newest" default; render output goes to
+  `Videos\<channel>\...`; `RunStatusAsync` scans all channel subfolders and
+  keys each job's done/failed/live lookup off `script.Profile` (defaulting
+  to gigglegarden for the pre-migration jobs that predate that field).
+- `Uploader/AppConfig.cs`: `DoneDirectory`/`FailedDirectory` replaced with
+  `DoneDirFor(channel)`/`FailedDirFor(channel)` → `WatchDirectory\<channel>\
+  done|failed`. `LogDirectory` untouched (flat/shared, as designed).
+- `Uploader/Program.cs`: discovers videos per channel subfolder instead of
+  one flat scan; the per-video channel is now the folder it was found in
+  (checked, and `--failed`-routed, *before* `ResolveSidecarAsync` runs) —
+  the intended behavior change from sidecar-derived to location-derived
+  channel resolution. `ResolveSidecarAsync` takes the resolved channel
+  instead of always falling back to `cfg.DefaultChannel`. All three
+  `MoveWithSiblings` call sites and the `TopicHistory.AppendAsync` call
+  switched to the folder-derived channel.
+
+Migration: 5 pre-migration gigglegarden job folders + the empty
+`job-20260812-142302` → `work\gigglegarden\`; the chronicleandchaos maritime
+job → `work\chronicleandchaos\`; the live maritime-disasters render files →
+`Videos\chronicleandchaos\`; the 7 `done\` folders → `Videos\gigglegarden\
+done\`. `dry-script\`, `tts-test\`, `Videos\logs\`, and the stray
+`job-20260818-125747-recovered-script.md` file were deliberately left in
+place (all out of scope per the design notes above).
+
+### Verification
+
+- [x] `dotnet build` on `VideoGen` — 0 warnings, 0 errors.
+- [x] `dotnet build` on `Uploader` — 0 warnings, 0 errors.
+- [x] `VideoGen --status` after migration: 4 items flagged (2 for the
+      never-rendered gigglegarden balloons job, 2 for the awaiting-approval
+      chronicleandchaos maritime job) — the same set that was true before
+      migration; none of the 7 already-published gigglegarden `done\`
+      videos are (correctly) flagged.
+- [x] `VideoGen --resume --job job-20260818-125747 --profile gigglegarden`
+      (deliberately mismatched channel hint) resolved to
+      `work\chronicleandchaos\job-20260818-125747` via the fallback search,
+      confirmed by the printed Workspace line — proves `ResolveJobDirectory`
+      no longer depends on the CLI-supplied `--profile` being correct. Zero
+      spend: every scene was already on disk.
+- [x] No orphaned files at the old flat locations: `VideoGen\work\` root has
+      no `job-*` folders left, `Videos\` root has no `.mp4` files left.
+- [x] Diff reviewed.
+- [x] Committed and pushed to `origin/cleanup/automation-overhaul` (`9c4646c6`,
+      combined with an unrelated pre-existing dead-code-removal batch per the
+      user's "everything in the working tree" choice).
+
+## Chronicle & Chaos music volume + short-video outro CTA
+
+User report: "the videos background music is loud we need to reduce
+background music And short/reel end just like that can we add at the end to
+watch full video go to youtube channe chronicleandchaoshq".
+
+### Investigation
+
+`VideoAssembler.cs` has two independent music-loudness mechanisms depending
+on which pipeline a channel uses:
+
+- **GiggleGarden** (`AssembleFromClipsAsync`, ffmpeg): `MixBackgroundMusicAsync`
+  measures each track's real LUFS (`MeasureLoudnessAsync`, ffmpeg `ebur128`)
+  and computes `gainDb = profile.BackgroundMusicLufs - measuredLufs`, so
+  every track lands on the same configured bed level (`-36.0` LUFS) whatever
+  it started at. It also runs real sidechain ducking under narration.
+- **Chronicle & Chaos** (`AssembleWithRemotionAsync`, Remotion, the only
+  profile with `AllowsContextScenes = true`): `MythologyProfile.BackgroundMusicLufs`
+  (`-30.0`) is declared but **never read** — line 115 passes a hardcoded
+  `BackgroundMusicVolume: 0.15` straight into `Assembly.tsx`'s `<Audio
+  volume={...} loop />`, a flat linear multiplier on whatever loudness the
+  picked track file happens to have. No per-track normalization, no ducking.
+  This is the same bug pattern already called out in this file's own
+  comments for the ffmpeg path ("a fixed volume multiplier tuned against one
+  track makes another either inaudible or intrusive") — it just was never
+  applied to the Remotion path when it was built. This is the root cause of
+  "loud": some tracks in `assets/music-mythology` are simply mastered louder
+  than 0.15 happens to suit.
+
+Scope call: only touching the Chronicle & Chaos/Remotion path. GiggleGarden's
+ffmpeg path already does real LUFS normalization + ducking and nothing in
+the report points at it; the user named `chronicleandchaoshq` specifically,
+which is that channel's handle.
+
+For the outro: `RemotionRoot`'s `calculateMetadata` derives total render
+length purely from `sum(scenes[].durationInSeconds)`, and each scene needs a
+real image/video asset — there's no "text-only" scene today. A `Scene`
+record in Program.cs also can't hold a redirect CTA without new asset
+generation. Cleanest fit: a new top-level `outroSeconds` prop, independent
+of the scene list, rendered as one extra `Sequence` in `Assembly.tsx` after
+the last scene — pure text-on-background, no image/TTS asset needed. Only
+Chronicle & Chaos renders through Remotion at all, and only the vertical
+short should redirect to the long-form video (the landscape master already
+*is* the full video going straight to YouTube — redirecting to itself makes
+no sense), so this is wired at the vertical `AssembleWithRemotionAsync` call
+only (`Program.cs:747`), not the landscape one (`Program.cs:778`).
+
+### Plan
+
+- [ ] `MythologyProfile.cs`: lower `BackgroundMusicLufs` from `-30.0` to
+      `-34.0` — closer to GiggleGarden's tuned `-36.0`, directly answering
+      "reduce background music" rather than relying solely on the
+      normalization fix to happen to land quieter.
+- [ ] `VideoAssembler.cs`: `AssembleWithRemotionAsync` — replace the
+      hardcoded `BackgroundMusicVolume: 0.15` with a measured value:
+      `gainDb = profile.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, music)`,
+      converted to a linear multiplier (`Math.Pow(10, gainDb / 20)`, clamped
+      to the schema's `[0,1]` range) — same math as the ffmpeg path, so
+      `BackgroundMusicLufs` finally does something on this pipeline too.
+      Skip the measurement when `music is null` (no track picked).
+- [ ] `AssembleWithRemotionAsync`: add `bool appendOutro = false` parameter;
+      when true, set a new `OutroSeconds` field on `RemotionAssemblyProps`
+      (e.g. `3.0`), else `0`.
+- [ ] `Program.cs:747`: pass `appendOutro: true` on the vertical/short
+      Remotion call. Landscape call (`Program.cs:778`) stays at the default
+      `false`.
+- [ ] `remotion-assembler/src/schema.ts`: add
+      `outroSeconds: z.number().min(0).default(0)` to `assemblyPropsSchema`.
+- [ ] `remotion-assembler/src/Root.tsx`: `calculateMetadata` adds
+      `props.outroSeconds` to `totalSeconds` so the composition's rendered
+      length actually includes the outro instead of cutting it off.
+- [ ] `remotion-assembler/src/Assembly.tsx`: new `Outro` component — dark
+      background, centered bold white text, two lines ("WATCH THE FULL
+      VIDEO" / "on YouTube: @chronicleandchaoshq"), rendered as one more
+      `Sequence` starting right after the last scene, for
+      `outroSeconds * fps` frames (only appears when `outroSeconds > 0`).
+
+Duration note: `VerticalMaxSeconds` (85s, `appsettings.json`) already trims
+scenes to fit Reels/TikTok's ~90s hard cap; a 3s outro added on top lands
+around 88s, still under it. Kept the outro short specifically for that
+headroom rather than picking a longer/flashier card.
+
+Not touching: GiggleGarden's music mix, GiggleGarden's short render (no
+outro — different channel, no handle was given for it), SRT/caption
+generation (outro is decorative only, carries no narration to caption).
+
+### Verification
+
+- [x] `dotnet build` on `VideoGen` — 0 warnings, 0 errors.
+- [x] `npx tsc --noEmit` in `remotion-assembler` — no output, no type errors.
+- [x] Diff reviewed.
+- [ ] Real render + by-ear/by-eye check — not yet run (needs a live
+      `--assemble` job); flagged to the user as unverified.
+
+### Review
+
+Implemented exactly per plan, all 8 items:
+
+- `MythologyProfile.BackgroundMusicLufs`: `-30.0` → `-34.0`.
+- `VideoAssembler.AssembleWithRemotionAsync`: hardcoded `BackgroundMusicVolume:
+  0.15` replaced with a measured value (`MeasureLoudnessAsync` + the same
+  `profile.BackgroundMusicLufs`-relative dB math as the ffmpeg path, converted
+  to a linear multiplier since Remotion's `<Audio volume=>` isn't dB-based);
+  `RemotionAssemblyProps` gained `OutroSeconds`; new `appendOutro = false`
+  parameter drives it (`3.0` when true, `0.0` otherwise).
+- `Program.cs:747` (vertical/short Remotion call): `appendOutro: true`.
+  `Program.cs:778` (landscape call) untouched — stays at the default `false`.
+- `schema.ts` / `Root.tsx` / `Assembly.tsx`: `outroSeconds` threaded through
+  the zod schema, into `calculateMetadata`'s total-duration calc, and
+  rendered as a new `Outro` component (black background, fade-in, "WATCH THE
+  FULL VIDEO" / "on YouTube: @chronicleandchaoshq") in one more `Sequence`
+  after the last scene.
+
+Not done / explicitly out of scope: no change to GiggleGarden's music mix or
+short render (ffmpeg path already normalizes + ducks; no outro since no
+handle was given for that channel and it's a different pipeline entirely).
+No real ducking added to the Remotion path — flat normalized volume only,
+matching the size of the actual ask ("reduce" the music, not re-architect
+its mixing).
+
+Caveat: `BackgroundMusicLufs = -34.0` is still an untuned guess (same as the
+`-30.0` it replaces was) — nudged down because the user said the current
+render is loud, but there's no measured narration/music sample backing the
+exact number. Next real chronicleandchaos render is the first real test of
+both changes; no render was run in this session to confirm by ear.
+
+## Like/follow/subscribe outro tagline, both channels ("mix": spoken + burned-in + native)
+
+User's request: a "Please like, follow and subscribe on YouTube [channel]"
+tagline on all videos on both channels. Offered three implementation options
+(spoken narration / burned-in text card / YouTube's native End Screen);
+user chose "mix" — do the first two (baked into the render, so they show on
+every platform) plus the third (YouTube-only, native Subscribe element).
+
+Scope, since neither channel today has this uniformly:
+- GiggleGarden (ffmpeg pipeline, `AssembleFromClipsAsync`): **no outro
+  mechanism exists at all** — new, for both vertical and landscape.
+- Chronicle & Chaos landscape (Remotion pipeline): no outro today — new.
+- Chronicle & Chaos vertical/short: already has the "WATCH THE FULL VIDEO /
+  @chronicleandchaoshq" card from the task above — extend it to also carry
+  the subscribe tagline rather than bolting on a second separate card.
+
+Tagline copy:
+- Shared header line, both channels: "LIKE, FOLLOW & SUBSCRIBE".
+- Per-channel destination line: GiggleGarden → "YouTube: Giggle Wiggle
+  Town"; Chronicle & Chaos → "YouTube: @chronicleandchaoshq".
+- Spoken form uses a TTS-friendly destination instead of the literal
+  handle (Azure/Google would spell "@chronicleandchaoshq" letter by
+  letter): "Like, follow, and subscribe on YouTube — {spoken destination}!"
+  GiggleGarden spoken destination = "Giggle Wiggle Town"; Chronicle & Chaos
+  spoken destination = "Chronicle and Chaos" (drop "HQ" — awkward as an
+  acronym read aloud).
+- Chronicle & Chaos vertical/short keeps its extra "watch full video" line
+  on top of the above, spoken as one combined line: "Like, follow, and
+  subscribe. Watch the full video on YouTube — Chronicle and Chaos."
+
+Plan:
+- [x] `ContentProfile.cs`: add `OutroDestinationText` (burned-in) and
+      `OutroDestinationSpoken` (TTS-friendly) required fields.
+- [x] `GiggleGardenProfile.cs` / `MythologyProfile.cs`: set both fields.
+- [x] `Program.cs`: new helper that resolves/synthesizes the outro
+      voiceover once per distinct spoken-text string and caches it under
+      `VideoGen/assets/audio/outro/` (filename = stable slug of the text),
+      reusing `TtsProviderFactory.Create(cfg, profile, language!)` the same
+      way `RunTtsLoopAsync` does — so a fixed per-channel line is synthesized
+      once total, not once per video.
+- [x] `VideoAssembler.cs` (ffmpeg path): new `BuildOutroClipAsync` — a
+      `color=black` background + multi-line `drawtext` (reusing the same
+      textfile-based approach `BuildSubtitleFilter` already uses) muxed
+      with the cached outro audio (or silence if none), rendered as one
+      more clip appended to `sceneClips`/`durations` *before*
+      `BuildCrossfadedConcatAsync` — so it crossfades in and rides through
+      the existing music-duck/mix step for free instead of needing its own
+      audio-mixing logic. `AssembleFromClipsAsync` gains optional
+      `outroLines`/`outroAudioPath` params.
+- [x] `VideoAssembler.cs` (Remotion path): generalize the existing `Outro`
+      concept to carry an arbitrary line list + optional audio path instead
+      of the hardcoded two-line JSX/3-second silent card. `appendOutro:
+      bool` becomes richer params (lines + audio path); `OutroSeconds` now
+      derives from the audio's real duration (+ a breathing beat) rather
+      than a flat `3.0`.
+- [x] `schema.ts` / `Assembly.tsx`: `outroLines: string[]` and
+      `outroAudioPath?: string` replace/extend the current hardcoded card;
+      `Outro` component maps lines to stacked `<div>`s and plays the audio
+      via `<Audio>` if given.
+- [x] `Program.cs` call sites: wire the resolved lines/audio into all four
+      render calls — GiggleGarden vertical, GiggleGarden landscape,
+      Chronicle & Chaos vertical (combined card), Chronicle & Chaos
+      landscape (subscribe-only card, new).
+- [x] YouTube native End Screen: checked `Uploader/Publishing/
+      YouTubePublisher.cs` — it only calls `Videos`/`Thumbnails`/
+      `Captions`/`Search` on the Google.Apis.YouTube.v3 client. There is no
+      `Cards`/`EndScreens` resource in that client at all. To my knowledge
+      (fairly confident, not 100% verified against live API docs today)
+      the YouTube Data API v3 has never exposed End Screens/Cards
+      programmatically — they are YouTube Studio-only, set per video (or
+      copied from a previous video) by hand. Not implemented; reported as
+      a caveat below rather than silently dropped or faked.
+
+Not touching: GiggleGarden's/Chronicle & Chaos's actual TTS voice choice,
+the earlier "watch full video" duration math beyond what a longer combined
+card needs, SRT/caption generation.
+
+Verification: `dotnet build` ✅ (0 warnings/errors), `npx tsc --noEmit` ✅
+(clean), diff reviewed. No real render/TTS spend was run — confirming the
+spoken line actually sounds right, and that the ffmpeg outro clip's text
+layout/timing is correct, requires an actual `--assemble` run, not done in
+this session.
+
+## Review
+
+Implemented: both channels now get a "LIKE, FOLLOW & SUBSCRIBE" card,
+spoken + burned-in, on every render (GiggleGarden vertical + landscape,
+Chronicle & Chaos landscape — all three previously had none; Chronicle &
+Chaos vertical/short already had the "watch full video" card and now folds
+the subscribe line into it instead of stacking a second separate card).
+The outro voiceover is synthesized once per distinct spoken-text string
+(3 total: GiggleGarden's line, Chronicle & Chaos's landscape line,
+Chronicle & Chaos's combined short-form line) and cached under
+`VideoGen/assets/audio/outro/`, so it costs one TTS call per line ever, not
+per video.
+
+Not implemented — YouTube's native End Screen (the third part of "mix").
+Best current understanding is the Data API v3 has no endpoint for it at
+all; this needs either manual per-video setup in Studio, or the user
+confirming otherwise before more time goes into it.
+
+Not run: an actual `--assemble` render. The ffmpeg outro clip
+(`BuildOutroClipAsync`) and the Remotion outro Sequence are new code paths
+that only `dotnet build`/`tsc --noEmit` have verified — neither confirms
+the drawtext layout looks right, that the synthesized voiceover reads
+naturally, or that timing lines up. First real render on either channel is
+the actual test.
+
+---
+
+## Plan — also publish as a Story (Instagram + Facebook), not "each platform"
+
+Requested: post every video as both a Reel/feed post *and* a Story, on
+each platform. Scope correction before designing: **YouTube removed
+Shorts-era Stories in 2023** (no such content type exists there anymore),
+and **TikTok's Content Posting API has no Story endpoint** reachable by
+this pipeline — TikTok Stories are an in-app-only feature. So "each
+platform" is only actually satisfiable for **Instagram and Facebook**.
+Proceeding on that scope; say so if YouTube/TikTok were expected some
+other way.
+
+### Why this fits the existing architecture cleanly
+
+Confirmed by reading `Shared/Sidecar.cs`, `Uploader/Publishing/IPublisher.cs`,
+`Uploader/Program.cs`, `Uploader/AppConfig.cs`, and
+`VideoGen/appsettings.json`:
+
+- `Platforms` (`Sidecar.cs`) is just a flat set of string constants; a
+  sidecar's `Targets` is a plain `string[]` matched 1:1 against
+  `publishersByChannel[channel][platform]` (`Program.cs:63-71`). Nothing
+  about "platform" is structurally tied to "one post type" — a Story is
+  just another target string with its own `IPublisher`.
+- `VerticalTargets` (`VideoGen/appsettings.json:41`, currently
+  `["instagram", "facebook", "tiktok"]`) is what actually populates a
+  vertical video's `Targets`. Appending two strings there needs **zero
+  VideoGen code changes**.
+- Both Meta endpoints reuse the exact same credentials already configured
+  (`InstagramConfig.IgUserId`/`AccessToken`, `FacebookConfig.PageId`/
+  `AccessToken`) — no new secrets, no new appsettings config section
+  needed if the new publishers just take the existing config records.
+
+### Steps
+
+1. **`Shared/Sidecar.cs`** — add `Platforms.InstagramStory =
+   "instagram_story"` and `Platforms.FacebookStory = "facebook_story"`,
+   append both to `Platforms.All`.
+2. **`Uploader/Publishing/InstagramStoryPublisher.cs`** (new) — copy of
+   `InstagramPublisher`'s container→upload→poll→publish flow with
+   `media_type=STORIES` instead of `REELS`. Two known API differences to
+   verify live, not from docs I can fully trust: Meta's Stories publish
+   endpoint is documented as **not accepting `caption`** (unlike Reels) —
+   drop that field rather than send one that's silently ignored — and a
+   published Story has no stable `permalink` the way a Reel does (expect
+   `TryPermalinkAsync` to just come back empty; that's fine, `Id` is
+   still enough to prove it posted). `Accepts()` stays the same 9:16 gate.
+3. **`Uploader/Publishing/FacebookStoryPublisher.cs`** (new) — **different
+   endpoint**, not a `media_type` variant: Meta's Page Stories API is
+   `POST /{page-id}/video_stories` with its own two-phase
+   start→upload→publish flow, distinct from both the Reels endpoint and
+   the plain `/{page-id}/videos` endpoint `FacebookPublisher.cs` uses
+   today. Real risk worth flagging up front: `FacebookPublisher.cs`'s own
+   comment documents that this exact Page hit a stuck
+   `processing_phase="not_started"` eligibility bug on the Reels endpoint,
+   which is why it deliberately avoids Reels — Page Stories may hit the
+   same class of gating issue. This one needs a live test before trusting
+   it, more than the Instagram side does.
+4. **`Uploader/Program.cs:63-71`** — add both new publishers to the
+   per-channel `IPublisher[]` array (one array-literal line each,
+   constructed from the existing `kv.Value.Instagram` /
+   `kv.Value.Facebook` config objects — no new config plumbing).
+5. **`VideoGen/appsettings.json:41`** — `VerticalTargets` becomes
+   `["instagram", "facebook", "tiktok", "instagram_story",
+   "facebook_story"]`.
+6. **`VideoGen/Program.cs:812-814`** (`CaptionOverrides`) — Instagram
+   Story gets no caption override (API doesn't take one, see step 2);
+   Facebook Story reuses `script.ReelsCaption` same as the feed post,
+   unless live testing shows the Story endpoint rejects it too.
+
+### Not doing
+
+- No new `appsettings.json` credential fields — both new publishers reuse
+  the existing `Instagram`/`Facebook` config blocks, including their
+  `Enabled` flag (a Story publishes whenever its parent platform is
+  enabled; no separate on/off switch, since nothing in the request asked
+  for independent control).
+- No YouTube or TikTok changes — out of scope per the correction above.
+
+### Verification plan
+
+`dotnet build` clean, then a live test against real credentials is
+unavoidable for both new endpoints — this is publishing to public Meta
+accounts, so needs a go-ahead before running, same as every other
+publish step in this pipeline. Facebook Stories in particular need to be
+watched for the same stuck-processing failure mode `FacebookPublisher.cs`
+already worked around once.
+
+### Review
+
+Implemented as planned, all 5 code files (`Sidecar.cs`,
+`InstagramStoryPublisher.cs`, `FacebookStoryPublisher.cs`,
+`Uploader/Program.cs`, `VideoGen/appsettings.json`). One change from the
+plan: step 6 (`CaptionOverrides` for the new targets) turned out to be
+unnecessary — neither new publisher calls `Sidecar.CaptionFor` at all,
+since neither Instagram nor Facebook's Story API takes a caption
+parameter, so there was nothing for an override to feed. Left
+`CaptionOverrides` untouched.
+
+`dotnet build` clean on both `Uploader` and `VideoGen` (0 warnings, 0
+errors). `VerticalTargets` is a global setting in `VideoGen/appsettings.json`
+(not per-channel), so this applies to every profile that renders a
+vertical cut — currently GiggleGarden and Chronicle & Chaos both pick it
+up identically, matching how the existing 3 targets already work.
+
+**Not verified — needs a live run before trusting it, per the plan:**
+neither `InstagramStoryPublisher` nor `FacebookStoryPublisher` has been
+exercised against a real account. Two specific unknowns from the plan
+still stand: whether Meta's Stories container really rejects a `caption`
+field the way documented (untested, so left out entirely rather than
+guessed at), and whether this Page's Reels eligibility gating bug
+(`processing_phase="not_started"`, see `FacebookPublisher.cs`) recurs on
+`/{page-id}/video_stories`. First real vertical render is the actual
+test — needs a go-ahead before it publishes live Stories.
+
+## Per-scene narration mood modulation (Chronicle & Chaos)
+
+User reported the narration doesn't match each scene's mood. Traced the
+pipeline: `formatDef.Rate`/`formatDef.Pitch` are fixed once per video
+(one of 5 `ContentFormatDef`s) and applied identically to every scene —
+confirmed at both TTS call sites in `Program.cs` (`RunTtsLoopAsync` line
+258, `RunRettsAsync` line 580). `Scene` has no mood field; `VideoScript.
+MusicMood` is a single video-wide tag. Root cause: no per-scene lever
+exists at all. Separately swapped `MythologyProfile.VoiceOverride["en"]`
+from `en-US-EricNeural` (zero `express-as` styles, verified live against
+Azure's `/cognitiveservices/voices/list`) to `en-US-DavisNeural` (11
+styles: angry, cheerful, excited, friendly, hopeful, sad, shouting,
+terrified, unfriendly, whispering), chosen after sampling both — Davis
+is also a prerequisite for this feature, since Eric had nothing to
+modulate.
+
+### Plan
+
+1. **`ContentProfile.cs`** — add `IReadOnlyList<string> NarrationMoodStyles
+   { get; init; } = [];`, a profile-owned closed menu of Azure express-as
+   styles its active voice actually supports. Empty (the default) means
+   "don't ask the model for mood, don't touch narration style" — keeps
+   GiggleGarden and every other profile byte-for-byte unchanged.
+2. **`MythologyProfile.cs`** — populate `NarrationMoodStyles` with a
+   dramatic subset of Davis's verified style list: angry, sad, excited,
+   hopeful, terrified, shouting, whispering, cheerful, friendly. (Skips
+   "chat"/"unfriendly" — not useful for documentary/mythology narration.)
+3. **`ScriptGenerator.cs`**:
+   - `Scene` gets `public string? Mood { get; set; }`.
+   - `GenerateAsync`'s prompt gets a new guidance block, only emitted
+     when `profile.NarrationMoodStyles.Count > 0`: ask the model to tag
+     each scene's `mood` with exactly one value from that list matching
+     the scene's actual emotional content, or omit it for a neutral
+     delivery — same closed-menu pattern already used for `musicMood`.
+     JSON schema gains an optional per-scene `"mood": "..."` field.
+   - Same guidance/field added to `GenerateContinuationActAsync` (long-
+     form acts 2-4) so a 70-90 scene video doesn't go flat after Act 1.
+   - New normalization step (mirrors the existing `SceneKind` normalize
+     loop): any `Mood` not case-insensitively in
+     `profile.NarrationMoodStyles` gets nulled out — a hallucinated style
+     string must never reach Azure's API (it would 400 the whole scene).
+     Applied in `GenerateAsync`, and `FinalizeManualScript` for
+     hand-written scripts.
+4. **`ITtsProvider.cs`** — add an optional trailing parameter:
+   `Task SynthesizeAsync(string text, string language, string outputPath,
+   string rate, string pitch, string? styleOverride = null);` Optional
+   with a default keeps the outro-line and `--test-tts` call sites
+   (`Program.cs:287,615,621`) compiling unchanged.
+5. **`AzureTtsProvider.cs`** — `styleOverride ?? profileStyle` (per-scene
+   wins when present, falls back to the profile's `VoiceOverride` style
+   otherwise, matching today's behavior when no override is given).
+6. **`GoogleTtsProvider.cs`** — accept the same parameter for interface
+   parity, ignore it (Standard-tier voices have no express-as
+   equivalent) — one-line comment, no behavior change.
+7. **`Program.cs`** — the two narration-loop call sites
+   (`RunTtsLoopAsync:258`, `RunRettsAsync:580`) pass `scene.Mood` as the
+   new argument. The outro/test-tts call sites are untouched (rely on
+   the new parameter's default).
+
+### Not doing
+
+- No per-scene rate/pitch changes — Azure's express-as styles already
+  carry their own prosody signature; stacking a manual rate/pitch nudge
+  on top risks overcorrecting and isn't what was asked for.
+- No changes to `GiggleGardenProfile` or any Google-routed profile —
+  `NarrationMoodStyles` defaults empty, so the new prompt block and
+  per-scene styling are opt-in per profile, not global.
+- Not fixing `appsettings.json`'s stale `AzureSpeechRegion: "eastus"`
+  (the real active value is `appsettings.Local.json`'s `canadacentral`)
+  — noted to the user as an aside, out of scope for this feature.
+
+### Verification plan
+
+`dotnet build` clean. Then a real `--prep` run for chronicleandchaos to
+confirm: the model actually returns varied `mood` tags across scenes (not
+every scene picking the same one), invalid/hallucinated tags get nulled
+rather than crashing the Azure call, and the resulting audio audibly
+shifts style scene-to-scene. Costs one real script-generation call plus
+this video's normal TTS spend — same cost as any other `--prep`, no
+added spend from this feature itself.
+
+### Review
+
+Implemented as planned, all 7 files (`ContentProfile.cs`,
+`MythologyProfile.cs`, `ScriptGenerator.cs`, `ITtsProvider.cs`,
+`AzureTtsProvider.cs`, `GoogleTtsProvider.cs`, `Program.cs`). No
+deviations from the plan. `dotnet build` clean (0 warnings, 0 errors).
+`GiggleGardenProfile` untouched — `NarrationMoodStyles` defaults to `[]`,
+so its prompt, JSON schema, and every TTS call site are byte-for-byte
+identical to before this change.
+
+**Not verified — needs a live `--prep` run before trusting it:** the
+model has never actually been asked for a `mood` field. Unverified:
+whether it returns varied tags scene-to-scene rather than picking one
+and sticking with it, whether the closed-menu instruction holds up as
+reliably as `musicMood`'s already does, and whether the resulting audio
+audibly improves on the flat read. First real chronicleandchaos `--prep`
+is the actual test.
+

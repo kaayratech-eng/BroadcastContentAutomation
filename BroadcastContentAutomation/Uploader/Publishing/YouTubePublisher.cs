@@ -29,6 +29,9 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
 
     public async Task<PublishResult> PublishAsync(PublishRequest request, CancellationToken ct)
     {
+        if (string.IsNullOrWhiteSpace(cfg.ClientSecretPath) || string.IsNullOrWhiteSpace(cfg.TokenStorePath))
+            return PublishResult.Fatal("YouTube ClientSecretPath or TokenStorePath is not configured.");
+
         try
         {
             var youtube = await GetServiceAsync();

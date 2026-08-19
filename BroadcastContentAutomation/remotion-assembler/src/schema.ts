@@ -23,6 +23,12 @@ export const assemblyPropsSchema = z.object({
   heightPx: z.number().int().positive(),
   backgroundMusicPath: z.string().optional(),
   backgroundMusicVolume: z.number().min(0).max(1).default(0.15),
+  // Extra card appended after the last scene - e.g. a "LIKE, FOLLOW & SUBSCRIBE" card, with
+  // the vertical short additionally folding in a "watch the full video" line. 0 (default)
+  // renders nothing extra.
+  outroSeconds: z.number().min(0).default(0),
+  outroLines: z.array(z.string()).default([]),
+  outroAudioPath: z.string().optional(),
 });
 
 export type SceneAsset = z.infer<typeof sceneAssetSchema>;

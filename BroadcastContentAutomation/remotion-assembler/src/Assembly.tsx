@@ -6,6 +6,7 @@ import {
   Sequence,
   Video,
   interpolate,
+  staticFile,
   useCurrentFrame,
   useVideoConfig,
 } from "remotion";
@@ -34,7 +35,7 @@ const KenBurnsImage: React.FC<{ asset: SceneAsset; durationInFrames: number }> =
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
       <Img
-        src={asset.path}
+        src={staticFile(asset.path)}
         style={{
           width: "100%",
           height: "100%",
@@ -59,7 +60,7 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
   return (
     <AbsoluteFill style={{ overflow: "hidden" }}>
       <Video
-        src={asset.path}
+        src={staticFile(asset.path)}
         muted
         style={{ width: "100%", height: "100%", objectFit: "cover", transform: `scale(${scale})` }}
       />
@@ -86,6 +87,52 @@ const Caption: React.FC<{ text: string }> = ({ text }) => (
   </AbsoluteFill>
 );
 
+// "LIKE, FOLLOW & SUBSCRIBE" card appended after the last scene (see Program.cs's
+// baseOutroLines/shortOutroLines) - the vertical short additionally folds in a "watch the
+// full video" line, since that render is a trimmed teaser rather than the full video
+// itself. First line renders as the header; every line after it as a smaller sub-line.
+const Outro: React.FC<{ lines: string[]; audioPath?: string }> = ({ lines, audioPath }) => {
+  const frame = useCurrentFrame();
+  const opacity = interpolate(frame, [0, 15], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <AbsoluteFill
+      style={{
+        backgroundColor: "black",
+        justifyContent: "center",
+        alignItems: "center",
+        opacity,
+      }}
+    >
+      {audioPath ? <Audio src={staticFile(audioPath)} /> : null}
+      <div
+        style={{
+          fontFamily: "sans-serif",
+          textAlign: "center",
+          color: "white",
+        }}
+      >
+        {lines.map((line, i) => (
+          <div
+            key={i}
+            style={{
+              fontSize: i === 0 ? 52 : 38,
+              fontWeight: i === 0 ? 700 : 500,
+              marginTop: i === 0 ? 0 : 16,
+              opacity: i === 0 ? 1 : 0.85,
+            }}
+          >
+            {line}
+          </div>
+        ))}
+      </div>
+    </AbsoluteFill>
+  );
+};
+
 const Scene: React.FC<{ asset: SceneAsset; durationInFrames: number }> = ({
   asset,
   durationInFrames,
@@ -96,7 +143,7 @@ const Scene: React.FC<{ asset: SceneAsset; durationInFrames: number }> = ({
     ) : (
       <KenBurnsImage asset={asset} durationInFrames={durationInFrames} />
     )}
-    {asset.narrationAudioPath ? <Audio src={asset.narrationAudioPath} /> : null}
+    {asset.narrationAudioPath ? <Audio src={staticFile(asset.narrationAudioPath)} /> : null}
     {asset.captionText ? <Caption text={asset.captionText} /> : null}
   </AbsoluteFill>
 );
@@ -105,6 +152,9 @@ export const Assembly: React.FC<AssemblyProps> = ({
   scenes,
   backgroundMusicPath,
   backgroundMusicVolume,
+  outroSeconds,
+  outroLines,
+  outroAudioPath,
 }) => {
   const { fps } = useVideoConfig();
   let startFrame = 0;
@@ -112,7 +162,7 @@ export const Assembly: React.FC<AssemblyProps> = ({
   return (
     <AbsoluteFill>
       {backgroundMusicPath ? (
-        <Audio src={backgroundMusicPath} volume={backgroundMusicVolume} loop />
+        <Audio src={staticFile(backgroundMusicPath)} volume={backgroundMusicVolume} loop />
       ) : null}
       {scenes.map((asset, i) => {
         const durationInFrames = Math.round(asset.durationInSeconds * fps);
@@ -124,6 +174,11 @@ export const Assembly: React.FC<AssemblyProps> = ({
           </Sequence>
         );
       })}
+      {outroSeconds > 0 ? (
+        <Sequence from={startFrame} durationInFrames={Math.round(outroSeconds * fps)}>
+          <Outro lines={outroLines} audioPath={outroAudioPath} />
+        </Sequence>
+      ) : null}
     </AbsoluteFill>
   );
 };

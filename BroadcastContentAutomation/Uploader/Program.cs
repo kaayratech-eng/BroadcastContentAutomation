@@ -44,11 +44,19 @@ catch (Exception ex)
 
 static async Task RunAsync(AppConfig cfg, Logger log)
 {
-    Directory.CreateDirectory(cfg.DoneDirectory);
-    Directory.CreateDirectory(cfg.FailedDirectory);
-
     if (cfg.Channels.Count == 0)
         throw new InvalidOperationException("appsettings.json has no Channels configured.");
+
+    // Every channel we might discover a video under - the configured channels plus
+    // DefaultChannel (covers a manually dropped video with no channel signal of
+    // its own, in case DefaultChannel isn't itself a Channels key).
+    var channels = cfg.Channels.Keys.Append(cfg.DefaultChannel)
+        .Distinct(StringComparer.OrdinalIgnoreCase).ToList();
+    foreach (var channel in channels)
+    {
+        Directory.CreateDirectory(cfg.DoneDirFor(channel));
+        Directory.CreateDirectory(cfg.FailedDirFor(channel));
+    }
 
     // One publisher set per channel — each channel carries its own credentials,
     // so two channels can publish in the same run without sharing tokens.
@@ -60,6 +68,8 @@ static async Task RunAsync(AppConfig cfg, Logger log)
             new InstagramPublisher(kv.Value.Instagram, log),
             new FacebookPublisher(kv.Value.Facebook, log),
             new TikTokPublisher(kv.Value.TikTok, log),
+            new InstagramStoryPublisher(kv.Value.Instagram, log),
+            new FacebookStoryPublisher(kv.Value.Facebook, log),
         }.ToDictionary(p => p.Platform, StringComparer.OrdinalIgnoreCase),
         StringComparer.OrdinalIgnoreCase);
 
@@ -71,28 +81,36 @@ static async Task RunAsync(AppConfig cfg, Logger log)
     int Dispatched(string channel, string platform) =>
         dispatchedThisRun.TryGetValue((channel, platform), out var n) ? n : 0;
 
-    var videos = Directory.GetFiles(cfg.WatchDirectory, "*.mp4")
-        .Where(p => (DateTime.UtcNow - File.GetLastWriteTimeUtc(p)).TotalSeconds >= cfg.MinFileAgeSeconds)
-        .OrderBy(File.GetCreationTimeUtc)
+    // Which channel a video belongs to is now the folder it was physically found
+    // in (WatchDirectory\<channel>\*.mp4), not sidecar.Channel - in every real
+    // generated-content case they already agree (VideoGen always writes
+    // Channel = profile.Id into the same folder it renders to), and this makes
+    // the channel available even before a sidecar is resolved.
+    var videos = channels
+        .Select(channel => (Channel: channel, Dir: Path.Combine(cfg.WatchDirectory, channel)))
+        .Where(c => Directory.Exists(c.Dir))
+        .SelectMany(c => Directory.GetFiles(c.Dir, "*.mp4").Select(p => (Path: p, c.Channel)))
+        .Where(v => (DateTime.UtcNow - File.GetLastWriteTimeUtc(v.Path)).TotalSeconds >= cfg.MinFileAgeSeconds)
+        .Where(v => IsPastCrashRetryBackoff(v.Path, cfg))
+        .OrderBy(v => File.GetCreationTimeUtc(v.Path))
         .ToList();
 
     if (videos.Count == 0) { log.Info("No videos to process."); return; }
 
     log.Info($"Found {videos.Count} video(s).");
 
-    foreach (var path in videos)
+    foreach (var (path, channel) in videos)
     {
         try
         {
-            var sidecar = await ResolveSidecarAsync(path, publishersByChannel, cfg, log);
-            var channel = string.IsNullOrWhiteSpace(sidecar.Channel) ? cfg.DefaultChannel : sidecar.Channel;
-
             if (!publishersByChannel.TryGetValue(channel, out var publishersByPlatform))
             {
                 log.Error($"Failed {Path.GetFileName(path)}: channel \"{channel}\" has no entry under Channels in appsettings.json.");
-                MoveWithSiblings(path, cfg.FailedDirectory);
+                MoveWithSiblings(path, cfg.FailedDirFor(channel));
                 continue;
             }
+
+            var sidecar = await ResolveSidecarAsync(path, channel, publishersByChannel, cfg, log);
 
             if (cfg.RequireApproval && sidecar.Approved != true)
             {
@@ -118,6 +136,7 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                 if (!publishersByPlatform.TryGetValue(target, out var publisher) || !publisher.Enabled)
                 {
                     sidecar.PublicationFor(target).Status = PublishStatus.Skipped;
+                    await sidecar.SaveAsync(path);
                     continue;
                 }
 
@@ -132,6 +151,7 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                     log.Info($"  [{publisher.Platform}] skipping {Path.GetFileName(path)}: {reason}");
                     sidecar.PublicationFor(target).Status = PublishStatus.Skipped;
                     sidecar.PublicationFor(target).Error = reason;
+                    await sidecar.SaveAsync(path);
                     continue;
                 }
 
@@ -165,9 +185,16 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                     publication.Error = result.Error;
                     log.Error($"  [{channel}/{publisher.Platform}] failed (attempt {publication.Attempts}/{cfg.MaxAttemptsPerPlatform}, will retry): {result.Error}");
                 }
+
+                // Saved per-target rather than once at the end of the loop, so a video
+                // whose next target throws (moving it to the crash-retry path below)
+                // doesn't lose the results already recorded for the targets before it.
+                await sidecar.SaveAsync(path);
             }
 
-            await sidecar.SaveAsync(path);
+            // This video's own processing reached the end without throwing, whatever the
+            // per-target outcomes were — clear any crash-retry count from an earlier run.
+            ClearCrashRetryState(path);
 
             if (sidecar.AllTargetsTerminal())
             {
@@ -176,9 +203,9 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                 // render/approval, so VideoGen never marks a topic used until a real
                 // publish confirms it.
                 if (sidecar.AnyPublished())
-                    await TopicHistory.AppendAsync(sidecar.Channel, sidecar.Title);
+                    await TopicHistory.AppendAsync(channel, sidecar.Title);
 
-                MoveWithSiblings(path, cfg.DoneDirectory);
+                MoveWithSiblings(path, cfg.DoneDirFor(channel));
                 log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
             }
             else
@@ -189,9 +216,62 @@ static async Task RunAsync(AppConfig cfg, Logger log)
         catch (Exception ex)
         {
             log.Error($"Failed {Path.GetFileName(path)}: {ex.Message}");
-            MoveWithSiblings(path, cfg.FailedDirectory);
+
+            var state = LoadCrashRetryState(path) ?? new CrashRetryState();
+            state.Attempts++;
+            state.LastAttemptUtc = DateTimeOffset.UtcNow;
+            SaveCrashRetryState(path, state);
+
+            if (state.Attempts < cfg.MaxCrashRetries)
+                log.Warn($"  Will retry {Path.GetFileName(path)} in {cfg.CrashRetryBackoffMinutes}m " +
+                         $"(crash attempt {state.Attempts}/{cfg.MaxCrashRetries}).");
+            else
+            {
+                log.Error($"  Giving up on {Path.GetFileName(path)} after {state.Attempts} crash attempt(s).");
+                MoveWithSiblings(path, cfg.FailedDirFor(channel));
+            }
         }
     }
+}
+
+static string CrashRetryMarkerPath(string videoPath) => Path.ChangeExtension(videoPath, ".retry.json");
+
+static CrashRetryState? LoadCrashRetryState(string videoPath)
+{
+    var markerPath = CrashRetryMarkerPath(videoPath);
+    if (!File.Exists(markerPath)) return null;
+
+    try
+    {
+        return JsonSerializer.Deserialize<CrashRetryState>(File.ReadAllText(markerPath));
+    }
+    catch (JsonException)
+    {
+        // A corrupt marker shouldn't itself become a reason the video can never be
+        // retried — treat it as "no prior attempts recorded".
+        return null;
+    }
+}
+
+static void SaveCrashRetryState(string videoPath, CrashRetryState state)
+{
+    var markerPath = CrashRetryMarkerPath(videoPath);
+    var tmp = markerPath + ".tmp";
+    File.WriteAllText(tmp, JsonSerializer.Serialize(state));
+    File.Move(tmp, markerPath, overwrite: true);
+}
+
+static void ClearCrashRetryState(string videoPath)
+{
+    var markerPath = CrashRetryMarkerPath(videoPath);
+    if (File.Exists(markerPath)) File.Delete(markerPath);
+}
+
+static bool IsPastCrashRetryBackoff(string videoPath, AppConfig cfg)
+{
+    var state = LoadCrashRetryState(videoPath);
+    if (state is null) return true;
+    return DateTimeOffset.UtcNow >= state.LastAttemptUtc.AddMinutes(cfg.CrashRetryBackoffMinutes);
 }
 
 // Every file belonging to one video - the .mp4, its sidecar .json, the .srt caption
@@ -213,12 +293,13 @@ static void MoveWithSiblings(string videoPath, string destRoot)
 
     MoveIfExists(videoPath);
     MoveIfExists(Sidecar.PathFor(videoPath));
-    foreach (var suffix in new[] { ".srt", ".thumb.jpg", ".tiktok-caption.txt" })
+    foreach (var suffix in new[] { ".srt", ".thumb.jpg", ".tiktok-caption.txt", ".retry.json" })
         MoveIfExists(Path.ChangeExtension(videoPath, suffix));
 }
 
 static async Task<Sidecar> ResolveSidecarAsync(
-    string videoPath, IReadOnlyDictionary<string, IReadOnlyDictionary<string, IPublisher>> publishersByChannel,
+    string videoPath, string channel,
+    IReadOnlyDictionary<string, IReadOnlyDictionary<string, IPublisher>> publishersByChannel,
     AppConfig cfg, Logger log)
 {
     var existing = await Sidecar.LoadAsync(videoPath);
@@ -230,9 +311,10 @@ static async Task<Sidecar> ResolveSidecarAsync(
 
     log.Info("No sidecar — generating metadata from YouTube trends + Claude.");
 
-    // A manually dropped video carries no channel signal, so it publishes
-    // through DefaultChannel's credentials.
-    var youtube = (YouTubePublisher)publishersByChannel[cfg.DefaultChannel][Platforms.YouTube];
+    // A manually dropped video carries no channel signal of its own, but it was
+    // found under `channel`'s watch folder, so it publishes through that
+    // channel's credentials.
+    var youtube = (YouTubePublisher)publishersByChannel[channel][Platforms.YouTube];
     var trends = await youtube.FetchTrendingDataAsync(cfg.TrendQueries, log, CancellationToken.None);
     var meta = await GenerateMetadataAsync(videoPath, trends, cfg, log);
 
@@ -244,7 +326,7 @@ static async Task<Sidecar> ResolveSidecarAsync(
         Approved = false,
         Language = "en",
         Aspect = "landscape",
-        Channel = cfg.DefaultChannel,
+        Channel = channel,
         // Aspect ratio of a manually dropped video is unknown, so default to
         // the one target every render supports regardless of orientation.
         Targets = [Platforms.YouTube],
@@ -308,4 +390,15 @@ class GeneratedMetadata
     public string Title { get; set; } = "";
     public string Description { get; set; } = "";
     public List<string> Tags { get; set; } = [];
+}
+
+// Marks how many times a video's per-video processing has thrown, and when, so a
+// transient failure (a platform API blip, a locked file) gets bounded retries across
+// separate scheduled runs instead of either looping forever or giving up on the first
+// hiccup. Persisted to disk rather than kept in memory because the Uploader is not a
+// long-running process — it exits after each Task Scheduler invocation.
+class CrashRetryState
+{
+    public int Attempts { get; set; }
+    public DateTimeOffset LastAttemptUtc { get; set; }
 }

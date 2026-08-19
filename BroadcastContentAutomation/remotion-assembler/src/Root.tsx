@@ -9,6 +9,8 @@ const defaultProps: AssemblyProps = {
   widthPx: 1080,
   heightPx: 1920,
   backgroundMusicVolume: 0.15,
+  outroSeconds: 0,
+  outroLines: [],
 };
 
 // durationInFrames/width/height/fps must be known before render starts, but they're a
@@ -28,7 +30,8 @@ export const RemotionRoot: React.FC = () => {
         height={1920}
         defaultProps={defaultProps}
         calculateMetadata={async ({ props }) => {
-          const totalSeconds = props.scenes.reduce((sum, s) => sum + s.durationInSeconds, 0);
+          const totalSeconds =
+            props.scenes.reduce((sum, s) => sum + s.durationInSeconds, 0) + props.outroSeconds;
           return {
             durationInFrames: Math.max(1, Math.round(totalSeconds * props.fps)),
             fps: props.fps,

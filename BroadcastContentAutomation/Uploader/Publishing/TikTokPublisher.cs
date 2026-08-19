@@ -99,7 +99,7 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
             var uploadUrl = data.GetProperty("upload_url").GetString()!;
 
             log.Info($"  [tiktok] publish {publishId}, uploading {Text.Bytes(info.Length)}");
-            log.Info($"  [tiktok] caption saved to {Path.GetFileName(captionFile)} - copy-paste it when you open the draft in the app");
+            log.Info($"  [tiktok] caption (also saved to {Path.GetFileName(captionFile)}) - copy-paste into the draft:\n{caption}");
 
             await using (var stream = File.OpenRead(request.VideoPath))
             using (var content = new StreamContent(stream))
@@ -122,6 +122,16 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return PublishResult.Retry($"TikTok transport error: {ex.Message}");
+        }
+        // A 200 response whose body doesn't have the shape this client expects (a
+        // TikTok API change, a proxy/CDN error page returned with a success status,
+        // etc.) previously escaped uncaught here and crashed the whole video's
+        // processing instead of just this one target - see the crash-retry path in
+        // Uploader/Program.cs, which exists to bound retries for exactly this kind
+        // of unexpected failure.
+        catch (Exception ex) when (ex is JsonException or KeyNotFoundException)
+        {
+            return PublishResult.Retry($"TikTok returned an unexpected response shape: {ex.Message}");
         }
     }
 

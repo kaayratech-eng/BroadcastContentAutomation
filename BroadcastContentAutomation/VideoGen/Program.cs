@@ -88,7 +88,7 @@ ContentProfile profile;
 try
 {
     profile = ContentProfileRegistry.Get(profileId ?? cfg.Profile);
-    cfg.Validate();
+    cfg.Validate(profile);
     profile.Validate();
 }
 catch (Exception ex)
@@ -134,7 +134,7 @@ catch (Exception ex)
 async Task<int> RunPrepAsync()
 {
     var workDir = Directory.CreateDirectory(
-        Path.Combine(cfg.WorkDirectory, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
+        Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
     Console.WriteLine($"Workspace: {workDir}");
 
     // 1. Character, then script. A pooled character is resolved first so the script can
@@ -143,7 +143,7 @@ async Task<int> RunPrepAsync()
     //    with the words and the artwork describing the same creature, which is the
     //    whole point - they used to disagree.
     var (pooled, addToPool) = profile.UsesCharacterMascot
-        ? CharacterSource.Resolve(profile, cfg, workDir)
+        ? await CharacterSource.Resolve(profile, cfg, workDir)
         : (null, false);
     var recentNames = profile.UsesCharacterMascot && pooled is null
         ? CharacterSource.RecentNames(cfg, workDir) : [];
@@ -255,7 +255,7 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
             continue;
         }
 
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
         scene.AudioPath = audioPath;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
@@ -264,6 +264,29 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
 
     var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
     Console.WriteLine($"Narration total: {total:0}s");
+}
+
+// The "like, follow & subscribe" outro line is fixed per channel (see
+// ContentProfile.OutroDestinationSpoken) rather than per-video, so it is synthesized once
+// and cached on disk under VideoGen/assets/audio/outro - every later render for the same
+// profile/language/text reuses the same file instead of paying TTS again for words that
+// never change.
+async Task<string> ResolveOutroAudioAsync(string spokenText)
+{
+    // Same hardcoded-absolute-path convention as BackgroundMusicPath/CharacterPoolPath in
+    // GiggleGardenProfile.cs/MythologyProfile.cs, not one relative to the build output dir.
+    const string outroAudioDir = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\audio\outro";
+    Directory.CreateDirectory(outroAudioDir);
+
+    var key = new string(spokenText.ToLowerInvariant()
+        .Select(c => char.IsLetterOrDigit(c) ? c : '-').ToArray());
+    var audioPath = Path.Combine(outroAudioDir, $"{profile.Id}-{language}-{key}.mp3");
+    if (File.Exists(audioPath)) return audioPath;
+
+    var tts = TtsProviderFactory.Create(cfg, profile, language!);
+    await tts.SynthesizeAsync(spokenText, language!, audioPath, "-4%", "+6%");
+    Console.WriteLine($"Outro audio synthesized: {audioPath}");
+    return audioPath;
 }
 
 // The no-Vidu hybrid pipeline's visuals (Deliverable 6, tasks/todo.md): a "context" scene's
@@ -285,6 +308,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
     // happens to also default to group 0. A short-form script never sets VisualGroup, so
     // canReuse is always false there and every scene resolves independently.
     int? lastGroup = null;
+    string? lastSceneKind = null;
     string? lastImagePath = null;
     string? lastClipPath = null;
 
@@ -293,7 +317,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
         var scene = script.Scenes[i];
         var label = $"{i + 1}/{script.Scenes.Count}";
         var isIntro = i == 0;
-        var canReuse = script.IsLongForm && !isIntro && lastGroup == scene.VisualGroup;
+        var canReuse = script.IsLongForm && !isIntro && lastGroup == scene.VisualGroup && lastSceneKind == scene.SceneKind;
 
         if (scene.SceneKind == "context")
         {
@@ -361,6 +385,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
         if (!isIntro)
         {
             lastGroup = scene.VisualGroup;
+            lastSceneKind = scene.SceneKind;
             lastImagePath = scene.ImagePath;
             lastClipPath = scene.ClipPath;
         }
@@ -487,7 +512,7 @@ async Task<int> RunManualAsync()
     script.Profile = profile.Id;
 
     var workDir = Directory.CreateDirectory(
-        Path.Combine(cfg.WorkDirectory, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
+        Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
     Console.WriteLine($"Workspace: {workDir}");
 
     InsertIntroScene(script);
@@ -552,7 +577,7 @@ async Task<int> RunRettsAsync()
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch);
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
         scene.AudioPath = audioPath;
 
         var before = scene.DurationSeconds;
@@ -721,7 +746,8 @@ async Task<int> RunAssembleAsync()
 
     // 6. Render
     var slug = Text.Slug(script.Title);
-    Directory.CreateDirectory(cfg.OutputDirectory);
+    var outputDir = Path.Combine(cfg.OutputDirectory, profile.Id);
+    Directory.CreateDirectory(outputDir);
     var rendered = new List<string>();
 
     // Reels reject anything over 90s, so the vertical cut is trimmed to whole scenes
@@ -739,11 +765,33 @@ async Task<int> RunAssembleAsync()
     if (shortScenes.Count < script.Scenes.Count)
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
 
-    var vertical = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}-short.mp4");
+    // "LIKE, FOLLOW & SUBSCRIBE" outro card/voiceover appended to every render (see
+    // ContentProfile.OutroDestinationText/-Spoken) - AllowsContextScenes profiles (today:
+    // chronicleandchaos) additionally fold in a "watch the full video" line on the vertical
+    // short only, since that render is a trimmed teaser for the landscape master rather
+    // than the full video itself.
+    var baseOutroLines = new[] { "LIKE, FOLLOW & SUBSCRIBE", profile.OutroDestinationText };
+    var baseOutroSpoken = $"Like, follow, and subscribe on YouTube — {profile.OutroDestinationSpoken}!";
+    var baseOutroAudio = await ResolveOutroAudioAsync(baseOutroSpoken);
+
+    var vertical = Path.Combine(outputDir, $"{slug}-{language}-short.mp4");
     if (profile.AllowsContextScenes)
-        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood);
+    {
+        var shortOutroLines = new[]
+        {
+            "LIKE, FOLLOW & SUBSCRIBE", "Watch the full video on YouTube", profile.OutroDestinationText,
+        };
+        var shortOutroSpoken =
+            $"Like, follow, and subscribe. Watch the full video on YouTube — {profile.OutroDestinationSpoken}.";
+        var shortOutroAudio = await ResolveOutroAudioAsync(shortOutroSpoken);
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
+            outroLines: shortOutroLines, outroAudioPath: shortOutroAudio);
+    }
     else
-        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood);
+    {
+        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
+    }
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
@@ -770,11 +818,13 @@ async Task<int> RunAssembleAsync()
 
     // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
     // than generating a second orientation, which would double the per-video spend.
-    var landscape = Path.Combine(cfg.OutputDirectory, $"{slug}-{language}.mp4");
+    var landscape = Path.Combine(outputDir, $"{slug}-{language}.mp4");
     if (profile.AllowsContextScenes)
-        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood);
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     else
-        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood);
+        await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 
@@ -822,15 +872,14 @@ async Task<int> RunAssembleAsync()
 // where every render already published successfully is not flagged at all.
 async Task<int> RunStatusAsync()
 {
-    var jobDirs = Directory.Exists(cfg.WorkDirectory)
-        ? Directory.GetDirectories(cfg.WorkDirectory, "job-*")
-            .Where(d => File.Exists(Path.Combine(d, "script.json")))
-            .OrderBy(d => d)
-            .ToList()
-        : new List<string>();
+    var jobDirs = ContentProfileRegistry.Ids
+        .Select(id => Path.Combine(cfg.WorkDirectory, id))
+        .Where(Directory.Exists)
+        .SelectMany(dir => Directory.GetDirectories(dir, "job-*"))
+        .Where(d => File.Exists(Path.Combine(d, "script.json")))
+        .OrderBy(d => Path.GetFileName(d))
+        .ToList();
 
-    var doneDir = Path.Combine(cfg.OutputDirectory, "done");
-    var failedDir = Path.Combine(cfg.OutputDirectory, "failed");
     var flagged = new List<string>();
 
     foreach (var dir in jobDirs)
@@ -840,13 +889,21 @@ async Task<int> RunStatusAsync()
         try { script = await LoadScriptAsync(dir); }
         catch (Exception ex) { flagged.Add($"[{jobName}] script.json unreadable: {ex.Message}"); continue; }
 
+        // Pre-migration jobs have no Profile field (they all predate the second
+        // channel), so they default to gigglegarden - the same channel their
+        // files were migrated into on disk (see tasks/todo.md).
+        var channelOutputDir = Path.Combine(cfg.OutputDirectory,
+            string.IsNullOrWhiteSpace(script.Profile) ? "gigglegarden" : script.Profile);
+        var doneDir = Path.Combine(channelOutputDir, "done");
+        var failedDir = Path.Combine(channelOutputDir, "failed");
+
         var slug = Text.Slug(script.Title);
 
         foreach (var (suffix, kind) in new (string Suffix, string Kind)[]
                  { ("-short", "vertical/shorts"), ("", "landscape/YouTube") })
         {
             var fileName = $"{slug}-{script.Language}{suffix}.mp4";
-            var liveVideo = Path.Combine(cfg.OutputDirectory, fileName);
+            var liveVideo = Path.Combine(channelOutputDir, fileName);
             var doneVideo = Path.Combine(doneDir, Path.GetFileNameWithoutExtension(fileName), fileName);
             var failedVideo = Path.Combine(failedDir, Path.GetFileNameWithoutExtension(fileName), fileName);
 
@@ -892,20 +949,42 @@ string ResolveJobDirectory()
 {
     if (job is not null)
     {
-        var explicitPath = Path.IsPathRooted(job) ? job : Path.Combine(cfg.WorkDirectory, job);
-        if (!Directory.Exists(explicitPath))
-            throw new DirectoryNotFoundException($"No such job folder: {explicitPath}");
-        return explicitPath;
+        if (Path.IsPathRooted(job))
+        {
+            if (!Directory.Exists(job))
+                throw new DirectoryNotFoundException($"No such job folder: {job}");
+            return job;
+        }
+
+        // --resume/--retts/--assemble all self-correct `profile` from the job's own
+        // script.Profile once it's loaded, so the CLI-supplied --profile (or its
+        // default) is only a hint here, not authoritative. Try that hint's subfolder
+        // first (the common case), then fall back to searching every channel.
+        var hinted = Path.Combine(cfg.WorkDirectory, profile.Id, job);
+        if (Directory.Exists(hinted))
+            return hinted;
+
+        foreach (var id in ContentProfileRegistry.Ids)
+        {
+            var candidate = Path.Combine(cfg.WorkDirectory, id, job);
+            if (Directory.Exists(candidate))
+                return candidate;
+        }
+
+        throw new DirectoryNotFoundException(
+            $"No such job folder \"{job}\" under {cfg.WorkDirectory} (checked every channel).");
     }
 
-    // Default to the newest job that still has work outstanding, so the common case
-    // (prep today, assemble tomorrow) needs no arguments.
-    var newest = Directory.Exists(cfg.WorkDirectory)
-        ? Directory.GetDirectories(cfg.WorkDirectory, "job-*")
-            .Where(d => File.Exists(Path.Combine(d, "script.json")))
-            .OrderByDescending(d => d)
-            .FirstOrDefault()
-        : null;
+    // Default to the newest job that still has work outstanding, searched across
+    // every channel's subfolder, so the common case (prep today, assemble
+    // tomorrow) needs no arguments regardless of which channel it belongs to.
+    var newest = ContentProfileRegistry.Ids
+        .Select(id => Path.Combine(cfg.WorkDirectory, id))
+        .Where(Directory.Exists)
+        .SelectMany(dir => Directory.GetDirectories(dir, "job-*"))
+        .Where(d => File.Exists(Path.Combine(d, "script.json")))
+        .OrderByDescending(d => Path.GetFileName(d))
+        .FirstOrDefault();
 
     return newest ?? throw new InvalidOperationException(
         $"No job folders with a script.json under {cfg.WorkDirectory}. Run --prep first.");

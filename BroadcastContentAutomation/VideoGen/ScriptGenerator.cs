@@ -122,11 +122,6 @@ class Scene
     public string? AudioPath { get; set; }
     public string? ImagePath { get; set; }
     public string? VerticalImagePath { get; set; }
-
-    // Second image for scenes whose narration runs long (see GenConfig.SplitLongSceneAfterSeconds) —
-    // shown via an internal crossfade partway through so a long line isn't one static photo start to finish.
-    public string? ImagePath2 { get; set; }
-    public string? VerticalImagePath2 { get; set; }
     public double DurationSeconds { get; set; }
 
     // Vidu image-to-video state. StartFramePath is the frame this scene animates from —
@@ -171,6 +166,14 @@ class Scene
     // this, so it stays at its default 0 for every scene, which the art-resolution loop
     // never treats as a group since it only reuses when IsLongForm is true.
     public int VisualGroup { get; set; } = 0;
+
+    // One express-as style tag for THIS scene's narration, chosen by the model from
+    // ContentProfile.NarrationMoodStyles (only asked for when that list is non-empty - see
+    // ScriptGenerator.GenerateAsync). Null/empty means a neutral, unstyled read - the same
+    // behavior every scene had before this field existed. Any value not in the profile's
+    // menu is nulled out during postprocessing rather than sent to Azure, since an
+    // unverified style string would fail the whole scene's TTS call.
+    public string? Mood { get; set; }
 }
 
 static class ScriptGenerator
@@ -292,6 +295,18 @@ static class ScriptGenerator
               """
             : "";
 
+        var moodGuidance = profile.NarrationMoodStyles.Count > 0
+            ? $"""
+
+              Each scene also gets a mood: ONE tag chosen EXACTLY from this list (do not invent
+              your own wording), matching what is actually happening in THAT scene's narration -
+              {string.Join(", ", profile.NarrationMoodStyles)}. A calm setup beat and a sudden
+              disaster should NOT sound the same; vary mood scene to scene as the story's emotion
+              actually shifts. Omit mood entirely (leave it out of the JSON) for a scene that is
+              genuinely neutral and needs no particular emotional read.
+              """
+            : "";
+
         var hookGuidance = longForm
             ? """
 
@@ -377,7 +392,7 @@ The character must be recognisably the SAME one in every{{(profile.AllowsContext
 Every imagePrompt and every motionPrompt{{(profile.AllowsContextScenes ? " on a \"character\" scene" : "")}} must name it and restate its key
 visual features from characterDescription - the picture generator has no memory
 between scenes, so "the character" on its own is not enough.
-{{sceneKindGuidance}}{{hookGuidance}}{{visualGroupGuidance}}
+{{sceneKindGuidance}}{{moodGuidance}}{{hookGuidance}}{{visualGroupGuidance}}
 
 Universal requirements (apply to every format):
 {{sceneCountLine}}
@@ -457,7 +472,7 @@ Respond ONLY with JSON, no markdown fences:
   "characterCatchphrase": "...",
   "musicMood": "...",
   "tags": ["..."],
-  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}{{(longForm ? ", \"visualGroup\": 0" : "")}} } ]
+  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}{{(longForm ? ", \"visualGroup\": 0" : "")}}{{(profile.NarrationMoodStyles.Count > 0 ? ", \"mood\": \"...\"" : "")}} } ]
 }
 """;
 
@@ -547,6 +562,8 @@ Respond ONLY with JSON, no markdown fences:
                     "that scene has nothing for StockFootageClient to search for.");
         }
 
+        NormalizeSceneMoods(script.Scenes, profile);
+
         // A scene with no motion still has to animate - falling back to the still's
         // description plus idle movement beats submitting an empty prompt to Vidu. The
         // character is named explicitly because the fallback may be all Vidu gets. Context
@@ -577,6 +594,16 @@ Respond ONLY with JSON, no markdown fences:
 
         var recap = string.Join(" ", scriptSoFar.Scenes.TakeLast(4).Select(s => s.Narration));
 
+        var moodGuidance = profile.NarrationMoodStyles.Count > 0
+            ? $"""
+
+              Each scene also gets a mood: ONE tag chosen EXACTLY from this list (do not invent
+              your own wording), matching what is actually happening in THAT scene's narration -
+              {string.Join(", ", profile.NarrationMoodStyles)}. Vary it scene to scene as the
+              story's emotion actually shifts; omit it entirely for a genuinely neutral scene.
+              """
+            : "";
+
         var prompt = $$"""
 {{profile.AudiencePersona}}
 {{profile.SafetyFraming}}
@@ -596,7 +623,7 @@ its own is not enough. Do not change the species, colours, or accessories.
 
 What happened so far, so you can continue naturally from here (do not repeat any of this):
 {{recap}}
-{{sceneKindGuidance}}
+{{sceneKindGuidance}}{{moodGuidance}}
 
 Each scene also gets a visualGroup: a small integer naming which "visual beat" it belongs
 to, continuing the numbering from the previous act - START THIS ACT'S FIRST GROUP AT
@@ -632,7 +659,7 @@ Universal requirements (apply to every scene):
 
 Respond ONLY with JSON, no markdown fences:
 {
-  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}, "visualGroup": 0 } ]
+  "scenes": [ { "narration": "...", "imagePrompt": "...", "motionPrompt": "..."{{(profile.AllowsContextScenes ? ", \"sceneKind\": \"character|context\", \"stockQuery\": \"...\"" : "")}}, "visualGroup": 0{{(profile.NarrationMoodStyles.Count > 0 ? ", \"mood\": \"...\"" : "")}} } ]
 }
 """;
 
@@ -693,6 +720,8 @@ Respond ONLY with JSON, no markdown fences:
                 throw new Exception(
                     $"Scene \"{badContextScene.Narration}\" is sceneKind \"context\" but has no stockQuery.");
         }
+
+        NormalizeSceneMoods(script.Scenes, profile);
 
         foreach (var scene in script.Scenes)
             if (scene.SceneKind == "character" && string.IsNullOrWhiteSpace(scene.MotionPrompt))
@@ -755,5 +784,18 @@ Respond ONLY with JSON, no markdown fences:
         if (bad is not null)
             throw new InvalidDataException(
                 "a scene was tagged sceneKind: \"context\" but returned no stockQuery");
+    }
+
+    // A mood tag outside the profile's own menu (a hallucination, a typo, capitalization
+    // drift) must never reach AzureTtsProvider - an unverified express-as style value fails
+    // that scene's whole TTS call. Nulled rather than thrown/retried: an occasional off-menu
+    // tag is not worth burning a script-generation attempt over, it just falls back to the
+    // same neutral read every scene had before this feature existed.
+    static void NormalizeSceneMoods(IEnumerable<Scene> scenes, ContentProfile profile)
+    {
+        foreach (var scene in scenes)
+            if (scene.Mood is not null &&
+                !profile.NarrationMoodStyles.Any(m => m.Equals(scene.Mood, StringComparison.OrdinalIgnoreCase)))
+                scene.Mood = null;
     }
 }
