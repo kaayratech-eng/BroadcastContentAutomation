@@ -3,7 +3,7 @@ import {
   AbsoluteFill,
   Audio,
   Img,
-  Video,
+  OffthreadVideo,
   interpolate,
   staticFile,
   useCurrentFrame,
@@ -83,9 +83,13 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
     extrapolateRight: "clamp",
   });
 
+  // OffthreadVideo, not Video: <Video> seeks via the browser's actual <video> element,
+  // which isn't frame-deterministic under concurrent decode load - most visible as flicker
+  // during TransitionSeries crossfades, where two scenes' video layers play at once.
+  // OffthreadVideo extracts each frame directly via ffmpeg instead, avoiding that.
   return (
     <BlurPadBackground>
-      <Video
+      <OffthreadVideo
         src={staticFile(asset.path)}
         muted
         style={{
@@ -96,7 +100,7 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
           transform: "scale(1.15)",
         }}
       />
-      <Video
+      <OffthreadVideo
         src={staticFile(asset.path)}
         muted
         style={{
