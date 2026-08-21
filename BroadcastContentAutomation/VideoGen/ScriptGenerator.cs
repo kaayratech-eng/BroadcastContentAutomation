@@ -240,7 +240,10 @@ static class ScriptGenerator
         var topicGuidance = profile.TopicGuidance;
 
         var avoidTopicsLine = topic is null && avoidTopics is { Count: > 0 }
-            ? $" Already covered by earlier videos - do not repeat any of these topics/titles, pick something distinct: {string.Join("; ", avoidTopics)}."
+            ? " Already covered by earlier videos - for each one below, identify the underlying " +
+              "concept or theme it's built on (not just its title wording), and pick something " +
+              "that differs in concept, not merely in setting or phrasing. Do not default to the " +
+              $"same concept as the most recent entries just because it's easy to write: {string.Join("; ", avoidTopics)}."
             : "";
 
         var topicLine = topic is not null

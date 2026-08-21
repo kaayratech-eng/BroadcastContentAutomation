@@ -25,13 +25,26 @@ static class GiggleGardenProfile
         // public-domain rhymes with a twist (Humpty Dumpty + a balloon chase, Twinkle
         // Twinkle + shiny shoes), while original concepts cluster several times lower.
         // It costs nothing: the rhyme carries the search volume, the twist is prompt work.
+        //
+        // A single worked example here becomes an attractor - three of our last four
+        // scripts independently converged on "count to five + a gathering setting"
+        // (ducks/birthday, balloons/birthday, then picnic) because that was the one
+        // example given. Fixed by giving a spread across both rhymes and concept
+        // categories, and by explicitly naming counting as a trap to avoid defaulting to.
         TopicGuidance =
             "Prefer a well-known PUBLIC DOMAIN nursery rhyme or counting song given a fresh " +
-            "twist setting (e.g. Twinkle Twinkle at the beach, Five Little Ducks at a birthday " +
-            "party) - the familiar rhyme is what parents search for and the twist is what makes " +
-            "it new. Otherwise choose a plain preschool concept (counting, colors, animals, " +
-            "shapes, habits like brushing teeth, seasons). Never reproduce a copyrighted song's " +
-            "lyrics - public-domain rhymes only, and write your own verses around them.",
+            "twist setting - vary BOTH the rhyme and the setting across videos, e.g. Twinkle " +
+            "Twinkle at the beach, Row Row Row Your Boat down a jungle river, Old MacDonald at " +
+            "a circus, Head Shoulders Knees and Toes in a garden, Itsy Bitsy Spider in a " +
+            "rainstorm, Wheels on the Bus on a spaceship - the familiar rhyme is what parents " +
+            "search for and the twist is what makes it new. Otherwise choose a plain preschool " +
+            "concept, rotating across categories rather than always reaching for the same one: " +
+            "colors, shapes, animals and the sounds they make, opposites (big/small, fast/slow), " +
+            "emotions, body parts, daily habits (brushing teeth, getting dressed, sharing), " +
+            "weather, seasons - as well as counting. Counting is one option among these, not the " +
+            "default - do not pick it just because it is the easiest topic to write. Never " +
+            "reproduce a copyrighted song's lyrics - public-domain rhymes only, and write your " +
+            "own verses around them.",
 
         BuildCharacterInventionInstructions = (langName, avoidLine) => $"""
             Invent ONE brand-new character - a fresh name and a fresh animal/species, different
