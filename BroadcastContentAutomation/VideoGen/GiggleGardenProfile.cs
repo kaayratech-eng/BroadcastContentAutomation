@@ -42,7 +42,12 @@ static class GiggleGardenProfile
             "colors, shapes, animals and the sounds they make, opposites (big/small, fast/slow), " +
             "emotions, body parts, daily habits (brushing teeth, getting dressed, sharing), " +
             "weather, seasons - as well as counting. Counting is one option among these, not the " +
-            "default - do not pick it just because it is the easiest topic to write. Never " +
+            "default - do not pick it just because it is the easiest topic to write. If you do " +
+            "pick counting, check the avoid-list below for prior counting videos and choose a " +
+            "target number that is both distinct from and HIGHER than any of them - work upward " +
+            "through the range 1 to 20 rather than restarting at a low number each time (never " +
+            "1-5 again once that range has been used), and once every number up to 20 has been " +
+            "used, retire counting as a topic entirely and do not choose it again. Never " +
             "reproduce a copyrighted song's lyrics - public-domain rhymes only, and write your " +
             "own verses around them.",
 
@@ -262,7 +267,7 @@ static class GiggleGardenProfile
                       actually teach it, not just mention it once.
                     """;
                 introThird = "a short, exciting preview of the ONE skill this video teaches " +
-                             "(\"Today we're learning to count to five!\")";
+                             "(\"Today we're learning all about the color red!\")";
                 hashtagExamples = "#kidslearning #preschoollearning #educationalvideos";
                 break;
 
@@ -283,7 +288,7 @@ static class GiggleGardenProfile
                       colors, animals, etc.) is still clearly nameable for the title/description.
                     """;
                 introThird = "a short, excited preview of what this video's rhyme is about " +
-                             "(\"Today's rhyme is all about five little ducks!\")";
+                             "(\"Today's rhyme is all about hopping bunnies!\")";
                 hashtagExamples = "#nurseryrhymes #kidssongs #rhymetime";
                 break;
 
@@ -374,10 +379,14 @@ static class GiggleGardenProfile
                       welcome but optional - the counting itself is the main interactive hook
                       (inviting the viewer to count along).
                     - The one thing this video teaches is counting to the chosen number - state that
-                      number explicitly in the title/description.
+                      number explicitly in the title/description. The number itself must follow the
+                      counting-target rule in the topic guidance above (distinct from and higher than
+                      any number counted to in a prior video, up to a maximum of 20) - never default
+                      to five.
                     """;
-                introThird = "a short, exciting preview of what we're counting to today " +
-                             "(\"Today we're counting all the way to five!\")";
+                introThird = "a short, exciting preview of what we're counting to today, using " +
+                             "today's actual chosen number, not always the same one " +
+                             "(\"Today we're counting all the way to twelve!\")";
                 hashtagExamples = "#countingsong #numbersforkids #countwithme";
                 break;
 
