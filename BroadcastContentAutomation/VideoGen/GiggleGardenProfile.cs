@@ -167,6 +167,14 @@ static class GiggleGardenProfile
 
         CharacterStyle = "Cute 2D children's cartoon style, flat colors, thick outlines, bright cheerful palette",
         CharacterPoolPath = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\character-pool",
+
+        // Switched onto the same no-Vidu hybrid pipeline as chronicleandchaos (2026-08-26):
+        // context scenes (real settings/objects, no character in frame) come from Pexels,
+        // character scenes from the manual Gemini dual-orientation art loop - see
+        // ContentProfile.AllowsContextScenes for what this unlocks. This also brings
+        // --long (12-15 min YouTube cuts) and the shorts' "watch the full video on
+        // YouTube" CTA to this channel, matching every other profile going forward.
+        AllowsContextScenes = true,
         // A small fixed cast the audience learns to recognise, not a large pool optimised
         // for variety: build 10, then every video reuses one of those 10 rather than still
         // inventing new ones (CoComelon/Vlad and Niki/Ryan's World all run a recurring cast,

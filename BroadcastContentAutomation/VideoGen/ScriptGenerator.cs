@@ -124,6 +124,18 @@ class Scene
     public string? VerticalImagePath { get; set; }
     public double DurationSeconds { get; set; }
 
+    // Landscape-native counterparts of ImagePath/ClipPath below, only populated for a
+    // profile with AllowsContextScenes (today: chronicleandchaos). Before these existed,
+    // the 16:9 master reused ImagePath/ClipPath (both portrait) blown up on a blurred
+    // pad - technically full-bleed, but every scene read as a pillarboxed portrait clip
+    // inside a wider frame. RunVisualLoopAsync (Program.cs) now resolves both orientations
+    // per scene - one Gemini prompt yielding two images for a "character" scene, two
+    // separate Pexels queries for a "context" scene - and AssembleWithRemotionAsync picks
+    // these for a landscape render, falling back to the portrait pair (old behaviour) when
+    // a scene predates this field or a landscape stock search had no match.
+    public string? ImagePathLandscape { get; set; }
+    public string? ClipPathLandscape { get; set; }
+
     // Vidu image-to-video state. StartFramePath is the frame this scene animates from —
     // this video's character reference, the same frame for every scene, which is what
     // keeps one character across the whole video while leaving all clips submittable at
@@ -417,8 +429,12 @@ Universal requirements (apply to every format):
   appearance first, then describe the action, not the composition: what it does,
   and any simple scene motion (leaves drifting, bubbles rising). Match the
   actions to the body the character actually has - do not have it clap if it
-  has wings. Keep it to one or two sentences, keep the movement small and
-  loopable. Like the image prompt, ALWAYS name an explicit colourful
+  has wings. Keep the motion itself centred and small enough that the
+  character never drifts into the top, bottom, left, or right edge of frame -
+  the clip gets cropped or letterboxed to other aspect ratios later, so
+  drifting off that safe centre zone during the animation gets cut off or
+  crowded, not just the starting picture. Keep it to one or two sentences,
+  keep the movement small and loopable. Like the image prompt, ALWAYS name an explicit colourful
   background/setting - the whole clip stays colourful start to finish, never a
   plain or empty backdrop - and always end with: "{{profile.ArtStyleSuffix}}"
   Never describe a camera cut or a change of character.
@@ -657,7 +673,11 @@ Universal requirements (apply to every scene):
   scene, because every scene is generated as a short animated clip that starts from a
   picture of this video's character. Name the character and its appearance first, then
   describe the action, not the composition. Match the actions to the body the character
-  actually has. Keep it to one or two sentences, keep the movement small and loopable.
+  actually has. Keep the motion itself centred and small enough that the character never
+  drifts into the top, bottom, left, or right edge of frame - the clip gets cropped or
+  letterboxed to other aspect ratios later, so drifting off that safe centre zone during
+  the animation gets cut off or crowded, not just the starting picture. Keep it to one or
+  two sentences, keep the movement small and loopable.
   Always name an explicit colourful background/setting, and always end with:
   "{{profile.ArtStyleSuffix}}" Never describe a camera cut or a change of character.
 

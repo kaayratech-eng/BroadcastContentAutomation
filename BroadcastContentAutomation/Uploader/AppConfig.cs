@@ -58,6 +58,7 @@ record PlatformsConfig
     public InstagramConfig Instagram { get; init; } = new();
     public FacebookConfig Facebook { get; init; } = new();
     public TikTokConfig TikTok { get; init; } = new();
+    public ThreadsConfig Threads { get; init; } = new();
 }
 
 record YouTubeConfig
@@ -93,6 +94,29 @@ record FacebookConfig
     public string GraphVersion { get; init; } = "v21.0";
     public int MaxUploadsPerRun { get; init; } = 5;
     public int ProcessingTimeoutSeconds { get; init; } = 600;
+}
+
+// Threads API (graph.threads.com) - deliberately NOT reusing InstagramConfig. Threads
+// is a separate Meta "Threads" app/use-case with its own OAuth app ID/secret, its own
+// user access token (threads_basic + threads_content_publish scopes, 60-day long-lived,
+// refreshed via GET /refresh_access_token — see ThreadsPublisher.RefreshAccessTokenAsync),
+// and its own Threads user ID, none of which are interchangeable with the Instagram
+// Graph API credentials above even though both point at the same underlying account.
+//
+// Unlike every other publisher here, Threads has no resumable binary-upload endpoint —
+// POST /{threads-user-id}/threads only accepts a `video_url` it fetches itself, so the
+// rendered file must already be reachable at a public HTTPS URL before a container can
+// even be created. PublicVideoBaseUrl + the video's filename is that URL; nothing in
+// this codebase serves files publicly today, so this is Fatal until that's set up.
+record ThreadsConfig
+{
+    public bool Enabled { get; init; }
+    public string UserId { get; init; } = "";
+    public string AccessToken { get; init; } = "";
+    public string GraphVersion { get; init; } = "v1.0";
+    public string PublicVideoBaseUrl { get; init; } = "";
+    public int MaxUploadsPerRun { get; init; } = 5;
+    public int ProcessingTimeoutSeconds { get; init; } = 300;   // docs: poll ~once/min, no more than 5 min
 }
 
 record TikTokConfig

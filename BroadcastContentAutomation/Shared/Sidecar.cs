@@ -12,7 +12,14 @@ public static class Platforms
     public const string InstagramStory = "instagram_story";
     public const string FacebookStory = "facebook_story";
 
-    public static readonly string[] All = [YouTube, Instagram, Facebook, TikTok, InstagramStory, FacebookStory];
+    // Threads (graph.threads.com) - a separate Meta "Threads" app/use-case from the
+    // Instagram Graph API above, with its own OAuth (threads_basic/threads_content_publish
+    // scopes), its own Threads user ID, and its own access token - see ThreadsConfig/
+    // ThreadsPublisher. Not the same credentials as Instagram even though both are tied
+    // to the same underlying account identity.
+    public const string Threads = "threads";
+
+    public static readonly string[] All = [YouTube, Instagram, Facebook, TikTok, InstagramStory, FacebookStory, Threads];
 }
 
 public enum PublishStatus

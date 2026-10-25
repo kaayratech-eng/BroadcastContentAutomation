@@ -37,6 +37,7 @@ string? topic = null, language = "en", job = null, profileId = null, scriptFile 
 var mode = "";
 string? formatOverride = null;
 var longForm = false;
+string? reframeIn = null, reframeOut = null;
 
 for (var i = 0; i < args.Length; i++)
 {
@@ -50,7 +51,11 @@ for (var i = 0; i < args.Length; i++)
         case "--retts": mode = "retts"; break;
         case "--test-tts": mode = "test-tts"; break;
         case "--dry-script": mode = "dry-script"; break;
+        case "--reframe": mode = "reframe"; break;
+        case "--generate-intro": mode = "generate-intro"; break;
         case "--long": longForm = true; break;
+        case "--in" when i + 1 < args.Length: reframeIn = args[++i]; break;
+        case "--out" when i + 1 < args.Length: reframeOut = args[++i]; break;
         case "--job" when i + 1 < args.Length: job = args[++i]; break;
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
         case "--language" when i + 1 < args.Length: language = args[++i]; break;
@@ -68,6 +73,8 @@ for (var i = 0; i < args.Length; i++)
             Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
             Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...] [--long]   one script-generation call only, no TTS/character-draw/Vidu spend");
             Console.WriteLine("       VideoGen --status   lists every job with a decision still pending: never rendered, rendered but not approved, or approved and processed but never actually published anywhere");
+            Console.WriteLine("       VideoGen --reframe --in <landscape.mp4> [--out <path>]   center-crop an existing 16:9 video down to a 9:16 short, local ffmpeg only, no API spend");
+            Console.WriteLine("       VideoGen --generate-intro --profile <id>   one-time cinematic channel bumper (Vidu, on-peak); every future render for that profile opens with it automatically once it exists");
             return 0;
     }
 }
@@ -120,6 +127,8 @@ try
         "retts" => await RunRettsAsync(),
         "test-tts" => await RunTestTtsAsync(),
         "dry-script" => await RunDryScriptAsync(),
+        "reframe" => await RunReframeAsync(),
+        "generate-intro" => await RunGenerateIntroAsync(),
         _ => await RunAssembleAsync(),
     };
 }
@@ -133,6 +142,19 @@ catch (Exception ex)
 
 async Task<int> RunPrepAsync()
 {
+    // Nudge, not a block: warn about this profile's own unfinished jobs before spending
+    // more script/TTS/art quota on a new one, but never refuse to run - some of that
+    // "unfinished" work is legitimately still mid-pipeline (e.g. off-peak Vidu clips still
+    // in flight), not abandoned.
+    var outstanding = await ComputeFlaggedAsync([profile.Id]);
+    if (outstanding.Count > 0)
+    {
+        Console.WriteLine($"Note: {outstanding.Count} unfinished item(s) already exist for {profile.Id} " +
+            "- consider finishing these before starting a new script (run --status for full detail):");
+        foreach (var line in outstanding) Console.WriteLine($"  - {line}");
+        Console.WriteLine();
+    }
+
     var workDir = Directory.CreateDirectory(
         Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
     Console.WriteLine($"Workspace: {workDir}");
@@ -146,7 +168,7 @@ async Task<int> RunPrepAsync()
         ? await CharacterSource.Resolve(profile, cfg, workDir)
         : (null, false);
     var recentNames = profile.UsesCharacterMascot && pooled is null
-        ? CharacterSource.RecentNames(cfg, workDir) : [];
+        ? CharacterSource.RecentNames(profile, cfg, workDir) : [];
 
     var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
     var recentTopics = topic is null ? await TopicHistory.RecentAsync(profile.Id) : [];
@@ -311,6 +333,16 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
     string? lastSceneKind = null;
     string? lastImagePath = null;
     string? lastClipPath = null;
+    string? lastImagePathLandscape = null;
+    string? lastClipPathLandscape = null;
+
+    // Character scenes needing fresh art are queued here instead of prompted immediately -
+    // see the batch generation pass after this loop, which turns everything queued into one
+    // Gemini prompt (ImageClient.BuildBatchDualOrientationPrompt) instead of one per scene.
+    // scene.ImagePath/ImagePathLandscape are set to their final target paths at queue time
+    // (not once art is confirmed on disk) so a later scene in the same visual group can still
+    // reuse them via canReuse below, same as it would reuse an already-resolved scene.
+    var pendingArt = new List<(int Index, string Label, string ScenePrompt, string LandscapePath, string PortraitPath)>();
 
     for (var i = 0; i < script.Scenes.Count; i++)
     {
@@ -353,32 +385,72 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
 
                 Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
             }
+
+            // Landscape counterpart, resolved independently of the portrait pick above -
+            // a second free Pexels query, not a second human step. A miss here is not
+            // fatal (unlike the portrait throw above): AssembleWithRemotionAsync falls
+            // back to the blur-padded portrait asset for this one scene if it stays null.
+            var stockBaseLandscape = Path.Combine(workDir, $"scene{i:D2}-stock-landscape");
+            var existingLandscape = File.Exists(stockBaseLandscape + ".mp4") ? stockBaseLandscape + ".mp4"
+                : File.Exists(stockBaseLandscape + ".jpg") ? stockBaseLandscape + ".jpg" : null;
+
+            if (existingLandscape is not null)
+            {
+                if (Path.GetExtension(existingLandscape).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                    scene.ClipPathLandscape = existingLandscape;
+                else
+                    scene.ImagePathLandscape = existingLandscape;
+                Console.WriteLine($"Stock (landscape) {label}: already on disk -> {Path.GetFileName(existingLandscape)}");
+            }
+            else if (canReuse && (lastClipPathLandscape is not null || lastImagePathLandscape is not null))
+            {
+                scene.ClipPathLandscape = lastClipPathLandscape;
+                scene.ImagePathLandscape = lastImagePathLandscape;
+                Console.WriteLine($"Stock (landscape) {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastClipPathLandscape ?? lastImagePathLandscape!)}");
+            }
+            else
+            {
+                var downloadedLandscape = await stock.DownloadBestMatchAsync(scene.StockQuery!, stockBaseLandscape, ImageClient.Orientation.Landscape);
+                if (downloadedLandscape is null)
+                {
+                    Console.WriteLine($"Stock (landscape) {label}: no Pexels match for \"{scene.StockQuery}\" - the 16:9 master will blur-pad the portrait asset for this scene.");
+                }
+                else
+                {
+                    if (Path.GetExtension(downloadedLandscape).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                        scene.ClipPathLandscape = downloadedLandscape;
+                    else
+                        scene.ImagePathLandscape = downloadedLandscape;
+
+                    Console.WriteLine($"Stock (landscape) {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloadedLandscape)}");
+                }
+            }
         }
         else
         {
             var artBase = Path.Combine(workDir, $"scene{i:D2}-art");
+            var artBaseLandscape = Path.Combine(workDir, $"scene{i:D2}-art-landscape");
             var existing = ManualArtClient.ImageExtensions.Select(ext => artBase + ext).FirstOrDefault(File.Exists);
+            var existingLandscape = ManualArtClient.ImageExtensions.Select(ext => artBaseLandscape + ext).FirstOrDefault(File.Exists);
 
-            if (existing is not null)
+            if (existing is not null && existingLandscape is not null)
             {
                 scene.ImagePath = existing;
-                Console.WriteLine($"Art {label}: already on disk -> {Path.GetFileName(existing)}");
+                scene.ImagePathLandscape = existingLandscape;
+                Console.WriteLine($"Art {label}: already on disk -> {Path.GetFileName(existing)}, {Path.GetFileName(existingLandscape)}");
             }
-            else if (canReuse && lastImagePath is not null)
+            else if (canReuse && lastImagePath is not null && lastImagePathLandscape is not null)
             {
                 scene.ImagePath = lastImagePath;
-                Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}");
+                scene.ImagePathLandscape = lastImagePathLandscape;
+                Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}, {Path.GetFileName(lastImagePathLandscape)}");
             }
             else
             {
-                var outputPath = artBase + ".png";
-                var prompt = ImageClient.BuildPrompt(
-                    scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                    ImageClient.Orientation.Portrait, matchReference: true);
-                scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
-                    prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
-
-                Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
+                scene.ImagePathLandscape = artBaseLandscape + ".png";
+                scene.ImagePath = artBase + ".png";
+                pendingArt.Add((i, label, scene.ImagePrompt, scene.ImagePathLandscape, scene.ImagePath));
+                Console.WriteLine($"Art {label}: queued for batch generation.");
             }
         }
 
@@ -388,9 +460,45 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             lastSceneKind = scene.SceneKind;
             lastImagePath = scene.ImagePath;
             lastClipPath = scene.ClipPath;
+            lastImagePathLandscape = scene.ImagePathLandscape;
+            lastClipPathLandscape = scene.ClipPathLandscape;
         }
 
         await SaveScriptAsync(workDir, script);
+    }
+
+    if (pendingArt.Count > 0)
+    {
+        // Gemini choked trying to generate all 76 images (38 scenes) of the maritime-disasters
+        // job in one prompt - see tasks/todo.md's 2026-08-26 entry. Split into ArtBatchParts
+        // evenly-sized batches (not a fixed max-scenes-per-batch cap) so however many scenes
+        // are pending, each batch stays roughly the same size instead of leaving a small
+        // straggler batch - e.g. 38 scenes / 2 parts = 19 + 19; 50 scenes / 2 parts = 25 + 25.
+        // 2 (half), then 3 and 4 (both live-tested, both failed - Gemini itself said to try
+        // a smaller batch), then 5, now at 6. Splits unevenly when the count isn't a
+        // multiple of ArtBatchParts (e.g. 38 / 6 = 7 + 7 + 6 + 6 + 6 + 6), that's fine, this
+        // is just "how many roughly-equal pieces to cut it into", not a guarantee of exact
+        // evenness. Bump further if 6 still errors.
+        const int ArtBatchParts = 6;
+        var batchSize = (int)Math.Ceiling(pendingArt.Count / (double)ArtBatchParts);
+        var chunks = pendingArt.Chunk(Math.Max(batchSize, 1)).ToList();
+
+        for (var c = 0; c < chunks.Count; c++)
+        {
+            var chunk = chunks[c];
+            Console.WriteLine($"\nBatch {c + 1}/{chunks.Count}: {chunk.Length} scene(s) need manual art - batching into one Gemini prompt ({chunk.Length * 2} images).");
+
+            var prompt = ImageClient.BuildBatchDualOrientationPrompt(
+                chunk.Select(p => p.ScenePrompt).ToList(), profile.CharacterStyle, profile.CharacterPortraitStyleSuffix, matchReference: true);
+            var pairs = chunk.Select(p => (p.LandscapePath, p.PortraitPath)).ToList();
+
+            await ManualArtClient.PromptAndWaitBatchAsync(prompt, pairs, characterImage);
+
+            foreach (var p in chunk)
+                Console.WriteLine($"Art {p.Label}: saved {Path.GetFileName(p.PortraitPath)}, {Path.GetFileName(p.LandscapePath)}");
+
+            await SaveScriptAsync(workDir, script);
+        }
     }
 }
 
@@ -660,11 +768,153 @@ async Task<int> RunDryScriptAsync()
     }
     Console.WriteLine($"Hashtags: {string.Join(" ", script.Tags.Where(t => t.StartsWith('#')))}");
 
-    var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script")).FullName;
+    var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script", profile.Id)).FullName;
     var outPath = Path.Combine(outDir, $"{script.Format}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
     await File.WriteAllTextAsync(outPath, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
     Console.WriteLine($"Saved -> {outPath}");
 
+    return 0;
+}
+
+// ------------------------------------------------------------- reframe ------
+
+// Center-crops an existing 16:9 video down to 9:16, no API calls involved. Prep for a
+// future landscape-native generation pipeline: once that exists, this is the step that
+// turns its master into a short instead of a separate vertical Vidu submission.
+async Task<int> RunReframeAsync()
+{
+    if (reframeIn is null)
+    {
+        Console.Error.WriteLine("--reframe requires --in <landscape.mp4>. See --help.");
+        return 1;
+    }
+    if (!File.Exists(reframeIn))
+    {
+        Console.Error.WriteLine($"Input not found: {reframeIn}");
+        return 1;
+    }
+
+    var outPath = reframeOut ?? Path.Combine(
+        Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "reframe-test")).FullName,
+        $"{Path.GetFileNameWithoutExtension(reframeIn)}-vertical.mp4");
+    Directory.CreateDirectory(Path.GetDirectoryName(outPath)!);
+
+    Console.WriteLine($"Reframing {reframeIn} -> {outPath}");
+    await VideoAssembler.ReframeToVerticalAsync(cfg, reframeIn, outPath);
+    Console.WriteLine($"Done -> {outPath}");
+
+    return 0;
+}
+
+// ------------------------------------------------------------ generate-intro ------
+
+// One-time per-channel cinematic bumper (tasks/todo.md, "Chronicle & Chaos Vidu
+// channel-intro bumper") - not part of the per-video --prep/--assemble pipeline. Writes
+// VideoGen/assets/intros/{profile.Id}/intro-{vertical,landscape}.mp4; once those exist,
+// VideoAssembler.AssembleWithRemotionAsync splices them in front of every future render
+// for this profile automatically. Re-run is idempotent - each artifact is skipped once
+// its output file exists, so a still saved under the wrong name or a Vidu task that
+// needs resubmitting can be fixed and the command re-run without redoing earlier steps.
+async Task<int> RunGenerateIntroAsync()
+{
+    var introDir = Directory.CreateDirectory(
+        Path.Combine(@"D:\Business\BroadcastContentAutomation\VideoGen\assets\intros", profile.Id)).FullName;
+
+    Console.WriteLine($"Generating channel intro for \"{profile.ChannelName}\" into {introDir}");
+
+    // Vidu is image-to-video only (10s/clip cap, no text-to-video mode) - the starting
+    // frame has to be a manually-drawn still, same human-in-the-loop Gemini flow as
+    // character art. One still per orientation, not a crop of the other: a 16:9 archive
+    // backdrop and a 9:16 close composition are deliberately different shots.
+    var motif =
+        "An ancient leather-bound tome lies open on a weathered stone pedestal, its pages " +
+        "inscribed with faintly glowing runic script. Embers and drifting dust motes rise " +
+        "through the air. A single dramatic shaft of warm firelight raking across the tome " +
+        "from one side; a cool, dim moonlit-blue rim light from the other. Deep chiaroscuro " +
+        $"shadow vignette. {profile.ArtStyleSuffix} No text, no words, no letters, no logos, no watermark.";
+
+    var stillVertical = Path.Combine(introDir, "still-vertical.png");
+    var stillLandscape = Path.Combine(introDir, "still-landscape.png");
+
+    if (!File.Exists(stillVertical))
+        await ManualArtClient.PromptAndWaitAsync(
+            motif + " Vertical 9:16 framing, generous open space in the upper third reserved for a title overlay.",
+            stillVertical, ImageClient.Orientation.Portrait);
+
+    if (!File.Exists(stillLandscape))
+        await ManualArtClient.PromptAndWaitAsync(
+            motif + " Wide 16:9 framing, a grand candlelit stone archive fading into darkness behind the tome, generous negative space on both sides reserved for a title overlay.",
+            stillLandscape, ImageClient.Orientation.Landscape);
+
+    const double introSeconds = 7.0;
+    const string motionPrompt =
+        "Slow, steady cinematic push-in toward the tome. Embers and dust drift gently " +
+        "upward through the firelight. Subtle candlelight flicker. Camera holds level, " +
+        "no cuts, no characters, reverent unhurried pace.";
+
+    // On-peak, deliberately, overriding cfg.ViduOffPeak - this is a one-time low-volume
+    // asset the channel's first upload is waiting on, not routine per-scene volume, so the
+    // 48h off-peak delivery window is the wrong trade here even at double the price.
+    IVideoProvider vidu = new ViduClient(cfg with { ViduOffPeak = false });
+
+    async Task<string> GenerateOrientationAsync(string stillPath, int w, int h, string tag)
+    {
+        var finalPath = VideoAssembler.IntroClipPath(profile.Id, w, h);
+        if (File.Exists(finalPath))
+        {
+            Console.WriteLine($"  {tag}: {finalPath} already exists, skipping.");
+            return finalPath;
+        }
+
+        // A raw clip already on disk (e.g. the finishing step below threw on a previous
+        // run, after the Vidu spend was already made) is reused rather than resubmitted -
+        // Vidu credits for a successful generation shouldn't be spent twice over a
+        // downstream ffmpeg/config problem that has nothing to do with the clip itself.
+        var rawPath = Path.Combine(introDir, $"raw-{tag}.mp4");
+        if (!File.Exists(rawPath))
+        {
+            Console.WriteLine($"  {tag}: submitting to Vidu (on-peak)...");
+            var submission = await vidu.SubmitAsync(stillPath, motionPrompt, introSeconds);
+            Console.WriteLine($"  {tag}: task {submission.TaskId} ({submission.Credits} credits) — polling...");
+
+            ViduClient.Result result;
+            var deadline = DateTime.UtcNow.AddMinutes(15);
+            while (true)
+            {
+                result = await vidu.PollAsync(submission.TaskId);
+                if (result.IsTerminal) break;
+                if (DateTime.UtcNow > deadline)
+                    throw new Exception($"{tag}: Vidu task {submission.TaskId} did not finish within 15 minutes.");
+                await Task.Delay(TimeSpan.FromSeconds(15));
+            }
+
+            if (!result.Succeeded)
+                throw new Exception($"{tag}: Vidu task {submission.TaskId} failed — {result.Error ?? result.State}.");
+
+            await vidu.DownloadAsync(result.Url!, rawPath);
+        }
+        else
+        {
+            Console.WriteLine($"  {tag}: reusing already-downloaded {rawPath}");
+        }
+        Console.WriteLine($"  {tag}: burning in title card and music...");
+
+        // "driving epic" - one of profile.BackgroundMusicPath's existing mood subfolders
+        // (see assets/music-mythology/) - fits a channel-identity reveal better than the
+        // quieter mid-scene moods (mysterious-tense, somber-orchestral, etc.) that score
+        // actual narration elsewhere.
+        await VideoAssembler.FinishIntroClipAsync(
+            cfg, profile, rawPath, profile.ChannelName, profile.OutroDestinationText,
+            w, h, introSeconds, introDir, finalPath, mood: "driving epic");
+
+        Console.WriteLine($"  {tag}: {finalPath}");
+        return finalPath;
+    }
+
+    await GenerateOrientationAsync(stillVertical, 1080, 1920, "vertical");
+    await GenerateOrientationAsync(stillLandscape, 1920, 1080, "landscape");
+
+    Console.WriteLine("Done. Every future render for this profile now opens with this bumper automatically.");
     return 0;
 }
 
@@ -817,8 +1067,9 @@ async Task<int> RunAssembleAsync()
     }.SaveAsync(vertical);
     rendered.Add(vertical);
 
-    // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
-    // than generating a second orientation, which would double the per-video spend.
+    // AllowsContextScenes profiles generate genuine landscape-native assets per scene
+    // (see Scene.ImagePathLandscape/ClipPathLandscape) instead of blowing up the vertical
+    // short's clips; other profiles still reuse the same portrait clips for both renders.
     var landscape = Path.Combine(outputDir, $"{slug}-{language}.mp4");
     if (profile.AllowsContextScenes)
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood,
@@ -871,9 +1122,11 @@ async Task<int> RunAssembleAsync()
 //     went live anywhere
 // A job with neither file anywhere is reported as never rendered for both renders; a job
 // where every render already published successfully is not flagged at all.
-async Task<int> RunStatusAsync()
+// Shared by --status (all profiles) and --prep's pre-flight nudge (just the one profile
+// about to start a new job) so the two can never disagree about what "unfinished" means.
+async Task<List<string>> ComputeFlaggedAsync(IEnumerable<string> profileIds)
 {
-    var jobDirs = ContentProfileRegistry.Ids
+    var jobDirs = profileIds
         .Select(id => Path.Combine(cfg.WorkDirectory, id))
         .Where(Directory.Exists)
         .SelectMany(dir => Directory.GetDirectories(dir, "job-*"))
@@ -932,6 +1185,30 @@ async Task<int> RunStatusAsync()
             }
         }
     }
+
+    return flagged;
+}
+
+// Durable paper trail of every --status run, appended alongside the live sidecar-computed
+// truth in ComputeFlaggedAsync above - this file is never read back by the program, only
+// ever appended to, so it can't drift out of sync with reality the way a hand-maintained
+// record could. One entry per run, oldest at top, so `git log`/a plain read shows history.
+async Task AppendStatusLogAsync(List<string> flagged)
+{
+    var logPath = Path.Combine(cfg.WorkDirectory, "status-log.md");
+    var entry = $"## {DateTime.Now:yyyy-MM-dd HH:mm:ss}" + Environment.NewLine +
+        (flagged.Count == 0
+            ? "No unfinished work - every job is either fully published or still healthy mid-pipeline."
+            : $"{flagged.Count} item(s) needed a decision:" + Environment.NewLine +
+              string.Join(Environment.NewLine, flagged.Select(f => $"- {f}")))
+        + Environment.NewLine + Environment.NewLine;
+    await File.AppendAllTextAsync(logPath, entry);
+}
+
+async Task<int> RunStatusAsync()
+{
+    var flagged = await ComputeFlaggedAsync(ContentProfileRegistry.Ids);
+    await AppendStatusLogAsync(flagged);
 
     if (flagged.Count == 0)
     {

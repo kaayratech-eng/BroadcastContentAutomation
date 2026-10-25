@@ -161,11 +161,17 @@ static class CharacterSource
     // Best-effort: a folder with no script.json yet (mid --prep) or one that fails to
     // parse (hand-edited, from before CharacterName existed) is skipped rather than
     // thrown on - this is flavour for the prompt, not something that should block a run.
-    public static List<string> RecentNames(GenConfig cfg, string currentWorkDir, int max = 20)
+    //
+    // Scoped to this profile's own subfolder (WorkDirectory/{profile.Id}/job-*) - the
+    // per-channel path segregation migration (see ContentProfileRegistry.Ids) nested job
+    // folders one level deeper than this used to scan, which silently left this glob
+    // matching nothing at WorkDirectory's own root ever since.
+    public static List<string> RecentNames(ContentProfile profile, GenConfig cfg, string currentWorkDir, int max = 20)
     {
-        if (!Directory.Exists(cfg.WorkDirectory)) return [];
+        var channelDir = Path.Combine(cfg.WorkDirectory, profile.Id);
+        if (!Directory.Exists(channelDir)) return [];
 
-        var jobDirs = Directory.EnumerateDirectories(cfg.WorkDirectory, "job-*")
+        var jobDirs = Directory.EnumerateDirectories(channelDir, "job-*")
             .Where(d => !Path.GetFullPath(d).Equals(Path.GetFullPath(currentWorkDir), StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase);
 
@@ -253,11 +259,14 @@ static class CharacterSource
     public static HashSet<string> RecentPoolPicks(ContentProfile profile, GenConfig cfg, string currentWorkDir, int max)
     {
         var picks = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        if (!Directory.Exists(cfg.WorkDirectory) || string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return picks;
+        var channelDir = Path.Combine(cfg.WorkDirectory, profile.Id);
+        if (!Directory.Exists(channelDir) || string.IsNullOrWhiteSpace(profile.CharacterPoolPath)) return picks;
 
         var poolPath = Path.GetFullPath(profile.CharacterPoolPath);
 
-        var jobDirs = Directory.EnumerateDirectories(cfg.WorkDirectory, "job-*")
+        // Scoped to this profile's own subfolder - see RecentNames above for why (the
+        // per-channel path segregation migration nested job folders one level deeper).
+        var jobDirs = Directory.EnumerateDirectories(channelDir, "job-*")
             .Where(d => !Path.GetFullPath(d).Equals(Path.GetFullPath(currentWorkDir), StringComparison.OrdinalIgnoreCase))
             .OrderByDescending(d => d, StringComparer.OrdinalIgnoreCase);
 

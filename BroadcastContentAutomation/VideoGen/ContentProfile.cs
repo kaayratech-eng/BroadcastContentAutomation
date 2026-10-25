@@ -131,10 +131,12 @@ record ContentProfile
     // When true, ScriptGenerator asks the model to tag each scene as a "character" moment
     // (this video's figure doing something, drawn via the manual Gemini art loop) or a
     // "context" moment (a real setting/object/era with no character in frame, fetched from
-    // Pexels stock footage via StockFootageClient) - the no-Vidu hybrid pipeline for
-    // Chronicle & Chaos (Deliverable 6, tasks/todo.md). False (the default) keeps a
-    // profile's scenes 100% character-anchored with no prompt change at all - GiggleGarden's
-    // visual style is fully illustrated throughout, no stock footage mixed in.
+    // Pexels stock footage via StockFootageClient) - the no-Vidu hybrid pipeline, originally
+    // built for Chronicle & Chaos (Deliverable 6, tasks/todo.md) and since adopted by every
+    // profile (2026-08-26). False (the default) keeps a profile's scenes 100%
+    // character-anchored with no prompt change at all, rendered through the older
+    // Vidu-image-to-video path instead - still available for a future profile that wants a
+    // single unchanging illustrated character rather than this hybrid mix.
     public bool AllowsContextScenes { get; init; } = false;
 
     // The three below only matter when CharacterPoolPath is a folder - they drive

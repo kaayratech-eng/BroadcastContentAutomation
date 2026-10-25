@@ -98,10 +98,22 @@ static partial class VideoAssembler
         string ToPublicDirRelative(string absolutePath) =>
             Path.GetRelativePath(workDir, Path.GetFullPath(absolutePath)).Replace('\\', '/');
 
+        // Landscape render (w > h): prefer each scene's landscape-native asset (see
+        // Scene.ImagePathLandscape/ClipPathLandscape, ScriptGenerator.cs) over the
+        // portrait one, so the master shows real 16:9 footage/art instead of a blurred
+        // blow-up of the vertical short's assets. Falls back to the portrait asset when
+        // the landscape variant is missing - a job prepped before this field existed, or
+        // a scene whose landscape Pexels query had no match - so an old or partial job
+        // still renders instead of throwing.
+        var preferLandscape = w > h;
+
         var assets = scenes.Select(s =>
         {
-            var isVideo = s.ClipPath is { } clip && File.Exists(clip);
-            var path = isVideo ? s.ClipPath! : s.ImagePath
+            var clipPath = preferLandscape ? s.ClipPathLandscape ?? s.ClipPath : s.ClipPath;
+            var imagePath = preferLandscape ? s.ImagePathLandscape ?? s.ImagePath : s.ImagePath;
+
+            var isVideo = clipPath is { } clip && File.Exists(clip);
+            var path = isVideo ? clipPath! : imagePath
                 ?? throw new InvalidOperationException(
                     "A scene has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
 
@@ -173,7 +185,123 @@ static partial class VideoAssembler
         var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
         await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
 
-        await RunNpxRemotionRenderAsync(cfg, workDir, propsPath, outputPath);
+        var introClip = ResolveIntroClip(profile.Id, w, h);
+        if (introClip is null)
+        {
+            await RunNpxRemotionRenderAsync(cfg, workDir, propsPath, outputPath);
+            return;
+        }
+
+        // The intro is generated once per channel (see `--generate-intro`), not per job -
+        // copied into this job's own folder anyway so every job stays self-contained and
+        // reproducible even if the channel's canonical intro is later regenerated.
+        var introDir = Directory.CreateDirectory(Path.Combine(workDir, "intro")).FullName;
+        var introDest = Path.Combine(introDir, Path.GetFileName(introClip));
+        if (!File.Exists(introDest)) File.Copy(introClip, introDest, overwrite: true);
+
+        var bodyPath = Path.Combine(workDir, $"body-{w}x{h}.mp4");
+        await RunNpxRemotionRenderAsync(cfg, workDir, propsPath, bodyPath);
+        await PrependIntroAsync(cfg, introDest, bodyPath, w, h, outputPath);
+    }
+
+    // Canonical, one-time-per-channel cinematic bumper (tasks/todo.md, "Chronicle & Chaos
+    // Vidu channel-intro bumper") - built by `--generate-intro`, not per video. Absent for
+    // a profile that hasn't generated one yet, in which case AssembleWithRemotionAsync
+    // renders exactly as it always has - zero behavior change for a channel with no intro.
+    private const string IntroAssetsRoot = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\intros";
+
+    public static string IntroClipPath(string profileId, int w, int h) =>
+        Path.Combine(IntroAssetsRoot, profileId, $"intro-{(w > h ? "landscape" : "vertical")}.mp4");
+
+    public static string? ResolveIntroClip(string profileId, int w, int h)
+    {
+        var path = IntroClipPath(profileId, w, h);
+        return File.Exists(path) ? path : null;
+    }
+
+    // Splices the channel's fixed intro bumper in front of a rendered body. Re-encodes
+    // through the concat filter rather than the concat demuxer's stream copy - the intro
+    // comes from a completely separate pipeline (Vidu + drawtext, see FinishIntroClipAsync)
+    // and stream-copy concat is only safe when both inputs share identical codec
+    // params/keyframe structure, which nothing here guarantees.
+    public static async Task PrependIntroAsync(GenConfig cfg, string introPath, string bodyPath, int w, int h, string outputPath)
+    {
+        var filter =
+            $"[0:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v0];" +
+            $"[1:v]scale={w}:{h}:force_original_aspect_ratio=decrease,pad={w}:{h}:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=30,format=yuv420p[v1];" +
+            "[0:a]aformat=sample_rates=44100:channel_layouts=stereo[a0];" +
+            "[1:a]aformat=sample_rates=44100:channel_layouts=stereo[a1];" +
+            "[v0][a0][v1][a1]concat=n=2:v=1:a=1[v][a]";
+
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{introPath}\" -i \"{bodyPath}\" -filter_complex \"{filter}\" " +
+            $"-map \"[v]\" -map \"[a]\" -r 30 -pix_fmt yuv420p -c:v libx264 -preset medium -crf 20 " +
+            $"-c:a aac -b:a 160k -ar 44100 -movflags +faststart \"{outputPath}\"");
+    }
+
+    // Turns a raw Vidu clip into the finished channel bumper: fit to frame, burn in a
+    // two-line title card that fades in over the closing beat (Vidu can't be trusted to
+    // render legible text itself, so the wordmark is never asked of it), and lay a
+    // normalized music sting underneath - the raw clip has no audio track at all, since
+    // ViduClient always submits audio=false/bgm=false.
+    public static async Task FinishIntroClipAsync(
+        GenConfig cfg, ContentProfile profile, string rawClipPath, string titleLine, string taglineLine,
+        int w, int h, double durationSeconds, string workDir, string outputPath, string? mood = null)
+    {
+        // Same "empty pool is a legitimate wait state, not a failure" tolerance as
+        // ResolveBackgroundMusic's own callers elsewhere (MixBackgroundMusicAsync,
+        // AssembleWithRemotionAsync) - a channel whose music folder isn't sourced yet
+        // still gets its intro rendered, just without a sting, rather than blocking the
+        // one-time bumper (and the Vidu spend already made for the raw clip) on it.
+        var music = ResolveBackgroundMusic(profile, profile.Id, mood);
+
+        var fadeOutAt = Math.Max(0, durationSeconds - 1.0);
+        var titleFadeStart = Math.Max(0, durationSeconds - 3.0);
+        var taglineFadeStart = titleFadeStart + 0.5;
+
+        var titleFontSize = h > w ? 64 : 84;
+        var taglineFontSize = h > w ? 32 : 40;
+
+        var titleFile = Path.Combine(workDir, "intro-title.txt");
+        var taglineFile = Path.Combine(workDir, "intro-tagline.txt");
+        File.WriteAllText(titleFile, titleLine, new UTF8Encoding(false));
+        File.WriteAllText(taglineFile, taglineLine, new UTF8Encoding(false));
+
+        const string georgiaBold = @"C:\Windows\Fonts\georgiab.ttf";
+        const string georgiaItalic = @"C:\Windows\Fonts\georgiai.ttf";
+
+        var vf =
+            $"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1,fps=30," +
+            $"drawtext=textfile='{FilterPath(titleFile)}':fontfile='{FilterPath(georgiaBold)}':" +
+            $"fontsize={titleFontSize}:fontcolor=white:borderw=2:bordercolor=black@0.6:" +
+            $"x=(w-text_w)/2:y=(h*0.46-text_h):" +
+            $"alpha='if(lt(t,{Text.Invariant(titleFadeStart)}),0,min(1,(t-{Text.Invariant(titleFadeStart)})/1.2))'," +
+            $"drawtext=textfile='{FilterPath(taglineFile)}':fontfile='{FilterPath(georgiaItalic)}':" +
+            $"fontsize={taglineFontSize}:fontcolor=0xE8C46A:borderw=1:bordercolor=black@0.5:" +
+            $"x=(w-text_w)/2:y=(h*0.46+22):" +
+            $"alpha='if(lt(t,{Text.Invariant(taglineFadeStart)}),0,min(1,(t-{Text.Invariant(taglineFadeStart)})/1.2))'";
+
+        string audioInput;
+        string af;
+        if (music is not null)
+        {
+            var gainDb = profile.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, music);
+            audioInput = $"-stream_loop -1 -i \"{music}\"";
+            af =
+                $"atrim=0:{Text.Invariant(durationSeconds)},asetpts=PTS-STARTPTS,aformat=sample_rates=44100:channel_layouts=stereo," +
+                $"volume={Text.Invariant(gainDb)}dB,afade=t=in:st=0:d=0.8,afade=t=out:st={Text.Invariant(fadeOutAt)}:d=1.0";
+        }
+        else
+        {
+            audioInput = "-f lavfi -i anullsrc=r=44100:cl=stereo";
+            af = $"atrim=0:{Text.Invariant(durationSeconds)},asetpts=PTS-STARTPTS";
+        }
+
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{rawClipPath}\" {audioInput} " +
+            $"-filter_complex \"[0:v]{vf}[v];[1:a]{af}[a]\" " +
+            $"-map \"[v]\" -map \"[a]\" -t {Text.Invariant(durationSeconds)} -r 30 -pix_fmt yuv420p " +
+            $"-c:v libx264 -preset medium -crf 18 -c:a aac -b:a 160k -ar 44100 -movflags +faststart \"{outputPath}\"");
     }
 
     // camelCase to match remotion-assembler/src/schema.ts's zod field names exactly -
@@ -631,6 +759,28 @@ static partial class VideoAssembler
             "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
 
         await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+    }
+
+    // Prep for future landscape-native generation: derives a 9:16 short from an existing
+    // 16:9 master. A straight center crop (crop=ih*9/16:ih) was tried first and rejected:
+    // tested against two real published masters, it cut the raised arm off a wide character
+    // pose on one and truncated burned-in subtitle text on both. This is the same
+    // contain-fit-plus-blurred-pad shape as FitToPortraitAsync above, applied to video - the
+    // whole source frame (subject and subtitles) survives, letterboxed on a blurred fill
+    // rather than cropped.
+    public static async Task ReframeToVerticalAsync(GenConfig cfg, string sourcePath, string outputPath)
+    {
+        const int w = 1080, h = 1920;
+        var filter =
+            $"split[bg][fg];" +
+            $"[bg]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},gblur=sigma=28[bgb];" +
+            $"[fg]scale={w}:{h}:force_original_aspect_ratio=decrease[fgs];" +
+            $"[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
+
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{sourcePath}\" -filter_complex \"[0:v]{filter}[v]\" -map \"[v]\" -map 0:a? " +
+            $"-r 30 -pix_fmt yuv420p -color_range tv -c:v libx264 -preset medium -crf 20 " +
+            $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"");
     }
 
     public static async Task<double> GetAudioDurationAsync(GenConfig cfg, string audioPath)

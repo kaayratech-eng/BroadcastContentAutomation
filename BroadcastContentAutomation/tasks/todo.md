@@ -3349,3 +3349,649 @@ model reliably picks from the 6-style gentle menu, and whether hi/pa
 lookup compiles correctly but its runtime behavior across all 3
 GiggleGarden languages hasn't been exercised).
 
+---
+
+## Landscape -> vertical reframe tool (prep for future landscape-native generation)
+
+Requested: wire up code that derives a good-looking 9:16 short from an
+existing 16:9 landscape master, and test it against real already-rendered
+landscape `.mp4` files on disk. Landscape-native Vidu generation itself is
+explicitly a **future** build, not this task — today's verticals still come
+from their own separate Vidu submission, unchanged.
+
+### Plan
+
+1. `VideoAssembler.cs` — new `ReframeToVerticalAsync(cfg, sourcePath,
+   outputPath)`, placed next to `FitToPortraitAsync`. Straight center crop
+   (`crop=ih*9/16:ih`, which ffmpeg centers by default) to 1080x1920, not the
+   blur-pad `BuildVideoClipAsync` uses for the landscape master — a crop keeps
+   full resolution and no blur, at the cost of losing whatever sits outside
+   the centered vertical slice. Re-encodes audio too (`-c:a aac`) since this
+   runs against full narrated masters, not silent clips.
+2. `Program.cs` — new `--reframe --in <path> [--out <path>]` mode, no job/
+   profile/API calls involved (pure local ffmpeg, zero spend), matching
+   `--test-tts`/`--dry-script`'s standalone-utility pattern. Defaults `--out`
+   to `{WorkDirectory}/reframe-test/{name}-vertical.mp4`.
+3. Run against real files already on disk: a GiggleGarden `done/*-en.mp4`
+   (ffmpeg blur-pad pipeline) and ChronicleAndChaos's
+   `8-maritime-disasters-...-en.mp4` (Remotion `BlurPadBackground` pipeline,
+   unpublished). Extract a few sample frames from each output and inspect
+   visually.
+
+### Known caveat, flagged before running
+
+Every landscape `.mp4` available to test against today is **already
+blur-padded** by the existing pipeline (`BuildVideoClipAsync`'s `w > h`
+branch, or Remotion's `BlurPadBackground` equivalent) — a blurred cover-fill
+background plus a centered, height-fit foreground pillar. A center-crop of
+one of these will mostly just recover that pillar: a clean result, but not
+proof this crop math holds up against true future landscape-native footage
+(full-bleed 16:9, no pillar), where a naive center crop could cut off
+subjects sitting away from center. This is the only test bed available right
+now; the real test happens once landscape-native generation exists.
+
+### Verification plan
+
+`dotnet build` clean. Run `--reframe` against 2 real files. Extract frames
+from each output with `ExtractThumbnailFrameAsync`'s ffmpeg pattern and
+inspect them directly. No commit/push without being asked.
+
+---
+
+## Dual-orientation visuals: real landscape master, not a blur-pad (chronicleandchaos)
+
+Root cause of "the landscape video looks like 9:16": every visual asset
+(Pexels stock + manually-generated character art) was sourced in Portrait
+orientation only (`ImageClient.Orientation.Portrait` hardcoded at both call
+sites in `RunVisualLoopAsync`); the 16:9 master just blur-pads those portrait
+assets (`Program.cs`'s old comment: *"reuses the same clips on a blurred
+blow-up of themselves rather than generating a second orientation, which
+would double the per-video spend"*). Confirmed via `ffprobe` that the
+rendered container really is 1920x1080 - the pillarboxed look is the asset,
+not the render.
+
+You directed the fix directly rather than picking from three tradeoff
+options I offered (rejected that question): generate real landscape-native
+assets, using **one Gemini prompt that returns two images** (landscape +
+vertical) per character scene, so the manual step doesn't double. Scope:
+`AllowsContextScenes` profiles only (today: chronicleandchaos). GiggleGarden/
+Vidu pipeline untouched - it has no landscape-blur-pad complaint and no
+`AllowsContextScenes` scenes to extend.
+
+### Plan (implemented, this pass)
+
+1. `ScriptGenerator.cs` - `Scene` gains `ImagePathLandscape`,
+   `ClipPathLandscape`, nullable, parallel to the existing `ImagePath`/
+   `ClipPath` (which stay the portrait/vertical pair, unchanged in meaning).
+2. `ImageClient.cs` - new `BuildDualOrientationPrompt(scenePrompt, stylePrompt,
+   portraitStyleSuffix, matchReference)`: asks Gemini for exactly two images
+   in one response - a 16:9 landscape framing and a 9:16 portrait framing of
+   the same character/scene/style, explicitly instructed to keep identity,
+   outfit, palette and art style identical across both and to differ only in
+   framing.
+3. `ManualArtClient.cs` - new `PromptAndWaitDualAsync(prompt,
+   landscapeOutputPath, portraitOutputPath, referenceImagePath)`: prints the
+   one prompt, blocks until *both* files exist on disk (reuses the existing
+   `FindSaved`/`ImageExtensions` machinery per path) - one manual generation
+   step per scene, not two.
+4. `Program.cs`'s `RunVisualLoopAsync`:
+   - "context" scenes: portrait stock resolution is unchanged; a second,
+     independent landscape stock resolution was added
+     (`stock.DownloadBestMatchAsync(..., Orientation.Landscape)`, saved as
+     `scene{i:D2}-stock-landscape.(mp4|jpg)`), with its own existing-on-disk
+     and visual-group-reuse handling. A landscape Pexels miss logs a warning
+     and leaves the field null rather than throwing (unlike the portrait
+     miss, which still throws) - a missing landscape variant degrades one
+     scene back to blur-pad, not the whole run.
+   - "character" scenes: the dual-image prompt replaces the old single-image
+     one; both `ImagePath` and `ImagePathLandscape` are set from the one
+     `PromptAndWaitDualAsync` call, with the same existing-on-disk (checks
+     both files) and visual-group-reuse (requires both cached paths) handling
+     as before.
+5. `VideoAssembler.AssembleWithRemotionAsync` - when rendering with `w > h`
+   (the landscape master), each scene now prefers
+   `ImagePathLandscape`/`ClipPathLandscape`, falling back to the portrait
+   pair when the landscape variant is null (an old job prepped before this
+   field existed, or a scene whose landscape Pexels query missed) - old and
+   partial jobs still render instead of throwing.
+6. `Assembly.tsx` / `BlurPadBackground` - **no change**. Its own comment
+   already documents that when an asset's aspect ratio matches the render
+   frame, the contain-fit layer covers edge-to-edge and the blur layer never
+   shows - true landscape-native assets simply stop triggering the blur path
+   that was only ever a mitigation for portrait-in-landscape.
+7. GiggleGarden / `AssembleFromClipsAsync` - untouched; `AllowsContextScenes`
+   gates all of this to chronicleandchaos.
+
+### Verification - what was actually run
+
+1. `dotnet build` - succeeded, 0 warnings, 0 errors, across all four edited
+   files (`ScriptGenerator.cs`, `ImageClient.cs`, `ManualArtClient.cs`,
+   `Program.cs`, `VideoAssembler.cs`).
+2. `script.json` round-trip safety confirmed by inspection, not a live
+   harness this pass: `Sidecar.Options` sets
+   `DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingNull`, and both
+   new fields are nullable `string?` with no fallback logic depending on
+   them being non-null except at the landscape-preference site in
+   `VideoAssembler.cs`, which already null-coalesces to the portrait path -
+   so an old `script.json` missing these keys deserializes with both new
+   fields `null` and renders exactly as it did before this change.
+
+### Not verified
+
+- **No live `--prep` run.** This touches a live (free) Pexels call and a
+  live manual Gemini step - needs your go-ahead before spending your time on
+  the manual half. Nothing renders differently until a job is prepped under
+  this code and produces real `scene*-art-landscape.*` /
+  `scene*-stock-landscape.*` files.
+- **No render/publish.** Once a job has real landscape assets, `--assemble`
+  should be re-run for that job and the landscape master's output visually
+  compared against a pre-fix render (frame extraction, side by side) before
+  calling this closed.
+- Reels/Shorts vertical output is intentionally unchanged by this pass - it
+  already used the correct (portrait) asset; only the 16:9 master's asset
+  selection changed.
+
+### Live Gemini test: does batching every scene into one prompt work?
+
+Before trusting a live `--prep` run, tested the idea (raised in chat) of going
+further than 2-images-per-scene - one giant prompt covering every scene in a
+script at once. Ran 2 live tests against gemini.google.com (via the user's
+own logged-in session) with a throwaway 3-test-scene / 6-image-target fox
+prompt, not real script data:
+
+- Test 1 (plain "generate exactly 6 images" list): Gemini returned **8**
+  images - it silently produced 4 variants of the last scene instead of 2,
+  with the background inconsistent between them.
+- Test 2 (added "EXACTLY 6, no more, no fewer, no alternate takes" + "Image 1
+  defines the design, do not alter it"): Gemini again returned **8** images -
+  same overshoot pattern, this time doubling a middle scene instead of the
+  last one. The identity-pin instruction did work, though: character design
+  (colors, outfit, proportions) stayed consistent across all 8 images, a
+  visible improvement over test 1's looser prompt.
+
+Conclusion: the overshoot is not a wording problem an "EXACTLY N" instruction
+fixes - it looks like a structural limit of asking Gemini's web UI for many
+images in one turn. It doesn't reliably return the exact count or order, so
+a multi-scene single prompt has no reliable way to map output images back to
+specific scenes. Kept the already-implemented one-prompt-per-scene /
+exactly-2-images design, and folded the identity-pin phrasing that measurably
+helped into `ImageClient.BuildDualOrientationPrompt` (2-image requests never
+overshot in either test, so this is cheap insurance, not a fix for an
+observed problem at that scale).
+
+- Test 3 (4 test scenes / 8-image target, run by Claude directly via the
+  Chrome browser tool, not handed to the user): first response came back
+  correct on count (8) but as **one combined collage file** - a single
+  1408x768 JPEG with all 8 scenes laid out in a 4x2 grid, "A"/"B" panel
+  labels baked in, one download button for the whole grid. Sent the user's
+  suggested corrective follow-up in the same chat ("Need separate images
+  rather than 1 combined image..."). Gemini regenerated with a cosmetically
+  different layout - white gutters instead of touching panels, no more A/B
+  labels, looked like 8 separate tiles in the chat feed - but clicking into
+  any one "tile" opened Gemini's image editor showing all 8 panels on one
+  shared canvas, and downloading from there saved (and this was verified by
+  actually downloading the file and reading it back, not just visual
+  inspection) exactly **one file**, still all 8 scenes combined. The
+  corrective message did not change the underlying behavior, only the
+  chat-feed presentation.
+
+**Conclusion, confirmed: not pursuing the single-mega-prompt approach.**
+Three tests now agree: batching many images into one Gemini prompt is
+unreliable on two independent axes - count (tests 1-2) and separateness of
+output files (test 3, even after the user's corrective-prompt technique).
+`BuildDualOrientationPrompt`'s 2-images-per-scene design stays as the
+production approach; user confirmed keeping it as-is.
+
+## Sanity check + regenerate chronicleandchaos images (2026-08-24)
+
+User asked to sanity-check the dual-orientation fix, then wipe and regenerate
+all images for the current chronicleandchaos job so shorts/reels/full-YouTube
+all render properly.
+
+- [x] Confirm `dotnet build` is clean on the 5 changed files.
+- [x] Confirm `VideoAssembler.AssembleWithRemotionAsync` (single method, used
+      for both the vertical short and the landscape master) prefers
+      `ImagePathLandscape`/`ClipPathLandscape` when `w > h`, falling back to
+      the portrait asset otherwise.
+- [x] Confirm Shorts/Reels/TikTok all share the one vertical render
+      (Program.cs:874) and full YouTube uses the one landscape render
+      (Program.cs:910) - no separate per-platform code path to drift.
+- [x] Confirm `TopicHistory` dedup is real and correctly wired
+      (`avoidTopics` -> prompt), but only takes effect after a publish -
+      `topic-history/chronicleandchaos.md` doesn't exist yet because nothing
+      has published for this profile. Not a bug.
+- [x] Inspect `job-20260818-125747/script.json`: Title "8 Maritime Disasters,
+      Ranked by Mazu's Wrath", Format topFive, 78 scenes (42 character / 36
+      context). **Zero scenes have `ImagePathLandscape`/`ClipPathLandscape`
+      populated** - this job predates the dual-orientation fix. Its Aug 20
+      landscape render used the fallback path (portrait assets stretched to
+      1920x1080), i.e. it's the exact blown-up/blurry master the original bug
+      report was about.
+- [x] Found and fixed a stale comment in `Program.cs` (the "16:9 master
+      reuses the same clips... rather than generating a second orientation"
+      line) that described the pre-fix architecture and was never updated.
+- [x] Deletion scope confirmed by user: art only, same job/script reused
+      (title unpublished - sidecars exist but `Approved: false`, safe to
+      overwrite in place). Deleted all 38 `sceneNN-art.png` files from
+      `job-20260818-125747`. Left `character.png`/`character-raw.png`
+      (identity reference) and stock mp4s untouched.
+- [ ] Regenerate via `--resume --job job-20260818-125747`: 38 manual
+      dual-orientation Gemini scenes (art scenes with no file on disk now
+      trigger `PromptAndWaitDualAsync` regardless of the old script.json
+      `ImagePath` value, since the resume-skip check reads the filesystem,
+      not the JSON) + 36 context scenes auto-resolve their landscape Pexels
+      counterpart independently (portrait stock already on disk is left
+      alone). Then `--assemble --job job-20260818-125747` to re-render both
+      orientations in place.
+
+## Cross-project record-keeping + stalled-upload handling (2026-08-25)
+
+User asked for (a) a persistent record of which scripts/jobs are
+done/uploaded vs not, per project, so old work gets finished before new
+`--prep` runs start, and (b) code checks so a previous run's upload failures
+get completed rather than silently dropped.
+
+Findings before building anything new:
+- [x] `VideoGen --status` already does (a) live, computed from the real
+      source of truth (sidecars under `D:\Business\Videos\<channel>\`), not
+      a hand-maintained file that can drift stale. Ran it: 2 outstanding
+      items right now, both rendered-but-not-yet-approved -
+      `job-20260818-125747` (chronicleandchaos, "8 Maritime Disasters...")
+      and `job-20260820-203514` (gigglegarden, "One Two Three Four Five 🎈
+      | Picnic Counting Fun"). The other 6 gigglegarden jobs have nothing
+      flagged (fully published).
+- [x] Uploader already has real retry handling for (b): a video with some
+      targets still failing stays in the watch folder and is retried
+      automatically on the next run (not moved to `\failed` until
+      `MaxAttemptsPerPlatform` is exhausted); an unhandled exception mid-run
+      writes a `.retry.json` crash-marker with a backoff window
+      (`CrashRetryBackoffMinutes`) before the same video is picked up again.
+      This is not a gap.
+- [x] **Real gap found**: Uploader's own header comment says "Scheduled via
+      Windows Task Scheduler", but `Get-ScheduledTask` shows no such task
+      exists on this machine at all. So none of the above retry logic ever
+      runs on its own - Uploader only processes anything when launched by
+      hand. This, not a code gap, is the likely actual cause behind "old
+      work not getting uploaded."
+- [ ] Awaiting user decision: create the missing Windows Scheduled Task
+      (system-settings change, needs explicit go-ahead) vs. some other
+      cadence they prefer.
+- [x] Built: extracted `RunStatusAsync`'s scan/flag logic into
+      `ComputeFlaggedAsync(profileIds)` so `--status` (all profiles) and
+      `--prep` (just the one starting) share one source of truth for
+      "unfinished". `RunStatusAsync` now also appends every run's result to
+      `{WorkDirectory}\status-log.md` (`D:\Business\VideoGen\work\status-
+      log.md`, not the git-tracked source tree) via `AppendStatusLogAsync` -
+      append-only, one `## timestamp` entry per run, never read back by the
+      program, so it can't drift from the sidecars the way a hand-maintained
+      record could.
+- [x] Built: `RunPrepAsync` now calls `ComputeFlaggedAsync([profile.Id])`
+      before creating the new job folder and prints a "Note: N unfinished
+      item(s)..." warning (with detail lines) if any exist for that profile
+      - a nudge only, never blocks the new run, since some flagged jobs are
+      legitimately still mid-pipeline (e.g. off-peak Vidu clips in flight).
+      Verified: `dotnet build` clean, `--status` run confirmed both the
+      console output and the new `status-log.md` entry match (4 outstanding
+      items: job-20260818-125747 x2, job-20260820-203514 x2).
+
+## Folder segregation audit + Uploader scheduled task (2026-08-25/26)
+
+User: manual driving of the 38 art scenes confirmed as the user's own job (no
+code/tool action here). User said "yes" to creating the Uploader's missing
+Scheduled Task. User flagged "2 scripts for chronicles" and asked to verify
+per-project folder segregation everywhere, scripts included.
+
+- [x] `TopicHistory` (`Shared/TopicHistory.cs`) re-confirmed already
+      correctly segregated per channel (`topic-history/{channel}.md`),
+      written only on actual publish. No fix needed.
+- [x] **Bug found + fixed**: `RunDryScriptAsync` (`Program.cs`) wrote every
+      `--dry-script` output to one shared `WorkDirectory/dry-script/` folder
+      regardless of profile - this is what the user was actually seeing as
+      "scripts in the same folder". Fixed to
+      `WorkDirectory/dry-script/{profile.Id}/`. Migrated the 21 pre-existing
+      files into `dry-script/gigglegarden/` (10 files) and
+      `dry-script/chronicleandchaos/` (10 files, +1) by content-verified
+      `Format`/`Title` ownership. Root `dry-script/` confirmed empty after.
+- [x] **Separate, more serious bug found + fixed**: `CharacterSource.cs`
+      `RecentNames`/`RecentPoolPicks` scanned `cfg.WorkDirectory` directly
+      for `job-*` folders. Real jobs live one level deeper
+      (`WorkDirectory/{profile.Id}/job-*`) since the past per-channel path
+      migration referenced in `ContentProfileRegistry.cs` - so this glob has
+      matched nothing since that migration landed, silently disabling
+      character-name-repeat prevention and character-pool cooldown tracking
+      for both profiles. Fixed both methods to take `profile` and scan
+      `WorkDirectory/{profile.Id}`; updated the one call site in
+      `Program.cs` (`RecentNames(cfg, workDir)` ->
+      `RecentNames(profile, cfg, workDir)`). Rebuilt clean, 0
+      warnings/errors.
+- [x] Resolved "2 scripts for chronicles": only `job-20260818-125747` ("8
+      Maritime Disasters...") is a real in-progress job. "What If Alexander
+      the Great Survived Babylon?" is a **dry-script-only** artifact
+      (`dry-script/chronicleandchaos/whatIf-20260817-114045.json`, 66 scenes,
+      zero `ImagePath`/`AudioPath`/`ClipPath` populated on any scene) - no
+      real job folder, no assets, no spend yet. Not a second stalled job.
+      To make it real: `--manual --script-file
+      dry-script/chronicleandchaos/whatIf-20260817-114045.json --format
+      whatIf --profile chronicleandchaos --language en`.
+- [x] Noted, not yet fixed: `RunDryScriptAsync` never sets `script.Profile =
+      profile.Id` before serializing (unlike `RunPrepAsync`/`RunManualAsync`
+      which do) - minor data-quality gap, harmless today since the folder
+      now carries the profile instead.
+- [x] Created Windows Scheduled Task `BroadcastContentAutomation-Uploader`:
+      runs `Uploader\bin\Release\net8.0\Uploader.exe` (rebuilt in Release
+      first to pick up current code) hourly, `StartWhenAvailable`,
+      `DontStopOnIdleEnd`, 2h execution limit, `MultipleInstances
+      IgnoreNew`. First `Register-ScheduledTask` attempt errored with
+      `[TimeSpan]::MaxValue` (invalid/out-of-range duration XML); fixed by
+      using `New-TimeSpan -Days 3650` for `-RepetitionDuration` instead.
+      Confirmed registered and "Ready", next run 2026-08-26 02:00.
+
+## Switch GiggleGarden onto the no-Vidu context/character pipeline (2026-08-26)
+
+User: GiggleGarden should now generate videos "in the same fashion as
+chronicles" - no Vidu per-scene, same context/character split, and the same
+long-form-for-YouTube + short-for-Reels/Shorts-with-a-"watch full video on
+YouTube"-CTA structure - "same concept across all our channels." Vidu itself
+is not being dropped entirely: separately, each channel will eventually get
+ONE Vidu-generated intro bumper (9:16 + 16:9) stitched onto the front of
+every video, like CoComelon's channel intro - scoped as its own follow-up,
+not part of this change (see next section).
+
+Audit before touching anything: grepped every `AllowsContextScenes` call
+site (`ContentProfile.cs`, `GenConfig.cs`, `ScriptGenerator.cs`,
+`Program.cs`, `VideoAssembler.cs`). It is already a single, fully generic
+flag - script-prompt shape (sceneKind/stockQuery), `--long` eligibility,
+`RunVisualLoopAsync` vs `RunViduLoopAsync`, `AssembleWithRemotionAsync` vs
+`AssembleFromClipsAsync`, and Vidu-vs-Pexels key validation all key off it
+already, with zero chronicleandchaos-specific hardcoding anywhere in that
+chain. `PexelsApiKey`/`RemotionProjectPath` are shared single config values,
+already set (confirmed in `appsettings.Local.json`/`appsettings.json`) -
+GiggleGarden needs no new credentials. Plan:
+
+- [x] Flipped `GiggleGardenProfile.AllowsContextScenes` from the default
+      `false` to `true` - the one functional change this whole request
+      needed.
+- [x] Updated the now-stale "GiggleGarden is Vidu-only" comments this flip
+      falsifies: `ContentProfile.cs`'s `AllowsContextScenes` doc comment,
+      `GenConfig.cs`'s `PexelsApiKey`/`RemotionProjectPath` field comments,
+      and its `Validate()` comments above the Vidu/Pexels checks.
+- [x] Rebuilt (0 warnings/errors) and ran `--dry-script --profile
+      gigglegarden --format educational` to confirm, not assume, the flip
+      actually works end to end: output alternates `character`/`context`
+      scenes correctly, context scenes carry sensible cartoon-toned
+      `stockQuery` values (`"cartoon cow astronaut helmet"`, `"space sheep
+      cartoon"`, `"cartoon space duck"`) rather than anything documentary-
+      toned - TopicGuidance/AudiencePersona dominate tone exactly as
+      expected, no prompt-text change needed after all.
+- [x] Left `ScriptGenerator.cs`'s `sceneKindGuidance` prose,
+      `RunVisualLoopAsync`, `ImageClient`/`ManualArtClient`,
+      `StockFootageClient`, and `AssembleWithRemotionAsync` untouched - all
+      already profile-agnostic, confirmed by the audit above and now by the
+      live dry-script test too. No format in `GiggleGardenProfile.
+      BuildFormats()` needed new code for `--long` either - it is already
+      format-agnostic.
+- [x] Incidentally reconfirmed the known, separate `RunDryScriptAsync`
+      gap (`script.Profile` left blank - see the 2026-08-25/26 folder-
+      segregation section above): this test script's `Profile` field is
+      empty on disk, same pre-existing gap, still not fixed, still
+      harmless since the dry-script folder itself now carries the profile.
+
+## Follow-up (not this pass): per-channel Vidu intro bumper
+
+Deferred by explicit user choice ("GiggleGarden switch first, intro-
+stitching later"). Design questions to resolve when this is picked up:
+- Storage: fixed per-channel asset pair, e.g.
+  `VideoGen/assets/intros/{profile.Id}/intro-{vertical,landscape}.mp4`,
+  generated once via a new CLI mode (e.g. `--generate-intro --profile <id>`)
+  rather than regenerated per video.
+- Relationship to the existing per-video scene-0 bumper
+  (`InsertIntroScene`/`BuildIntroBumperPrompts`, which introduces *that
+  video's* character and previews *that video's* topic): recommended
+  default is splash-then-bumper (fixed channel intro plays first for brand
+  identity, then the existing per-video scene-0 still runs right after) -
+  preserves the per-video personalization/topic-preview value rather than
+  discarding it. Not yet confirmed with the user; asked and they deferred
+  the call to "whatever you suggest."
+- `VideoAssembler` needs a new prepend/concat step (both orientations) so
+  the fixed clip lands before scene 0 in both the vertical short and the
+  landscape master render.
+
+## 9-platform upload/generation coverage audit + Threads support (2026-08-26)
+
+User asked, before running the maritime-disasters job, whether generation +
+Uploader actually cover all 9 named destinations (YouTube full/short, TikTok
+reel, Instagram reel/thread/story, Facebook reel/short/story). Read every
+publisher (`Uploader/Publishing/*.cs`), `Shared/Sidecar.cs`'s `Platforms`
+class, `Uploader/AppConfig.cs`, and `VideoGen/Program.cs`'s
+`LandscapeTargets`/`VerticalTargets` wiring.
+
+Findings:
+- **Real bug found and fixed**: `VideoGen/appsettings.json`'s `VerticalTargets`
+  did not include `"youtube"` (only `LandscapeTargets` did) — the vertical
+  short's sidecar therefore never carried a YouTube target, so YouTube Shorts
+  were never being uploaded at all despite `YouTubePublisher` being fully
+  capable of either orientation. Added `"youtube"` to `VerticalTargets`.
+- **YouTube full-length + Shorts**: one `YouTubePublisher`, matches YouTube's
+  own real behaviour (auto-detects Shorts from the vertical file's
+  dims/duration — no separate Shorts endpoint exists on their side either).
+  Correct, not a shortcut.
+- **TikTok reel, Instagram reel, Instagram Story**: implemented, wired into
+  `VerticalTargets`, `Enabled: true` in both channels' `appsettings.json`.
+  Caveats already in-code: TikTok posts to the inbox/drafts, not live, until
+  `DirectPost=true` + an audited app; Instagram Story is flagged
+  "not live-tested yet" in its own file header.
+- **Facebook reel/short**: only one Facebook video publisher exists
+  (`FacebookPublisher.cs`) and its own header comment documents that it
+  deliberately abandoned Meta's real Reels endpoint (this Page got stuck at
+  `processing_phase="not_started"` forever with no error) in favour of the
+  plain `/{page-id}/videos` endpoint — so a publish lands on the Page's
+  Videos tab/feed, not the Reels surface. Facebook has no product distinct
+  from Reels called "Shorts," so the user's two lines are actually one
+  target, and today it isn't landing as a Reel by design (a prior reliability
+  tradeoff), not by oversight.
+- **Facebook Story**: implemented (`/video_stories`, same 2-phase shape as
+  the abandoned Reels flow) — its own comment warns it may hit the same
+  silent eligibility gating, not live-tested yet.
+- **Instagram Threads: zero implementation** — no `Platforms` constant, no
+  publisher file, not in any target list. User asked to build it, assuming
+  it reuses the Instagram channel's credentials.
+
+Verified live against Meta's current Threads API docs
+(developers.facebook.com/docs/threads) before building, since the
+assumption turned out to be wrong in an important way:
+- Threads is a **separate Meta "Threads" app/use-case** from the Instagram
+  Graph API — its own OAuth app ID/secret, its own user access token
+  (`threads_basic`/`threads_content_publish` scopes, 60-day long-lived,
+  refreshed via `GET /refresh_access_token`), and its own Threads user ID.
+  None of it is the same credential as `InstagramConfig.AccessToken`/
+  `IgUserId`, even though both are tied to the same underlying account.
+- Threads has **no resumable binary-upload endpoint** at all (unlike every
+  other publisher here) — `POST /{threads-user-id}/threads` only accepts a
+  `video_url` it fetches itself, so the rendered file must already be
+  reachable at a public HTTPS URL before a container can even be created.
+  Nothing in this codebase serves files publicly today.
+
+Built:
+- `Platforms.Threads = "threads"` constant + `Platforms.All`
+  ([Sidecar.cs](../Shared/Sidecar.cs)).
+- `ThreadsConfig` record (`UserId`, `AccessToken`, `GraphVersion`,
+  `PublicVideoBaseUrl`, `MaxUploadsPerRun`, `ProcessingTimeoutSeconds`) —
+  its own credential shape, not reusing `InstagramConfig`
+  ([AppConfig.cs](../Uploader/AppConfig.cs)).
+- `ThreadsPublisher.cs`: container -> poll status (`FINISHED`/`ERROR`/
+  `EXPIRED`, per Meta's troubleshooting doc) -> `threads_publish`. Caption
+  capped at 500 chars (Threads' limit, not Instagram's 2200).
+  `PublishAsync` returns `Fatal` immediately with an explicit message if
+  `PublicVideoBaseUrl` is unset, rather than attempting a call that can't
+  succeed.
+- Registered in `Uploader/Program.cs`'s publisher list; added `"threads"`
+  to `VideoGen/appsettings.json`'s `VerticalTargets`; added a `Threads`
+  block to both channels in `Uploader/appsettings.json`, `Enabled: false`
+  (no credentials or public host configured yet — flipping it on needs both
+  before it can do anything but fail Fatal).
+- `dotnet build`: 0 warnings, 0 errors.
+
+Still open before Threads can actually publish (not done this pass):
+1. Register a Threads app in Meta's developer console, complete the
+   Threads OAuth consent flow to get `UserId` + a long-lived access token.
+2. Stand up something that serves rendered videos at a public HTTPS URL
+   (nothing in this repo does this today) and point `PublicVideoBaseUrl`
+   at it.
+
+
+## Chronicle & Chaos Vidu channel-intro bumper (2026-08-26)
+
+Ask: one-time, high-production cinematic intro bumper for the channel (not per-video),
+played before the existing per-video scene-0 bumper — "splash then bumper", preserving
+per-video personalization. Requested "best cinematography" quality.
+
+Vidu constraint discovered: img2video only, 10s/clip hard cap, no text-to-video. So the
+intro's starting visual has to be a manually-drawn still (ManualArtClient/Gemini,
+interactive), same human-in-the-loop flow already used for character portraits. A single
+≤8s clip per orientation beats chaining multiple Vidu clips — chaining introduces visible
+seams and needs continuity art; a single hero shot with a slow push-in is both simpler and
+more cinematic. Vidu is also bad at rendering legible text, so the wordmark/tagline is
+burned in afterward with ffmpeg drawtext, not asked of the image model or Vidu.
+
+Plan:
+- [x] New CLI mode `--generate-intro --profile <id>` in VideoGen/Program.cs.
+  - [x] ManualArtClient prompts for 2 stills (9:16 + 16:9), saved under
+        `VideoGen/assets/intros/{profile.Id}/still-{vertical,landscape}.png`.
+  - [x] Submit each still to Vidu **on-peak** (override `cfg.ViduOffPeak=false` for this
+        call only — a 48h off-peak wait is a bad trade for a one-time low-volume asset),
+        ~7s motion prompt (slow push-in, embers/dust drift, no character/cuts).
+  - [x] Blocking poll (this is a one-off interactive run, not a resumable job) + download
+        raw clip.
+  - [x] Burn in channel-name + handle title card (Georgia serif, fades in over the last
+        ~3s) and mix a music-bed sting (profile's existing BackgroundMusicPath pool,
+        LUFS-normalized like the main mix) via new VideoAssembler.FinishIntroClipAsync.
+  - [x] Save canonical output to `VideoGen/assets/intros/{profile.Id}/intro-{vertical,landscape}.mp4`.
+- [x] VideoAssembler.AssembleWithRemotionAsync: if a canonical intro clip exists for this
+      profile/orientation, render the Remotion body to a temp file, copy the intro into
+      **this job's own workDir** (`workDir/intro/intro-{...}.mp4` — every job folder stays
+      self-contained/reproducible, per explicit ask), then ffmpeg-concat intro+body
+      (re-encode via concat filter, not stream copy — robust to any codec/fps mismatch)
+      into the final outputPath. No canonical intro yet for a profile → renders exactly as
+      before, zero behavior change (this is why GiggleGarden is untouched for now).
+- [x] Stills generated, both clips submitted/finished successfully:
+      `VideoGen/assets/intros/chronicleandchaos/intro-{vertical,landscape}.mp4`
+      (1080x1920 / 1920x1080, h264/aac, 7.0s each — verified via ffprobe).
+- Bug found + fixed mid-run: `FinishIntroClipAsync` originally hard-threw when
+  `ResolveBackgroundMusic` returned null, crashing the whole command after vertical's
+  Vidu spend was already made and before landscape ever got submitted. Fixed to fall back
+  to silence instead (`anullsrc`), matching how every other caller of
+  `ResolveBackgroundMusic` in this codebase already treats an empty pool as a legitimate
+  wait state, not a failure. Also made the Vidu step itself idempotent
+  (`raw-{tag}.mp4` reused if already downloaded) so a downstream ffmpeg failure never
+  burns Vidu credits twice on rerun.
+- [x] **Corrected misdiagnosis**: `music-mythology` is not empty — it holds 6 populated mood
+      subfolders (`ancient-drone`, `curious-ambient`, `driving-epic`, `mysterious-tense`,
+      `somber-orchestral`, `tense-atmospheric`), by design, same convention
+      `ResolveBackgroundMusic` already uses for every regular per-video render (mood comes
+      from `script.MusicMood`). The real bug: `FinishIntroClipAsync` always called
+      `ResolveBackgroundMusic(profile, profile.Id, mood: null)`, so it only ever checked the
+      (intentionally empty) flat root and never found the subfolders. Fixed by giving
+      `FinishIntroClipAsync` an optional `mood` parameter, and `Program.cs`'s
+      `RunGenerateIntroAsync` now passes `mood: "driving epic"` — fits a channel-identity
+      reveal better than the quieter moods used for mid-scene suspense. Re-ran
+      `--generate-intro --profile chronicleandchaos` (raw Vidu clips already existed, so this
+      cost zero new Vidu credits, only re-ran the ffmpeg finishing step); both
+      `intro-{vertical,landscape}.mp4` now carry a real 7.0s AAC audio stream — reverified via
+      `ffprobe`. No instrumentals need to be added; the pool was already fine.
+- [ ] Not yet done: same treatment for GiggleGarden's own intro, if/when wanted.
+
+Maritime-disasters job (job-20260818-125747) stays on hold until this lands per the
+user's own sequencing ("before we generate video we need to generate introductory video").
+
+## Batch multi-scene manual art prompt (2026-08-26)
+
+- [x] Live-tested at gemini.google.com (manually, by the user - Chrome automation can't
+      reliably drive/observe a Gemini tab mid-generation, see below): a 2-image/1-scene
+      prompt using a flat "Two separate downloadable images: Image 1... Image 2..." header
+      worked first try. An 8-image/4-scene prompt that instead buried "two images per scene"
+      inside a per-scene sentence ("For every scene produce two separate downloadable
+      images...") failed. Rewriting the 8-image prompt to (a) open with an explicit
+      "Generate each item in the list below as a separate individual image... do not stop
+      until all N are generated" instruction, (b) state style/character-design once in a
+      shared GLOBAL SETTINGS block instead of repeating it per scene, and (c) list all N
+      images as one flat numbered list - worked first try (~2 min for 8 images).
+- [x] Wired the validated format into the actual pipeline so `--resume`/`--prep` batch every
+      pending "character" scene's art into one Gemini prompt instead of one prompt per scene:
+      - `ImageClient.BuildBatchDualOrientationPrompt` - new method, same validated format,
+        alternating Widescreen (16:9)/Portrait (9:16) per scene.
+      - `ManualArtClient.PromptAndWaitBatchAsync` - new method, one prompt/many scenes; blocks
+        until every scene's landscape+portrait pair is on disk, reporting only what's still
+        missing on re-check. Whatever extension the human actually saves with, the file is
+        moved to the exact requested `scene{i:D2}-art(-landscape).png` path - unlike the old
+        per-scene method, a batched scene's path may already have been read by a later scene
+        reusing it (long-form's `VisualGroup` reuse), so it has to land exactly where planned.
+      - `Program.cs`'s `RunVisualLoopAsync`: the per-scene "else" branch (used when a scene
+        needs fresh art - not already on disk, not reusable from an earlier scene in the same
+        visual group) now queues into a `pendingArt` list instead of blocking immediately.
+        After the full scene loop (stock downloads, disk hits, and group-reuse are all
+        untouched), one batch call covers everything still queued. A --resume with nothing
+        missing still makes zero Gemini prompts, same as before.
+      - Not yet done, and not asked for: no chunk-size cap - "all remaining scenes" really
+        means all of them in one prompt, however many that is. Untested above 8 images/4
+        scenes; the maritime-disasters job (38 character scenes = up to 76 images) would be
+        the first real test of that ceiling. If Gemini chokes at higher counts, the fix is a
+        batch-size limit in the `pendingArt` -> prompt step, not a pipeline redesign.
+      - `dotnet build VideoGen/VideoGen.csproj`: 0 warnings/errors.
+- [x] Chrome automation against gemini.google.com remains unreliable for this: typing the
+      prompt succeeds, but `screenshot`/`get_page_text` time out ("page is busy") for the
+      entire duration image generation is running (confirmed hung past 2.5 min of waiting on
+      an 8-image prompt) - not a brief lag, the tab's script-injection channel stays stuck
+      until generation finishes. No workaround found; manual testing is the reliable path for
+      any further prompt-format experiments.
+
+## Switch manual-art platform to Google AI Studio (2026-08-26) - reverted same day
+
+- [x] Consumer gemini.google.com's free-tier daily image quota is far lower than
+      aistudio.google.com's, per unofficial web sources (no official Google page found
+      stating either number - treat both as approximate). Switched `ManualArtClient.cs`'s
+      three console instruction blocks (`PromptAndWaitAsync`, `PromptAndWaitDualAsync`,
+      `PromptAndWaitBatchAsync`) and file-header comment from gemini.google.com to
+      aistudio.google.com, and added a new first step to each - "pick the image-generation
+      model (e.g. Nano Banana / Gemini Flash Image) from the model dropdown" - since AI
+      Studio has no default chat-image affordance the way the consumer app does.
+      `dotnet build`: 0 warnings/errors. Not re-tested live against AI Studio - the prompt
+      text itself is unchanged, only where it's pasted.
+- [x] **Reverted, same day.** User: "I am still using gemini not ai studio as ai studio
+      doesn't work". No further detail on the failure mode - just that AI Studio wasn't
+      usable in practice. Switched all three console blocks + the header comment in
+      `ManualArtClient.cs` back to gemini.google.com and removed the "pick the model"
+      step (gemini.google.com's consumer app has no equivalent step - it goes straight to
+      pasting the prompt, same as before this whole detour). `dotnet build`: 0
+      warnings/errors. The quota concern that motivated the switch is unresolved - back on
+      gemini.google.com's lower free-tier limit - which is part of why the batch-size split
+      below exists (fewer images per prompt, more prompts, rather than fewer prompts with
+      more images each).
+
+## Split the batch art prompt into multiple smaller prompts (2026-08-26)
+
+- [x] The maritime-disasters job's real scale (38 character scenes = 76 images in one
+      prompt) errored out on Gemini - the "no chunk-size cap" gap flagged above turned out
+      to matter at first real use. `RunVisualLoopAsync` (`Program.cs`) now splits
+      `pendingArt` into `ArtBatchParts` evenly-sized batches instead of one prompt for
+      everything: `batchSize = ceil(pendingArt.Count / ArtBatchParts)`, then
+      `pendingArt.Chunk(batchSize)`, looping the existing build-prompt/wait/save-progress
+      steps per chunk (each chunk's `ManualArtClient.PromptAndWaitBatchAsync` call still
+      gets its own reference-image/matchReference handling, unchanged from before -
+      splitting only affects how many scenes go in one prompt, not the consistency logic).
+      `SaveScriptAsync` runs after every chunk, so stopping between batches and resuming
+      later picks up cleanly from disk, same as any other `--resume`.
+      - Started at `ArtBatchParts = 2` (half now, half after), bumped to `3`, `4`, `5`, then
+        `6` (38 scenes -> 7 + 7 + 7 + 7 + 7 + 3, via sequential `.Chunk(7)` bites - not a
+        guaranteed-even split across exactly 6 groups). `ArtBatchParts` lives as one
+        `const int` at `Program.cs`'s batch-loop site. Uneven splits are expected and fine
+        when the pending count isn't a multiple of `ArtBatchParts` - this is "how many
+        roughly-equal pieces", not a guaranteed-even split.
+      - `dotnet build VideoGen/VideoGen.csproj`: 0 warnings/errors after every bump (2, 3, 4,
+        5, 6-part edits).
+      - **Live-tested at 3 and 4 - both failed.** Gemini's own response said to try a
+        smaller batch, i.e. even more parts than 4. User said to test at 5 first before
+        splitting further, then immediately asked to bump to 6 instead - currently sitting
+        at `ArtBatchParts = 6` for the next live test.
+      - Not yet done: an actual live run confirming some `ArtBatchParts` value works against
+        Gemini/AI Studio at the maritime-disasters job's real scene count. That's the next
+        real test once the job is resumed.

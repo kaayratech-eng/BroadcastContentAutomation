@@ -58,15 +58,16 @@ record GenConfig
     // "context/b-roll moment" visual source for the stock-footage/Remotion pipeline.
     // Free API, no card required; license permits commercial/monetized use with no
     // attribution needed (checked live before adopting). Only required by Validate()
-    // below for profiles with AllowsContextScenes = true (chronicleandchaos) - the
-    // Vidu-only gigglegarden profile never calls StockFootageClient.
+    // below for profiles with AllowsContextScenes = true - every profile, as of
+    // 2026-08-26 (see GiggleGardenProfile.cs).
     public string PexelsApiKey { get; init; } = "";
 
     // Absolute path to the remotion-assembler sibling project (Deliverable 6,
     // tasks/todo.md) - VideoAssembler.AssembleWithRemotionAsync shells out to
     // `npx remotion render` there, the same way RunFfmpegAsync shells out to ffmpeg.
-    // Only read when the active profile has AllowsContextScenes = true; GiggleGarden's
-    // Vidu/ffmpeg path never reaches it, so an unset value doesn't block that channel.
+    // Only read when the active profile has AllowsContextScenes = true - every profile,
+    // as of 2026-08-26; a future profile still on the older Vidu/ffmpeg path wouldn't
+    // need this set.
     public string RemotionProjectPath { get; init; } = "";
 
     // Ceiling on a single `npx remotion render` call - headless-Chromium frame rendering
@@ -113,13 +114,16 @@ record GenConfig
         if (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-")) missing.Add(nameof(AnthropicApiKey));
         if (string.IsNullOrWhiteSpace(AzureSpeechKey) || AzureSpeechKey.StartsWith("PUT-")) missing.Add(nameof(AzureSpeechKey));
 
-        // Only a profile still on the Vidu image-to-video path (gigglegarden) ever
-        // constructs a ViduClient (see Program.cs's `!profile.AllowsContextScenes`
-        // gates) - the no-Vidu hybrid pipeline never touches it.
+        // Only a profile still on the older Vidu image-to-video path ever constructs a
+        // ViduClient (see Program.cs's `!profile.AllowsContextScenes` gates) - the
+        // no-Vidu hybrid pipeline never touches it. No profile is on that path as of
+        // 2026-08-26, but the key stays validated for whichever profile still needs it,
+        // and separately for the (not yet built) one-time per-channel Vidu intro bumper.
         if (!profile.AllowsContextScenes && (string.IsNullOrWhiteSpace(ViduApiKey) || ViduApiKey.StartsWith("PUT-")))
             missing.Add(nameof(ViduApiKey));
 
-        // Only the context-scene pipeline (chronicleandchaos) calls StockFootageClient.
+        // Only the context-scene pipeline calls StockFootageClient - every profile, as
+        // of 2026-08-26.
         if (profile.AllowsContextScenes && (string.IsNullOrWhiteSpace(PexelsApiKey) || PexelsApiKey.StartsWith("PUT-")))
             missing.Add(nameof(PexelsApiKey));
 
