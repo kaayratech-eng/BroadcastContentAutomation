@@ -72,6 +72,19 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
 
             var id = insert.ResponseBody.Id;
             log.Info($"  [youtube] uploaded https://youtu.be/{id} ({cfg.PrivacyStatus})");
+            if (!string.IsNullOrWhiteSpace(cfg.PlaylistId))
+            {
+                try
+                {
+                    var item = new PlaylistItem
+                    {
+                        Snippet = new PlaylistItemSnippet { PlaylistId = cfg.PlaylistId, ResourceId = new ResourceId { Kind = "youtube#video", VideoId = id } },
+                    };
+                    await youtube.PlaylistItems.Insert(item, "snippet").ExecuteAsync(ct);
+                    log.Info("  [youtube] added to playlist");
+                }
+                catch (Exception ex) { log.Error($"  [youtube] playlist add failed (video still published): {ex.Message}"); }
+            }
 
             await TrySetThumbnailAsync(youtube, id, request.VideoPath, ct);
             await TryUploadCaptionsAsync(youtube, id, request.VideoPath, request.Sidecar.Language, ct);

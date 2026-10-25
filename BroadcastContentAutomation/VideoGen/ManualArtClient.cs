@@ -27,6 +27,18 @@ static class ManualArtClient
 
         var basePath = Path.Combine(directory ?? "", Path.GetFileNameWithoutExtension(outputPath));
 
+        // Non-interactive / Muse-generated art: if the image was already placed
+        // at the expected path (e.g. by an automated art step before this run),
+        // use it immediately instead of blocking on Enter. This is what makes
+        // unattended runs possible; the blocking prompt below is only for the
+        // original human gemini.google.com loop.
+        var prePlaced = FindSaved(outputPath, basePath);
+        if (prePlaced is not null)
+        {
+            Console.WriteLine($"  Found {Path.GetFileName(prePlaced)} already on disk, using it without prompting.");
+            return Task.FromResult(prePlaced);
+        }
+
         var orientationLabel = orientation == ImageClient.Orientation.Portrait
             ? "9:16 vertical (portrait)"
             : "16:9 horizontal (landscape)";

@@ -5,6 +5,14 @@ record GenConfig
     public string WorkDirectory { get; init; } = @"D:\Business\VideoGen\work";
     public string OutputDirectory { get; init; } = @"D:\Business\Videos";
 
+    // Linux / Muse-system port (2026-10-25): when set, profile asset folders
+    // (music, character-pool) are resolved under this directory instead of
+    // their hardcoded Windows paths in the profile files, and topic history
+    // is written here instead of D:\Business\... . Empty = keep the original
+    // Windows behaviour, so the original machine needs no config change.
+    public string AssetsDirectory { get; init; } = "";
+    public string TopicHistoryDirectory { get; init; } = "";
+
     public string AnthropicApiKey { get; init; } = "";
     public string ClaudeModel { get; init; } = "claude-opus-5";
 
@@ -107,10 +115,29 @@ record GenConfig
     // form is the point. Scenes past the limit are dropped from the vertical render only.
     public int VerticalMaxSeconds { get; init; } = 89;
 
+    // Linux font fallback (2026-10-25): Nirmala (Windows) covers Latin +
+    // Devanagari + Gurmukhi in one file, but no single Linux font does.
+    // If the configured font file is missing, pick a per-language fallback
+    // that exists on this machine, so a Windows-tracked path never blocks a
+    // Linux run. English uses DejaVu Sans; Hindi uses Noto Sans Devanagari;
+    // Punjabi uses Noto Sans Gurmukhi.
+    public string ResolveSubtitleFontPath(string language) =>
+        File.Exists(SubtitleFontPath) ? SubtitleFontPath :
+        language switch
+        {
+            "hi" => "/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf",
+            "pa" => "/usr/share/fonts/truetype/noto/NotoSansGurmukhi-Regular.ttf",
+            _ => "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        };
+
     public void Validate(ContentProfile profile)
     {
         var missing = new List<string>();
-        if (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-")) missing.Add(nameof(AnthropicApiKey));
+        // Anthropic is only needed when the script provider is actually Claude;
+        // hybrid/groq/gemini runs previously failed validation for a key they
+        // never used.
+        if (ScriptProvider.Equals("claude", StringComparison.OrdinalIgnoreCase)
+            && (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-"))) missing.Add(nameof(AnthropicApiKey));
         if (string.IsNullOrWhiteSpace(AzureSpeechKey) || AzureSpeechKey.StartsWith("PUT-")) missing.Add(nameof(AzureSpeechKey));
 
         // Only a profile still on the Vidu image-to-video path (gigglegarden) ever
@@ -149,7 +176,12 @@ record GenConfig
                 $"Missing credentials: {string.Join(", ", missing)}. Set them in appsettings.Local.json " +
                 $"or as environment variables (GIGGLE_{missing[0]}=...).");
 
-        if (!File.Exists(SubtitleFontPath))
+        // A missing configured font is only fatal if no Linux fallback exists
+        // either (checked per-language at render time via ResolveSubtitleFontPath).
+        if (!File.Exists(SubtitleFontPath)
+            && !File.Exists("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf")
+            && !File.Exists("/usr/share/fonts/truetype/noto/NotoSansDevanagari-Regular.ttf")
+            && !File.Exists("/usr/share/fonts/truetype/noto/NotoSansGurmukhi-Regular.ttf"))
             throw new FileNotFoundException($"Subtitle font not found: {SubtitleFontPath}", SubtitleFontPath);
     }
 }

@@ -100,6 +100,17 @@ class VideoScript
     // fuzzy matching. Falls back to a format-appropriate default if the model omits it.
     public string MusicMood { get; set; } = "";
 
+    // Free hook/SEO + retention fields (2026-10-25, priorities 2 and 8).
+    // Scored after generation (see SeoScore) and stored so analytics can
+    // correlate them with views. CommentPrompt is the end-of-video question
+    // that drives comments; TitleVariants are kept for a later title swap
+    // if CTR is low. Chapters are built at assemble time from VisualGroups
+    // for long-form, not stored here.
+    public int HookScore { get; set; }
+    public int SeoScoreValue { get; set; }
+    public List<string> TitleVariants { get; set; } = [];
+    public string CommentPrompt { get; set; } = "";
+
     // Human-readable description of this video's narration pacing (e.g. "calm, slow, soft"
     // for Bedtime). Set by us from ScriptGenerator.FormatVoiceProfile, not the model - the
     // actual rate/pitch TtsClient applies come from that same table, so this field can never
@@ -122,6 +133,14 @@ class Scene
     public string? AudioPath { get; set; }
     public string? ImagePath { get; set; }
     public string? VerticalImagePath { get; set; }
+    // Dual-orientation art (2026-10-25): ImagePath is the portrait 1080x1920 asset
+    // for the vertical render. LandscapeImagePath / LandscapeClipPath are the
+    // 1920x1080 counterparts for the YouTube landscape master, when present.
+    // Renderers must prefer the matching orientation and only fall back to the
+    // portrait asset with a blurred-background fill when no landscape asset
+    // exists, so old jobs still render.
+    public string? LandscapeImagePath { get; set; }
+    public string? LandscapeClipPath { get; set; }
     public double DurationSeconds { get; set; }
 
     // Vidu image-to-video state. StartFramePath is the frame this scene animates from —
@@ -398,6 +417,13 @@ between scenes, so "the character" on its own is not enough.
 Universal requirements (apply to every format):
 {{sceneCountLine}}
 {{sceneLengthLine}}
+- Retention (free, no extra tool): scene 1 must be a hook, not a setup — a
+  question, a surprising claim, or action already underway. Never open with
+  "Long ago", "Welcome to", or "In this video". Every 2-3 scenes, change the
+  beat: a new visual, a question, a twist, or a direct address to the viewer.
+  End with a comment question that invites a reply, and for short-form end
+  the final line so it echoes the opening line (a loop replays better).
+  For long-form, the opening scenes must also work as a self-contained teaser.
 - Write narration in ordinary sentence case. Never put a word in ALL CAPITALS
   for emphasis - the speech synthesizer reads a fully capitalised word as an
   initialism and spells it out letter by letter ("AH-CHOO" becomes "A-H-C-H-O-O").
@@ -564,6 +590,17 @@ Respond ONLY with JSON, no markdown fences:
         }
 
         NormalizeSceneMoods(script.Scenes, moodStyles);
+
+        // Free hook/SEO scoring (priority 2) + retention defaults (priority 8).
+        // Scores are logged by the caller; a low hook score is a warning, not
+        // a failure, because a heuristic cannot judge a story — but a video
+        // whose opening line starts "Long ago..." should not ship silently.
+        script.SeoScoreValue = GiggleGarden.Shared.SeoScore.ScoreTitle(script.Title);
+        script.HookScore = script.Scenes.Count > 0
+            ? GiggleGarden.Shared.SeoScore.ScoreHook(script.Scenes[0].Narration) : 0;
+        script.TitleVariants = GiggleGarden.Shared.SeoScore.TitleVariants(script.Title);
+        if (string.IsNullOrWhiteSpace(script.CommentPrompt) && script.Scenes.Count > 0)
+            script.CommentPrompt = $"Which part of {script.CharacterName}'s story surprised you most? Tell us in the comments.";
 
         // A scene with no motion still has to animate - falling back to the still's
         // description plus idle movement beats submitting an empty prompt to Vidu. The

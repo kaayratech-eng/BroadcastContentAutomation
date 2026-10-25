@@ -8,7 +8,7 @@
 // Metadata resolution order per video:
 //   1. Sidecar JSON  (myvideo.mp4 -> myvideo.json)  — used as-is if present
 //   2. Auto-generate — pulls trending kids' video data from the YouTube API,
-//      sends it + the video filename to the Claude API, receives
+//      sends it + the video filename to a free Groq/Gemini API, receives
 //      title/description/tags in English + Hindi + Punjabi. Defaults to a
 //      YouTube-only target since the source video's aspect ratio is unknown.
 //
@@ -44,6 +44,8 @@ catch (Exception ex)
 
 static async Task RunAsync(AppConfig cfg, Logger log)
 {
+    if (!string.IsNullOrWhiteSpace(cfg.TopicHistoryDirectory))
+        TopicHistory.DirectoryOverride = cfg.TopicHistoryDirectory;
     if (cfg.Channels.Count == 0)
         throw new InvalidOperationException("appsettings.json has no Channels configured.");
 
@@ -203,7 +205,25 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                 // render/approval, so VideoGen never marks a topic used until a real
                 // publish confirms it.
                 if (sidecar.AnyPublished())
+                {
                     await TopicHistory.AppendAsync(channel, sidecar.Title);
+                    // Analytics loop (priority 1): one line per published video,
+                    // in the watch directory's analytics folder, so VideoGen's
+                    // next runs can read it without any new service.
+                    var published = sidecar.Publications.Values.FirstOrDefault(p => p.Status == GiggleGarden.Shared.PublishStatus.Published);
+                    await GiggleGarden.Shared.AnalyticsLog.AppendAsync(
+                        Path.Combine(cfg.WatchDirectory, "analytics"),
+                        new GiggleGarden.Shared.AnalyticsEntry
+                        {
+                            VideoId = published?.Id ?? "",
+                            Title = sidecar.Title,
+                            Channel = channel,
+                            Aspect = sidecar.Aspect,
+                            Tags = sidecar.Tags,
+                            ThumbnailPath = sidecar.ThumbnailPath,
+                            PublishedAt = published?.At ?? DateTimeOffset.UtcNow,
+                        });
+                }
 
                 MoveWithSiblings(path, cfg.DoneDirFor(channel));
                 log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
@@ -309,7 +329,7 @@ static async Task<Sidecar> ResolveSidecarAsync(
         return existing;
     }
 
-    log.Info("No sidecar — generating metadata from YouTube trends + Claude.");
+    log.Info("No sidecar — generating metadata from YouTube trends + free Groq/Gemini.");
 
     // A manually dropped video carries no channel signal of its own, but it was
     // found under `channel`'s watch folder, so it publishes through that
@@ -333,7 +353,9 @@ static async Task<Sidecar> ResolveSidecarAsync(
     };
 }
 
-// ---- Claude metadata generation (fallback for videos with no sidecar) -------
+// ---- Free metadata generation (fallback for videos with no sidecar) -------
+// Previously Claude (paid). Now Groq first, Gemini second — both free tiers.
+// Same prompt shape, same JSON contract, so callers do not change.
 
 static async Task<GeneratedMetadata> GenerateMetadataAsync(
     string videoPath, string trendData, AppConfig cfg, Logger log)
@@ -352,34 +374,51 @@ Recent high-performing kids' video titles on YouTube for context:
 Generate ORIGINAL metadata (do not copy any existing title). Respond ONLY with
 JSON, no markdown fences, matching exactly:
 {
-  "title": "<engaging English title, <=90 chars, includes 1-2 relevant keywords>",
+  "title": "<engaging English title, <=90 chars, includes 1-2 relevant keywords, keyword in first 30 chars, hook first>",
   "description": "<3 short paragraphs: English first, then the same summary in Hindi (Devanagari), then Punjabi (Gurmukhi). End with 3-5 hashtags.>",
   "tags": ["<10-15 tags mixing English, Hindi, Punjabi keywords>"]
 }
 """;
 
-    var body = JsonSerializer.Serialize(new
+    string? text = null;
+    if (!string.IsNullOrWhiteSpace(cfg.GroqApiKey))
     {
-        model = cfg.ClaudeModel,
-        max_tokens = 1500,
-        messages = new[] { new { role = "user", content = prompt } }
-    });
-
-    using var http = new HttpClient(new RetryHandler(log: m => log.Info($"  [claude] {m}")));
-    http.DefaultRequestHeaders.Add("x-api-key", cfg.AnthropicApiKey);
-    http.DefaultRequestHeaders.Add("anthropic-version", "2023-06-01");
-
-    var resp = await http.PostAsync("https://api.anthropic.com/v1/messages",
-        new StringContent(body, Encoding.UTF8, "application/json"));
-    resp.EnsureSuccessStatusCode();
-
-    using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-    var text = doc.RootElement.GetProperty("content")[0].GetProperty("text").GetString()!;
+        try
+        {
+            var body = JsonSerializer.Serialize(new
+            {
+                model = cfg.GroqModel,
+                messages = new[] { new { role = "user", content = prompt } }
+            });
+            using var http = new HttpClient(new RetryHandler(log: m => log.Info($"  [groq] {m}")));
+            http.DefaultRequestHeaders.Add("Authorization", $"Bearer {cfg.GroqApiKey}");
+            var resp = await http.PostAsync("https://api.groq.com/openai/v1/chat/completions",
+                new StringContent(body, Encoding.UTF8, "application/json"));
+            resp.EnsureSuccessStatusCode();
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+            text = doc.RootElement.GetProperty("choices")[0].GetProperty("message").GetProperty("content").GetString();
+        }
+        catch (Exception ex) { log.Info($"Groq metadata failed, trying Gemini: {ex.Message}"); }
+    }
+    if (text is null && !string.IsNullOrWhiteSpace(cfg.GeminiApiKey))
+    {
+        var body = JsonSerializer.Serialize(new
+        {
+            contents = new[] { new { parts = new[] { new { text = prompt } } } }
+        });
+        using var http = new HttpClient(new RetryHandler(log: m => log.Info($"  [gemini] {m}")));
+        var resp = await http.PostAsync($"https://generativelanguage.googleapis.com/v1beta/models/{cfg.GeminiModel}:generateContent?key={cfg.GeminiApiKey}",
+            new StringContent(body, Encoding.UTF8, "application/json"));
+        resp.EnsureSuccessStatusCode();
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        text = doc.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString();
+    }
+    if (text is null) throw new Exception("No free metadata provider configured (set GroqApiKey or GeminiApiKey).");
     text = text.Replace("```json", "").Replace("```", "").Trim();
 
     var meta = JsonSerializer.Deserialize<GeneratedMetadata>(text,
         new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-        ?? throw new Exception("Claude returned no parseable metadata JSON.");
+        ?? throw new Exception("Free metadata provider returned no parseable metadata JSON.");
 
     log.Info($"Generated metadata: {meta.Title}");
     return meta;

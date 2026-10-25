@@ -90,6 +90,14 @@ try
     profile = ContentProfileRegistry.Get(profileId ?? cfg.Profile);
     cfg.Validate(profile);
     profile.Validate();
+
+    // Linux port: if AssetsDirectory / TopicHistoryDirectory are set, re-root
+    // the profile's hardcoded Windows asset paths and topic history there.
+    // The profile record is immutable, so build a copy with `with` — the
+    // original Windows paths are untouched when these settings are empty.
+    if (!string.IsNullOrWhiteSpace(cfg.TopicHistoryDirectory))
+        TopicHistory.DirectoryOverride = cfg.TopicHistoryDirectory;
+    profile = ApplyAssetMapping(profile);
 }
 catch (Exception ex)
 {
@@ -149,11 +157,43 @@ async Task<int> RunPrepAsync()
         ? CharacterSource.RecentNames(cfg, workDir) : [];
 
     var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
+    // Trend snapshot per job (priority 3) + analytics brief (priority 1):
+    // both are saved into the job folder so the script, tags, and later
+    // learning all reference the same source, and so a job can be audited
+    // without re-querying the APIs.
+    if (trendContext is not null)
+        await File.WriteAllTextAsync(Path.Combine(workDir, "trend-snapshot.txt"), trendContext);
+    var analyticsDir = Path.Combine(cfg.WorkDirectory, "analytics");
+    var analyticsBrief = GiggleGarden.Shared.AnalyticsLog.Summarize(await GiggleGarden.Shared.AnalyticsLog.LoadAsync(analyticsDir));
+    if (!analyticsBrief.StartsWith("No published", StringComparison.Ordinal))
+        trendContext = (trendContext ?? "") + "\nWhat worked on this channel before:\n" + analyticsBrief;
+    // Wikipedia fact context (priority 4) when a topic is given: free, no key.
+    if (topic is not null)
+    {
+        var wiki = await WikipediaClient.FetchSummaryAsync(topic);
+        if (wiki is not null) trendContext = (trendContext ?? "") + "\nWikipedia context for this topic (use real facts from here, not invented ones):\n" + wiki;
+    }
     var recentTopics = topic is null ? await TopicHistory.RecentAsync(profile.Id) : [];
     var scriptProvider = ScriptProviderFactory.Create(cfg);
     var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm, recentTopics);
     script.Language = language!;
     script.Profile = profile.Id;
+    Console.WriteLine($"Hook score: {script.HookScore}/100, Title SEO score: {script.SeoScoreValue}/100 — \"{script.Title}\"");
+    if (script.HookScore < 50)
+        Console.WriteLine("  Warning: hook score is low — scene 1 may not stop a scroll. Consider rewriting it before TTS.");
+    // Post-generation Wikipedia check for Chronicle figures (priority 4).
+    if (profile.AllowsContextScenes && !string.IsNullOrWhiteSpace(script.CharacterName))
+    {
+        var wikiFigure = await WikipediaClient.FetchSummaryAsync(script.CharacterName);
+        if (wikiFigure is not null)
+        {
+            await File.WriteAllTextAsync(Path.Combine(workDir, "fact-check.txt"), wikiFigure);
+            var allNarration = string.Join(" ", script.Scenes.Select(s => s.Narration));
+            var years = WikipediaClient.YearsToCheck(allNarration, wikiFigure);
+            if (years.Count > 0)
+                Console.WriteLine($"  Fact-check warning: years mentioned but not in Wikipedia summary for {script.CharacterName}: {string.Join(", ", years)} — verify before publishing.");
+        }
+    }
 
     // 2. The branded intro bumper is scene zero: the same channel greeting every video,
     //    this video's character introducing itself, and a one-line preview of what it
@@ -256,6 +296,11 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
         }
 
         await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
+        // Silence trim (priority 6, free FFmpeg): TTS files often start/end
+        // with dead air, and dead air at the start of a Short is a scroll-past.
+        // Trimming here also shortens DurationSeconds, which is what the
+        // render timings are built from, so the video stays in sync.
+        await VideoAssembler.TrimSilenceAsync(cfg, audioPath);
         scene.AudioPath = audioPath;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
@@ -273,9 +318,10 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
 // never change.
 async Task<string> ResolveOutroAudioAsync(string spokenText)
 {
-    // Same hardcoded-absolute-path convention as BackgroundMusicPath/CharacterPoolPath in
-    // GiggleGardenProfile.cs/MythologyProfile.cs, not one relative to the build output dir.
-    const string outroAudioDir = @"D:\Business\BroadcastContentAutomation\VideoGen\assets\audio\outro";
+    // Linux port: outro voiceovers are cached under the run's WorkDirectory
+    // (shared across jobs) instead of a hardcoded Windows assets folder, so
+    // the same code works on Windows and Linux without a config change.
+    var outroAudioDir = Path.Combine(cfg.WorkDirectory, "outro");
     Directory.CreateDirectory(outroAudioDir);
 
     var key = new string(spokenText.ToLowerInvariant()
@@ -311,6 +357,8 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
     string? lastSceneKind = null;
     string? lastImagePath = null;
     string? lastClipPath = null;
+    string? lastLandscapeImagePath = null;
+    string? lastLandscapeClipPath = null;
 
     for (var i = 0; i < script.Scenes.Count; i++)
     {
@@ -337,6 +385,8 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             {
                 scene.ClipPath = lastClipPath;
                 scene.ImagePath = lastImagePath;
+                scene.LandscapeClipPath = lastLandscapeClipPath;
+                scene.LandscapeImagePath = lastLandscapeImagePath;
                 Console.WriteLine($"Stock {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastClipPath ?? lastImagePath!)}");
             }
             else
@@ -353,6 +403,26 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
 
                 Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
             }
+
+            // Dual-orientation: landscape counterpart for the YouTube master.
+            // Best-effort only — a missing landscape stock asset falls back to
+            // the portrait asset with a blurred fill at render time, it never
+            // blocks the job the way a missing portrait asset does.
+            if (scene.LandscapeClipPath is null && scene.LandscapeImagePath is null)
+            {
+                var landscapeBase = stockBase + "-landscape";
+                var landscapeExisting = File.Exists(landscapeBase + ".mp4") ? landscapeBase + ".mp4"
+                    : File.Exists(landscapeBase + ".jpg") ? landscapeBase + ".jpg" : null;
+                var landscapeDownloaded = landscapeExisting
+                    ?? await stock.DownloadBestMatchAsync(scene.StockQuery!, landscapeBase, ImageClient.Orientation.Landscape);
+                if (landscapeDownloaded is not null)
+                {
+                    if (Path.GetExtension(landscapeDownloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
+                        scene.LandscapeClipPath = landscapeDownloaded;
+                    else
+                        scene.LandscapeImagePath = landscapeDownloaded;
+                }
+            }
         }
         else
         {
@@ -367,6 +437,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             else if (canReuse && lastImagePath is not null)
             {
                 scene.ImagePath = lastImagePath;
+                scene.LandscapeImagePath = lastLandscapeImagePath;
                 Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}");
             }
             else
@@ -380,6 +451,29 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
 
                 Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
             }
+
+            // Dual-orientation: landscape counterpart for the YouTube master.
+            // PromptAndWaitAsync now returns immediately if the file was already
+            // placed (e.g. by Muse-generated art), so this second prompt only
+            // blocks in the original human loop — it does not block an automated
+            // run where both orientations were pre-generated.
+            if (scene.LandscapeImagePath is null)
+            {
+                var landscapeBase = artBase + "-landscape";
+                var landscapeExisting = ManualArtClient.ImageExtensions.Select(ext => landscapeBase + ext).FirstOrDefault(File.Exists);
+                if (landscapeExisting is not null)
+                {
+                    scene.LandscapeImagePath = landscapeExisting;
+                }
+                else
+                {
+                    var landscapePrompt = ImageClient.BuildPrompt(
+                        scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
+                        ImageClient.Orientation.Landscape, matchReference: true);
+                    scene.LandscapeImagePath = await ManualArtClient.PromptAndWaitAsync(
+                        landscapePrompt, landscapeBase + ".png", ImageClient.Orientation.Landscape, characterImage);
+                }
+            }
         }
 
         if (!isIntro)
@@ -388,6 +482,8 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             lastSceneKind = scene.SceneKind;
             lastImagePath = scene.ImagePath;
             lastClipPath = scene.ClipPath;
+            lastLandscapeImagePath = scene.LandscapeImagePath;
+            lastLandscapeClipPath = scene.LandscapeClipPath;
         }
 
         await SaveScriptAsync(workDir, script);
@@ -442,7 +538,7 @@ async Task<int> RunResumeAsync()
 
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
-    profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
+    profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile));
 
     if (script.Scenes.Count == 0)
         throw new InvalidOperationException($"{workDir} has a script.json but no scenes yet - nothing to resume. Re-run --prep.");
@@ -569,7 +665,7 @@ async Task<int> RunRettsAsync()
 
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
-    profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
+    profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile));
 
     var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
     var tts = TtsProviderFactory.Create(cfg, profile, language!);
@@ -677,7 +773,18 @@ async Task<int> RunAssembleAsync()
 
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
-    profile = string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile);
+    profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile));
+    // Scores are computed at prep time, but jobs created before that change
+    // (or hand-written scripts) carry 0s — recompute here so their sidecars
+    // are not published with a misleading 0/100 hook/SEO score.
+    if (script.HookScore == 0 && script.SeoScoreValue == 0 && script.Scenes.Count > 0)
+    {
+        script.SeoScoreValue = GiggleGarden.Shared.SeoScore.ScoreTitle(script.Title);
+        script.HookScore = GiggleGarden.Shared.SeoScore.ScoreHook(script.Scenes[0].Narration);
+        if (script.TitleVariants.Count == 0) script.TitleVariants = GiggleGarden.Shared.SeoScore.TitleVariants(script.Title);
+        if (string.IsNullOrWhiteSpace(script.CommentPrompt))
+            script.CommentPrompt = $"Which part of {script.CharacterName}'s story surprised you most? Tell us in the comments.";
+    }
     var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
 
     // The no-Vidu hybrid pipeline (Deliverable 6) resolves every scene's visual
@@ -793,6 +900,7 @@ async Task<int> RunAssembleAsync()
         await VideoAssembler.AssembleFromClipsAsync(profile, cfg, shortScenes, language!, workDir, vertical, 1080, 1920, script.MusicMood,
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     }
+    await VideoAssembler.NormalizeLoudnessAsync(cfg, vertical);
     await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
     Console.WriteLine($"Rendered: {vertical}");
 
@@ -800,13 +908,19 @@ async Task<int> RunAssembleAsync()
     {
         Title = Text.Fit($"{script.Title} #Shorts", 100),
         Description = $"{script.ReelsCaption}\n\n#Shorts",
-        Tags = [.. script.Tags.Take(12), "shorts"],
+        Tags = GiggleGarden.Shared.SeoScore.TrimTagsForYouTube([.. script.Tags.Take(12), "shorts"]),
         Approved = false,
         Language = language!,
         Aspect = "vertical",
         MadeForKids = profile.MadeForKids,
         Channel = profile.Id,
         Targets = [.. cfg.VerticalTargets],
+        TitleVariants = script.TitleVariants,
+        HookText = script.Scenes.Count > 0 ? script.Scenes[0].Narration : null,
+        CommentPrompt = string.IsNullOrWhiteSpace(script.CommentPrompt) ? null : script.CommentPrompt,
+        HookScore = script.HookScore,
+        SeoScore = script.SeoScoreValue,
+        LoudnessLUFS = -14,
         CaptionOverrides =
         {
             // YouTube keeps the #Shorts marker; the others must not carry it.
@@ -826,28 +940,60 @@ async Task<int> RunAssembleAsync()
     else
         await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood,
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
+    await VideoAssembler.NormalizeLoudnessAsync(cfg, landscape);
     await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
     Console.WriteLine($"Rendered: {landscape}");
 
-    // Thumbnail from a frame of the finished master - the art is already on-model,
-    // and a still pulled from the render costs nothing to produce.
-    var thumbFrame = Path.Combine(workDir, "thumbnail-frame.jpg");
-    var grabAt = Math.Min(3.0, Math.Max(0.5, script.Scenes[0].DurationSeconds * 0.6));
-    await VideoAssembler.ExtractThumbnailFrameAsync(cfg, landscape, grabAt, thumbFrame);
-    await VideoAssembler.BuildThumbnailAsync(cfg, thumbFrame, Path.ChangeExtension(landscape, ".thumb.jpg"));
-    Console.WriteLine("Thumbnail generated.");
+    // Dedicated thumbnail (priority 7, free): prefer the landscape art for
+    // scene 0 over a frame pulled from the finished render. A render frame
+    // carries burned-in subtitles and a Ken Burns crop, so the face is
+    // smaller and text competes with it; the raw landscape art is
+    // full-bleed, uncaptioned, and reads at phone size. Fall back to a
+    // render frame only when no landscape art exists for scene 0.
+    string thumbBase;
+    if (script.Scenes.Count > 0 && script.Scenes[0].LandscapeImagePath is { } landscapeArt && File.Exists(landscapeArt))
+    {
+        thumbBase = landscapeArt;
+        Console.WriteLine("Thumbnail: using landscape art for scene 0 (not a render frame).");
+    }
+    else
+    {
+        thumbBase = Path.Combine(workDir, "thumbnail-frame.jpg");
+        var grabAt = Math.Min(3.0, Math.Max(0.5, script.Scenes[0].DurationSeconds * 0.6));
+        await VideoAssembler.ExtractThumbnailFrameAsync(cfg, landscape, grabAt, thumbBase);
+    }
+    await VideoAssembler.BuildThumbnailAsync(cfg, thumbBase, Path.ChangeExtension(landscape, ".thumb.jpg"));
+    Console.WriteLine("Thumbnail generated (1280x720).");
 
+    // Long-form chapters (priority 5): one chapter per visual group, with
+    // cumulative timestamps from scene durations. Free text in the YouTube
+    // description — no API, no extra render — and it measurably helps
+    // long-form retention because viewers can jump to a beat.
+    var chapters = script.IsLongForm ? BuildChapters(script.Scenes) : null;
+    var landscapeDescription = chapters is { Count: > 0 }
+        ? script.Description + "\n\nChapters:\n" + string.Join("\n", chapters)
+        : script.Description;
+    if (!string.IsNullOrWhiteSpace(script.CommentPrompt))
+        landscapeDescription += "\n\n" + script.CommentPrompt;
     await new Sidecar
     {
         Title = script.Title,
-        Description = script.Description,
-        Tags = script.Tags,
+        Description = landscapeDescription,
+        Tags = GiggleGarden.Shared.SeoScore.TrimTagsForYouTube(script.Tags),
         Approved = false,
         Language = language!,
         Aspect = "landscape",
         MadeForKids = profile.MadeForKids,
         Channel = profile.Id,
         Targets = [.. cfg.LandscapeTargets],
+        TitleVariants = script.TitleVariants,
+        HookText = script.Scenes.Count > 0 ? script.Scenes[0].Narration : null,
+        CommentPrompt = string.IsNullOrWhiteSpace(script.CommentPrompt) ? null : script.CommentPrompt,
+        Chapters = chapters,
+        ThumbnailPath = Path.ChangeExtension(landscape, ".thumb.jpg"),
+        HookScore = script.HookScore,
+        SeoScore = script.SeoScoreValue,
+        LoudnessLUFS = -14,
     }.SaveAsync(landscape);
     rendered.Add(landscape);
 
@@ -1008,4 +1154,44 @@ async Task<VideoScript> LoadScriptAsync(string workDir)
     return System.Text.Json.JsonSerializer.Deserialize<VideoScript>(
         await File.ReadAllTextAsync(path), jsonOptions)
         ?? throw new InvalidDataException($"{path} is not valid script JSON.");
+}
+
+
+// Linux port helper: re-roots a profile's hardcoded Windows asset folders
+// under cfg.AssetsDirectory when set, otherwise returns it unchanged.
+// Path.GetFileName does NOT split on backslashes on Linux, so a Windows
+// path's last segment is split manually, otherwise the whole D:\... string
+// would be appended as one folder name. Called at startup AND after every
+// RunAssemble/RunResume/RunRetts profile reassignment from script.Profile,
+// which would otherwise lose the startup mapping.
+List<string> BuildChapters(IReadOnlyList<Scene> scenes)
+{
+    var chapters = new List<string>();
+    var cursor = TimeSpan.Zero;
+    int? lastGroup = null;
+    foreach (var scene in scenes)
+    {
+        if (scene.VisualGroup != lastGroup)
+        {
+            var label = scene.Narration.Length > 40 ? scene.Narration[..40].TrimEnd() + "…" : scene.Narration;
+            chapters.Add($"{(int)cursor.TotalMinutes}:{cursor.Seconds:00} - {label}");
+            lastGroup = scene.VisualGroup;
+        }
+        cursor += TimeSpan.FromSeconds(scene.DurationSeconds + 0.5);
+    }
+    return chapters;
+}
+
+ContentProfile ApplyAssetMapping(ContentProfile p)
+{
+    if (string.IsNullOrWhiteSpace(cfg.AssetsDirectory)) return p;
+    static string LastSegment(string path) =>
+        path.Split(['\\', '/'], StringSplitOptions.RemoveEmptyEntries).LastOrDefault() ?? path;
+    return p with
+    {
+        BackgroundMusicPath = Path.Combine(cfg.AssetsDirectory, LastSegment(p.BackgroundMusicPath)),
+        CharacterPoolPath = string.IsNullOrWhiteSpace(p.CharacterPoolPath)
+            ? p.CharacterPoolPath
+            : Path.Combine(cfg.AssetsDirectory, LastSegment(p.CharacterPoolPath)),
+    };
 }

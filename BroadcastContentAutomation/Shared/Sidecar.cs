@@ -71,6 +71,20 @@ public sealed class Sidecar
     // Optional per-platform caption override. Absent means "derive from Description".
     public Dictionary<string, string> CaptionOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
 
+    // Free metadata/analytics fields (2026-10-25, priority 5). All optional
+    // and null-ignored, so old sidecars still load. They exist so the
+    // analytics loop can correlate title/hook/thumbnail with views without
+    // re-deriving them from the video file.
+    public List<string>? TitleVariants { get; set; }
+    public string? HookText { get; set; }
+    public string? CommentPrompt { get; set; }
+    public List<string>? Chapters { get; set; }
+    public string? PlaylistId { get; set; }
+    public string? ThumbnailPath { get; set; }
+    public double? LoudnessLUFS { get; set; }
+    public int? HookScore { get; set; }
+    public int? SeoScore { get; set; }
+
     [JsonIgnore] public bool IsVertical => Aspect.Equals("vertical", StringComparison.OrdinalIgnoreCase);
 
     public static readonly JsonSerializerOptions Options = new()

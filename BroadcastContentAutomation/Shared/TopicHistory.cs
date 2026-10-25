@@ -8,8 +8,13 @@ namespace GiggleGarden.Shared;
 // separate, differently-scheduled run.
 public static class TopicHistory
 {
+    // Linux port: when set (by VideoGen/Uploader startup from config), topic
+    // history is read/written under this directory instead of the hardcoded
+    // Windows path. Null = original Windows behaviour.
+    public static string? DirectoryOverride { get; set; }
+
     private static string PathFor(string channel) =>
-        Path.Combine(@"D:\Business\BroadcastContentAutomation\VideoGen\topic-history", $"{channel}.md");
+        Path.Combine(DirectoryOverride ?? @"D:\Business\BroadcastContentAutomation\VideoGen\topic-history", $"{channel}.md");
 
     public static async Task<List<string>> RecentAsync(string channel, int max = 30)
     {

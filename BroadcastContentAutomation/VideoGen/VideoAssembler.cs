@@ -28,7 +28,12 @@ static partial class VideoAssembler
         for (var i = 0; i < scenes.Count; i++)
         {
             var s = scenes[i];
-            if (s.ClipPath is not { } clipPath || !File.Exists(clipPath))
+            // Dual-orientation: landscape render prefers a landscape clip when
+            // one exists, otherwise falls back to the portrait clip (which
+            // BuildVideoClipAsync then blur-pads into the landscape frame).
+            var preferredClip = w > h && s.LandscapeClipPath is { } landscapeClip && File.Exists(landscapeClip)
+                ? landscapeClip : s.ClipPath;
+            if (preferredClip is not { } clipPath || !File.Exists(clipPath))
                 throw new InvalidOperationException($"Scene {i + 1} has no downloaded clip.");
 
             var duration = s.DurationSeconds + 0.5;              // breathing room
@@ -94,8 +99,15 @@ static partial class VideoAssembler
 
         var assets = scenes.Select(s =>
         {
-            var isVideo = s.ClipPath is { } clip && File.Exists(clip);
-            var path = isVideo ? s.ClipPath! : s.ImagePath
+            // Dual-orientation: a landscape render (w > h, the YouTube master)
+            // prefers the landscape asset when one was resolved, otherwise it
+            // falls back to the portrait asset and Assembly.tsx's blurred-fill
+            // contain-fit, so old single-orientation jobs still render.
+            var isLandscapeRender = w > h;
+            var clipPath = isLandscapeRender && s.LandscapeClipPath is { } lc && File.Exists(lc) ? lc : s.ClipPath;
+            var imagePath = isLandscapeRender && s.LandscapeImagePath is { } li && File.Exists(li) ? li : s.ImagePath;
+            var isVideo = clipPath is { } clip && File.Exists(clip);
+            var path = isVideo ? clipPath! : imagePath
                 ?? throw new InvalidOperationException(
                     "A scene has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
 
@@ -188,11 +200,12 @@ static partial class VideoAssembler
         string? BackgroundMusicPath, double BackgroundMusicVolume, double OutroSeconds,
         List<string> OutroLines, string? OutroAudioPath, bool IsCalm);
 
-    // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. Routed through
-    // cmd.exe rather than launched directly: npx resolves to npx.cmd on Windows, and
+    // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. On Windows
+    // it is routed through cmd.exe: npx resolves to npx.cmd on Windows, and
     // CreateProcess (what Process.Start ultimately calls) can only launch .exe files
     // directly, not .cmd shims - the same reason a bare `Process.Start("npm", ...)` fails
-    // on Windows while `Process.Start("cmd.exe", "/c npm ...")` works.
+    // on Windows while `Process.Start("cmd.exe", "/c npm ...")` works. On Linux/macOS
+    // npx is a real executable, so it is launched directly.
     private static async Task RunNpxRemotionRenderAsync(GenConfig cfg, string workDir, string propsPath, string outputPath)
     {
         if (string.IsNullOrWhiteSpace(cfg.RemotionProjectPath) || !Directory.Exists(cfg.RemotionProjectPath))
@@ -205,8 +218,12 @@ static partial class VideoAssembler
         // this is what makes those relative paths resolvable: Remotion serves --public-dir
         // over its own local HTTP server, which staticFile()/getAbsoluteSrc resolve against
         // in Assembly.tsx, instead of the browser trying (and failing) to load file:// srcs.
-        var psi = new ProcessStartInfo("cmd.exe",
-            $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\"")
+        var isWindows = OperatingSystem.IsWindows();
+        var psi = isWindows
+            ? new ProcessStartInfo("cmd.exe",
+                $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\"")
+            : new ProcessStartInfo("npx",
+                $"remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\"")
         {
             WorkingDirectory = cfg.RemotionProjectPath,
             RedirectStandardOutput = true,
@@ -214,7 +231,7 @@ static partial class VideoAssembler
             UseShellExecute = false,
         };
 
-        using var p = StartOrThrow(psi, "npx (via cmd.exe)");
+        using var p = StartOrThrow(psi, isWindows ? "npx (via cmd.exe)" : "npx");
 
         // Remotion prints per-chunk/frame progress on stdout as it renders - stream it
         // live instead of buffering with ReadToEndAsync, so a long render (tens of
@@ -244,9 +261,9 @@ static partial class VideoAssembler
         }
         catch (OperationCanceledException)
         {
-            // cmd.exe spawns npx, which spawns node, which spawns headless Chromium -
-            // killing just the cmd.exe process leaves the actual renderer running
-            // orphaned. entireProcessTree takes the whole chain down together.
+            // The launcher spawns npx, which spawns node, which spawns headless
+            // Chromium - killing just the launcher leaves the actual renderer
+            // running orphaned. entireProcessTree takes the whole chain down together.
             try { p.Kill(entireProcessTree: true); } catch { /* already exited */ }
             throw new Exception(
                 $"remotion render timed out after {cfg.RemotionRenderTimeoutMinutes}m rendering {outputPath}. " +
@@ -445,7 +462,7 @@ static partial class VideoAssembler
         var fontSize = h > w ? 56 : 48;
         var lineHeight = (int)(fontSize * 1.4);
         var totalTextHeight = lines.Count * lineHeight;
-        var font = FilterPath(cfg.SubtitleFontPath);
+        var font = FilterPath(cfg.ResolveSubtitleFontPath("en"));   // outro text is English
         var sb = new StringBuilder();
 
         for (var i = 0; i < lines.Count; i++)
@@ -540,7 +557,7 @@ static partial class VideoAssembler
 
         var lineHeight = (int)(fontSize * 1.35);
         var bottomMargin = h > w ? 220 : 70;   // clear of the Reels/TikTok caption UI
-        var font = FilterPath(cfg.SubtitleFontPath);
+        var font = FilterPath(cfg.ResolveSubtitleFontPath(language));
         var sb = new StringBuilder();
 
         for (var line = 0; line < lines.Count; line++)
@@ -625,6 +642,33 @@ static partial class VideoAssembler
             "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
 
         await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+    }
+
+    // Audio polish (2026-10-25, priority 6, all free FFmpeg filters):
+    // TrimSilence removes leading/trailing silence below -50dB from a TTS
+    // file in place (best-effort: if FFmpeg fails, the original is kept).
+    public static async Task TrimSilenceAsync(GenConfig cfg, string audioPath)
+    {
+        var temp = audioPath + ".trim.mp3";
+        try
+        {
+            await RunFfmpegAsync(cfg, $"-y -i \"{audioPath}\" -af \"silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse\" -c:a libmp3lame \"{temp}\"");
+            File.Move(temp, audioPath, overwrite: true);
+        }
+        catch { try { if (File.Exists(temp)) File.Delete(temp); } catch { } }
+    }
+
+    // NormalizeLoudness re-encodes a finished render's audio to -14 LUFS
+    // integrated (YouTube's normalisation target) with true-peak -1.5dB,
+    // single-pass loudnorm (linear) so it is one FFmpeg call, not two.
+    // Short platforms are louder than -14 in practice, but a -14 master is
+    // not turned down by YouTube and is not far from Reels/TikTok targets;
+    // a quiet -34 mix would be turned up noisily by the platform instead.
+    public static async Task NormalizeLoudnessAsync(GenConfig cfg, string videoPath)
+    {
+        var temp = videoPath + ".loud.mp4";
+        await RunFfmpegAsync(cfg, $"-y -i \"{videoPath}\" -af \"loudnorm=I=-14:TP=-1.5:LRA=11:linear=true\" -c:v copy -c:a aac -b:a 128k \"{temp}\"");
+        File.Move(temp, videoPath, overwrite: true);
     }
 
     public static async Task<double> GetAudioDurationAsync(GenConfig cfg, string audioPath)

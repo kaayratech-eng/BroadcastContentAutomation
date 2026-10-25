@@ -5,6 +5,10 @@ record AppConfig
     public string WatchDirectory { get; init; } = @"D:\Business\Videos";
     public string LogDirectory { get; init; } = @"D:\Business\Videos\logs";
 
+    // Linux port: when set, TopicHistory is read/written here instead of its
+    // hardcoded Windows path. Empty = original Windows behaviour.
+    public string TopicHistoryDirectory { get; init; } = "";
+
     // Per-channel done/failed folders, alongside that channel's own live videos
     // under WatchDirectory\<channel>\ (see "Per-channel path segregation" in
     // tasks/todo.md). LogDirectory above stays flat/shared on purpose - every log
@@ -38,8 +42,14 @@ record AppConfig
     public int CrashRetryBackoffMinutes { get; init; } = 30;
 
     // Metadata fallback (only used for videos dropped in without a sidecar).
+    // Free-only (2026-10-25): Groq is tried first, Gemini second. Anthropic/
+    // Claude are kept only so old configs still bind, they are no longer used.
     public string AnthropicApiKey { get; init; } = "";
     public string ClaudeModel { get; init; } = "claude-opus-5";
+    public string GroqApiKey { get; init; } = "";
+    public string GroqModel { get; init; } = "llama-3.3-70b-versatile";
+    public string GeminiApiKey { get; init; } = "";
+    public string GeminiModel { get; init; } = "gemini-2.5-flash";
     public string[] TrendQueries { get; init; } =
         ["nursery rhymes for kids", "kids learning songs", "hindi rhymes for children"];
 
@@ -68,6 +78,9 @@ record YouTubeConfig
     public string PrivacyStatus { get; init; } = "private";
     public string CategoryId { get; init; } = "24";        // Entertainment
     public int MaxUploadsPerRun { get; init; } = 3;        // ~1600 quota units each
+    // Optional playlist to add every upload to (free API call, 50 quota).
+    // Empty = no playlist assignment.
+    public string PlaylistId { get; init; } = "";
 }
 
 // Meta Graph API. Instagram Reels and Facebook Reels share the app and, usually,
