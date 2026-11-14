@@ -30,10 +30,11 @@ var tokenStorePath = args.Length > 2 ? args[2] : @"C:\Secure\GiggleGarden\tiktok
 
 const string RedirectUri = "http://localhost:53682/callback";
 
-// video.publish is only granted to audited production apps with Direct Post
-// approved (see TikTokConfig.DirectPost) — Sandbox apps and unaudited
-// production apps can only request video.upload (draft-to-inbox).
-const string Scope = "user.info.basic,video.upload";
+// Direct Post: video.publish is only granted to audited production apps
+// with Direct Post approved (see TikTokConfig.DirectPost). A token captured
+// with video.upload only can post to the inbox/drafts, not directly — so
+// re-capture with this scope after the app is audited.
+const string Scope = "user.info.basic,video.publish";
 
 // TikTok's desktop OAuth flow requires PKCE. Unlike the usual RFC 7636 shape
 // (base64url-encoded SHA256), TikTok's own docs specify hex-encoded SHA256 —

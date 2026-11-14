@@ -88,16 +88,21 @@ ContentProfile profile;
 try
 {
     profile = ContentProfileRegistry.Get(profileId ?? cfg.Profile);
-    cfg.Validate(profile);
-    profile.Validate();
 
     // Linux port: if AssetsDirectory / TopicHistoryDirectory are set, re-root
     // the profile's hardcoded Windows asset paths and topic history there.
     // The profile record is immutable, so build a copy with `with` — the
     // original Windows paths are untouched when these settings are empty.
+    // This MUST run before Validate: profile.Validate checks that
+    // CharacterPoolPath exists, and the raw Windows path never does on Linux
+    // (GiggleGarden's pool failed startup validation for exactly this reason
+    // until the order was fixed, 2026-11-13).
     if (!string.IsNullOrWhiteSpace(cfg.TopicHistoryDirectory))
         TopicHistory.DirectoryOverride = cfg.TopicHistoryDirectory;
     profile = ApplyAssetMapping(profile);
+
+    cfg.Validate(profile, language);
+    profile.Validate();
 }
 catch (Exception ex)
 {
@@ -175,7 +180,10 @@ async Task<int> RunPrepAsync()
     }
     var recentTopics = topic is null ? await TopicHistory.RecentAsync(profile.Id) : [];
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm, recentTopics);
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm, recentTopics,
+        onActComplete: (s, act) => SavePartialScriptAsync(workDir, s, act));
+    // Full script generated: script.json (saved below) supersedes the checkpoints.
+    DeletePartialScriptFiles(workDir);
     script.Language = language!;
     script.Profile = profile.Id;
     Console.WriteLine($"Hook score: {script.HookScore}/100, Title SEO score: {script.SeoScoreValue}/100 — \"{script.Title}\"");
@@ -232,7 +240,7 @@ async Task<int> RunPrepAsync()
     await RunTtsLoopAsync(workDir, script);
 
     var credits = 0;
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
         await RunVisualLoopAsync(workDir, script, characterImage);
     else
         credits = await RunViduLoopAsync(workDir, script, characterImage);
@@ -240,7 +248,7 @@ async Task<int> RunPrepAsync()
     await SaveScriptAsync(workDir, script);
 
     Console.WriteLine();
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
     {
         Console.WriteLine($"Resolved visuals for {script.Scenes.Count} scenes (stock footage + manual art, no Vidu spend).");
         Console.WriteLine("Run --assemble to render with Remotion:");
@@ -330,7 +338,7 @@ async Task<string> ResolveOutroAudioAsync(string spokenText)
     if (File.Exists(audioPath)) return audioPath;
 
     var tts = TtsProviderFactory.Create(cfg, profile, language!);
-    await tts.SynthesizeAsync(spokenText, language!, audioPath, "-4%", "+6%");
+    await tts.SynthesizeAsync(spokenText, language!, audioPath, "-10%", "+6%");
     Console.WriteLine($"Outro audio synthesized: {audioPath}");
     return audioPath;
 }
@@ -344,7 +352,12 @@ async Task<string> ResolveOutroAudioAsync(string spokenText)
 // mid-loop never repeats a manual art step the user already did.
 async Task RunVisualLoopAsync(string workDir, VideoScript script, string characterImage)
 {
-    var stock = new StockFootageClient(cfg);
+    // Stock footage: direct client when a real Pexels key is in config,
+    // vault-backed helper client otherwise (same selection rule as
+    // GenConfig.Validate - a missing key is fine when the helper exists).
+    IStockFootageClient stock = GenConfig.HasRealKey(cfg.PexelsApiKey)
+        ? new StockFootageClient(cfg)
+        : new StockFootageHelperClient(cfg);
 
     // Long-form (Scene.VisualGroup, see ScriptGenerator.cs): consecutive scenes sharing a
     // group number are one "visual beat" and reuse the same resolved image/clip instead of
@@ -358,7 +371,6 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
     string? lastImagePath = null;
     string? lastClipPath = null;
     string? lastLandscapeImagePath = null;
-    string? lastLandscapeClipPath = null;
 
     for (var i = 0; i < script.Scenes.Count; i++)
     {
@@ -385,13 +397,22 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             {
                 scene.ClipPath = lastClipPath;
                 scene.ImagePath = lastImagePath;
-                scene.LandscapeClipPath = lastLandscapeClipPath;
                 scene.LandscapeImagePath = lastLandscapeImagePath;
                 Console.WriteLine($"Stock {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastClipPath ?? lastImagePath!)}");
             }
             else
             {
-                var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, stockBase, ImageClient.Orientation.Portrait)
+                // Single-clip rule (2026-11-11, user feedback): ONE Pexels
+                // clip per context scene, downloaded landscape-first. The
+                // landscape render uses it as-is; the portrait render
+                // cover-crops it at render time (Assembly.tsx MotionVideo:
+                // objectFit cover, top-anchored), which keeps the full
+                // height — heads included — and cuts only the sides. If
+                // Pexels has no landscape match for the query, a portrait
+                // clip is the single source instead; it is never two
+                // different clips.
+                var downloaded = await stock.DownloadBestMatchAsync(scene.StockQuery!, stockBase, ImageClient.Orientation.Landscape)
+                    ?? await stock.DownloadBestMatchAsync(scene.StockQuery!, stockBase, ImageClient.Orientation.Portrait)
                     ?? throw new Exception(
                         $"Scene {label}: Pexels had no match for \"{scene.StockQuery}\". Broaden the stockQuery " +
                         $"and re-run --prep, or hand-place a file at {stockBase}.jpg or {stockBase}.mp4 and re-run --assemble.");
@@ -402,26 +423,6 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                     scene.ImagePath = downloaded;
 
                 Console.WriteLine($"Stock {label}: \"{scene.StockQuery}\" -> {Path.GetFileName(downloaded)}");
-            }
-
-            // Dual-orientation: landscape counterpart for the YouTube master.
-            // Best-effort only — a missing landscape stock asset falls back to
-            // the portrait asset with a blurred fill at render time, it never
-            // blocks the job the way a missing portrait asset does.
-            if (scene.LandscapeClipPath is null && scene.LandscapeImagePath is null)
-            {
-                var landscapeBase = stockBase + "-landscape";
-                var landscapeExisting = File.Exists(landscapeBase + ".mp4") ? landscapeBase + ".mp4"
-                    : File.Exists(landscapeBase + ".jpg") ? landscapeBase + ".jpg" : null;
-                var landscapeDownloaded = landscapeExisting
-                    ?? await stock.DownloadBestMatchAsync(scene.StockQuery!, landscapeBase, ImageClient.Orientation.Landscape);
-                if (landscapeDownloaded is not null)
-                {
-                    if (Path.GetExtension(landscapeDownloaded).Equals(".mp4", StringComparison.OrdinalIgnoreCase))
-                        scene.LandscapeClipPath = landscapeDownloaded;
-                    else
-                        scene.LandscapeImagePath = landscapeDownloaded;
-                }
             }
         }
         else
@@ -440,38 +441,77 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                 scene.LandscapeImagePath = lastLandscapeImagePath;
                 Console.WriteLine($"Art {label}: reused visual group {scene.VisualGroup} -> {Path.GetFileName(lastImagePath)}");
             }
+            else if (IsAutomatedProvider(cfg))
+            {
+                // Identical-image rule (2026-11-11, user feedback on the
+                // first test videos): ONE square generation per scene, and
+                // both orientations are cover-crops of that one
+                // image, so portrait and landscape show the same scene,
+                // same character, same composition — just framed
+                // differently. No second generation per scene, no blur-pad
+                // for scene art; the square source is kept on disk
+                // (sceneNN-art-square.*) so a resume never regenerates it.
+                // Landscape framing (2026-11-13, user feedback: the 16:9
+                // top-biased cover-crop cut full-body figures off at the
+                // waist): the landscape asset is the square itself, NOT a
+                // 1920x1080 pre-crop. Remotion's KenBurnsImage contain-fits
+                // it over the blurred cover-fill, so the whole figure stays
+                // visible in landscape — the blur-pad framing the 2026-08-19
+                // fix used for portrait art in landscape. The portrait crop
+                // keeps the full height.
+                var squarePrompt = ImageClient.BuildPrompt(
+                    scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
+                    ImageClient.Orientation.Square, matchReference: true);
+                var squarePath = await GenerateSquareArtAsync(cfg, squarePrompt, artBase + "-square");
+                scene.ImagePath = await DeriveArtAsync(cfg, squarePath, artBase + ".png", 1080, 1920);
+                scene.LandscapeImagePath = squarePath;
+                Console.WriteLine($"Art {label}: square source {Path.GetFileName(squarePath)} -> portrait + landscape");
+            }
             else
             {
-                var outputPath = artBase + ".png";
                 var prompt = ImageClient.BuildPrompt(
                     scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
                     ImageClient.Orientation.Portrait, matchReference: true);
                 scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
-                    prompt, outputPath, ImageClient.Orientation.Portrait, characterImage);
+                    prompt, artBase + ".png", ImageClient.Orientation.Portrait, characterImage);
 
                 Console.WriteLine($"Art {label}: saved {Path.GetFileName(scene.ImagePath)}");
             }
 
             // Dual-orientation: landscape counterpart for the YouTube master.
-            // PromptAndWaitAsync now returns immediately if the file was already
-            // placed (e.g. by Muse-generated art), so this second prompt only
-            // blocks in the original human loop — it does not block an automated
-            // run where both orientations were pre-generated.
+            // Automated providers derive it from the same square source (or,
+            // on a resume where only the portrait art survived, from the
+            // portrait art) — never a second generation. Manual mode keeps
+            // the original second prompt-and-wait call.
             if (scene.LandscapeImagePath is null)
             {
-                var landscapeBase = artBase + "-landscape";
-                var landscapeExisting = ManualArtClient.ImageExtensions.Select(ext => landscapeBase + ext).FirstOrDefault(File.Exists);
-                if (landscapeExisting is not null)
+                if (IsAutomatedProvider(cfg))
                 {
-                    scene.LandscapeImagePath = landscapeExisting;
+                    var squareBase = artBase + "-square";
+                    var squareExisting = ManualArtClient.ImageExtensions.Select(ext => squareBase + ext).FirstOrDefault(File.Exists);
+                    // Same as the main loop: the square itself is the
+                    // landscape asset (blur-pad contain-fit in Remotion).
+                    // A stale -landscape.png from the old top-biased
+                    // pre-crop is ignored when a square exists; without a
+                    // square the portrait asset contain-fits the same way.
+                    scene.LandscapeImagePath = squareExisting ?? scene.ImagePath;
                 }
                 else
                 {
-                    var landscapePrompt = ImageClient.BuildPrompt(
-                        scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                        ImageClient.Orientation.Landscape, matchReference: true);
-                    scene.LandscapeImagePath = await ManualArtClient.PromptAndWaitAsync(
-                        landscapePrompt, landscapeBase + ".png", ImageClient.Orientation.Landscape, characterImage);
+                    var landscapeBase = artBase + "-landscape";
+                    var landscapeExisting = ManualArtClient.ImageExtensions.Select(ext => landscapeBase + ext).FirstOrDefault(File.Exists);
+                    if (landscapeExisting is not null)
+                    {
+                        scene.LandscapeImagePath = landscapeExisting;
+                    }
+                    else
+                    {
+                        var landscapePrompt = ImageClient.BuildPrompt(
+                            scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
+                            ImageClient.Orientation.Landscape, matchReference: true);
+                        scene.LandscapeImagePath = await ManualArtClient.PromptAndWaitAsync(
+                            landscapePrompt, landscapeBase + ".png", ImageClient.Orientation.Landscape, characterImage);
+                    }
                 }
             }
         }
@@ -483,11 +523,75 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             lastImagePath = scene.ImagePath;
             lastClipPath = scene.ClipPath;
             lastLandscapeImagePath = scene.LandscapeImagePath;
-            lastLandscapeClipPath = scene.LandscapeClipPath;
         }
 
         await SaveScriptAsync(workDir, script);
     }
+}
+
+// Automated providers are "pollinations" and "cloudflare". Anything else
+// (today: "manual") keeps the original human prompt-and-wait loop.
+static bool IsAutomatedProvider(GenConfig cfg) =>
+    cfg.SceneArtProvider.Equals("pollinations", StringComparison.OrdinalIgnoreCase) ||
+    cfg.SceneArtProvider.Equals("cloudflare", StringComparison.OrdinalIgnoreCase);
+
+// Generates ONE square source image per scene with the provider chain:
+// primary per SceneArtProvider, then the other automated provider's
+// square, then Cloudflare SDXL square. The square is the single source
+// both orientations are derived from — portrait and landscape are centre
+// cover-crops of it, so they are identical by construction. Each step
+// returns immediately when its file is already on disk, so a resumed job
+// never regenerates an image it already has.
+static async Task<string> GenerateSquareArtAsync(
+    GenConfig cfg, string prompt, string squareBase)
+{
+    var existing = ManualArtClient.ImageExtensions
+        .Select(ext => squareBase + ext).FirstOrDefault(File.Exists);
+    if (existing is not null) return existing;
+
+    var primaryIsPollinations = cfg.SceneArtProvider.Equals(
+        "pollinations", StringComparison.OrdinalIgnoreCase);
+    var attempts = new List<Func<Task<string>>>
+    {
+        () => primaryIsPollinations
+            ? PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg")
+            : CloudflareArtClient.GenerateFluxSquareAsync(cfg, prompt, squareBase + ".jpg"),
+        () => primaryIsPollinations
+            ? CloudflareArtClient.GenerateFluxSquareAsync(cfg, prompt, squareBase + ".jpg")
+            : PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg"),
+        () => CloudflareArtClient.GenerateAsync(cfg, prompt, squareBase + ".png", 1024, 1024),
+    };
+    Exception? lastError = null;
+    foreach (var attempt in attempts)
+    {
+        try
+        {
+            return await attempt();
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Square art provider step failed ({ex.Message}), trying next provider...");
+            lastError = ex;
+        }
+    }
+    throw new Exception(
+        $"All scene-art providers failed for {squareBase} (1024x1024 square).", lastError);
+}
+
+// Derives one orientation from a square source image with a cover
+// crop — no blur-pad, no second generation. Returns immediately when the
+// file is already on disk. verticalBias is passed through to
+// CropScaleToExactAsync; the portrait derivation stays centred (0.5),
+// where the full height is kept anyway. The landscape derivation no
+// longer pre-crops (2026-11-13: the old top-biased 16:9 pre-crop cut
+// full-body figures off at the waist) — the square itself is the
+// landscape asset and Remotion contain-fits it over the blur-pad.
+static async Task<string> DeriveArtAsync(
+    GenConfig cfg, string sourcePath, string outputPath, int width, int height, double verticalBias = 0.5)
+{
+    if (ProcessHelper.AlreadyOnDisk(outputPath)) return outputPath;
+    await VideoAssembler.CropScaleToExactAsync(cfg, sourcePath, outputPath, width, height, verticalBias);
+    return outputPath;
 }
 
 // Submits every clip to Vidu. All scenes seed from this video's one character frame rather
@@ -556,7 +660,7 @@ async Task<int> RunResumeAsync()
     await RunTtsLoopAsync(workDir, script);
 
     var credits = 0;
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
         await RunVisualLoopAsync(workDir, script, characterImage);
     else
         credits = await RunViduLoopAsync(workDir, script, characterImage);
@@ -564,7 +668,7 @@ async Task<int> RunResumeAsync()
     await SaveScriptAsync(workDir, script);
 
     Console.WriteLine();
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
     {
         Console.WriteLine("Resolved. Run --assemble to render with Remotion:");
     }
@@ -628,7 +732,7 @@ async Task<int> RunManualAsync()
     await RunTtsLoopAsync(workDir, script);
 
     var credits = 0;
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
         await RunVisualLoopAsync(workDir, script, characterImage);
     else
         credits = await RunViduLoopAsync(workDir, script, characterImage);
@@ -636,7 +740,7 @@ async Task<int> RunManualAsync()
     await SaveScriptAsync(workDir, script);
 
     Console.WriteLine();
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
     {
         Console.WriteLine($"Resolved visuals for {script.Scenes.Count} scenes (stock footage + manual art, no Vidu spend).");
         Console.WriteLine("Run --assemble to render with Remotion:");
@@ -736,7 +840,11 @@ async Task<int> RunDryScriptAsync()
 {
     var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
     var scriptProvider = ScriptProviderFactory.Create(cfg);
-    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride, longForm);
+    var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script")).FullName;
+    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride, longForm,
+        onActComplete: (s, act) => SavePartialScriptAsync(outDir, s, act));
+    // Full script generated: the timestamped save below supersedes the checkpoints.
+    DeletePartialScriptFiles(outDir);
 
     Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"   IsLongForm: {script.IsLongForm}");
     Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
@@ -756,7 +864,6 @@ async Task<int> RunDryScriptAsync()
     }
     Console.WriteLine($"Hashtags: {string.Join(" ", script.Tags.Where(t => t.StartsWith('#')))}");
 
-    var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script")).FullName;
     var outPath = Path.Combine(outDir, $"{script.Format}-{DateTime.Now:yyyyMMdd-HHmmss}.json");
     await File.WriteAllTextAsync(outPath, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
     Console.WriteLine($"Saved -> {outPath}");
@@ -791,7 +898,7 @@ async Task<int> RunAssembleAsync()
     // synchronously during --prep - stock footage and manual art are both already on
     // disk by the time --assemble runs, so there is nothing async to poll or collect.
     // Only a profile still on Vidu needs this step.
-    if (!profile.AllowsContextScenes)
+    if (!profile.UsesRemotionStills)
     {
         IVideoProvider vidu = new ViduClient(cfg);
         var pending = 0;
@@ -864,7 +971,9 @@ async Task<int> RunAssembleAsync()
     var running = 0.0;
     foreach (var scene in script.Scenes)
     {
-        var next = running + scene.DurationSeconds + 0.5;
+        // Budget in rendered seconds (narration + breathing room + post-narration
+        // hold), so the trimmed teaser stays within VerticalMaxSeconds as rendered.
+        var next = running + scene.DurationSeconds + 0.5 + VideoAssembler.PostNarrationHoldSeconds;
         if (shortScenes.Count > 0 && next > cfg.VerticalMaxSeconds) break;
         shortScenes.Add(scene);
         running = next;
@@ -894,6 +1003,14 @@ async Task<int> RunAssembleAsync()
         var shortOutroAudio = await ResolveOutroAudioAsync(shortOutroSpoken);
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
             outroLines: shortOutroLines, outroAudioPath: shortOutroAudio, isCalm: formatDef.IsCalm);
+    }
+    else if (profile.UsesRemotionStills)
+    {
+        // Stills pipeline, but the short is the whole video (not a teaser for the
+        // landscape master), so it keeps the base outro, not the "watch the full
+        // video" line the context-scene profiles add above.
+        await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
     }
     else
     {
@@ -934,7 +1051,7 @@ async Task<int> RunAssembleAsync()
     // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
     // than generating a second orientation, which would double the per-video spend.
     var landscape = Path.Combine(outputDir, $"{slug}-{language}.mp4");
-    if (profile.AllowsContextScenes)
+    if (profile.UsesRemotionStills)
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood,
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
     else
@@ -1143,6 +1260,45 @@ async Task SaveScriptAsync(string workDir, VideoScript script)
     var temp = path + ".tmp";
     await File.WriteAllTextAsync(temp, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
     File.Move(temp, path, overwrite: true);
+}
+
+// Per-act checkpoint for long-form scripts: after each act completes, the
+// script-so-far is saved to script-partial.json with the act count in
+// script-progress.json, so a failure in a later act (Gemini 402 at Act 3 on
+// 2026-11-12) no longer loses the acts already generated. The partial is
+// explicitly NOT script.json: --resume/--assemble must never treat an
+// unfinished script as a complete video. Once GenerateAsync returns, the full
+// script.json is saved by the caller and these files are deleted.
+// Best-effort by design: a failed checkpoint must never fail generation.
+async Task SavePartialScriptAsync(string dir, VideoScript script, int completedAct)
+{
+    try
+    {
+        var path = Path.Combine(dir, "script-partial.json");
+        var temp = path + ".tmp";
+        await File.WriteAllTextAsync(temp, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
+        File.Move(temp, path, overwrite: true);
+        await File.WriteAllTextAsync(Path.Combine(dir, "script-progress.json"),
+            System.Text.Json.JsonSerializer.Serialize(new { completedActs = completedAct, totalActs = 4 }, jsonOptions));
+        Console.WriteLine($"  Checkpoint: act {completedAct}/4 saved ({script.Scenes.Count} scenes) -> {path}");
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  Warning: could not save act {completedAct} checkpoint: {ex.Message}");
+    }
+}
+
+void DeletePartialScriptFiles(string dir)
+{
+    foreach (var name in new[] { "script-partial.json", "script-progress.json" })
+    {
+        try
+        {
+            var path = Path.Combine(dir, name);
+            if (File.Exists(path)) File.Delete(path);
+        }
+        catch { }
+    }
 }
 
 async Task<VideoScript> LoadScriptAsync(string workDir)

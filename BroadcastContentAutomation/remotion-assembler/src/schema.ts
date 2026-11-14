@@ -14,6 +14,12 @@ export const sceneAssetSchema = z.object({
   // Context/b-roll scenes read better with a slower pan than the wider push used for a
   // character moment showing off a fresh portrait.
   motionIntensity: z.enum(["subtle", "normal"]).default("normal"),
+  // A video clip's real length in seconds, when kind is "video". A Pexels clip can be
+  // shorter than its scene (scene = narration + 0.5s), and asking the <Video> element
+  // for a frame at/past the clip's end never becomes ready - that hung the 2026-11-11
+  // test render on a delayRender timeout. Assembly.tsx trims the video a couple of
+  // frames short of this length instead. Absent for images and for old props files.
+  videoDurationInSeconds: z.number().positive().optional(),
 });
 
 export const assemblyPropsSchema = z.object({

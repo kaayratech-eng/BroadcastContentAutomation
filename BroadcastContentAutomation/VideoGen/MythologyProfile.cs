@@ -162,6 +162,7 @@ static class MythologyProfile
         // StockFootageClient and tasks/todo.md's Deliverable 6. GiggleGarden leaves this
         // false and stays fully illustrated.
         AllowsContextScenes = true,
+        UsesRemotionStills = true,
 
         TrendQueries =
         [
@@ -186,15 +187,17 @@ static class MythologyProfile
     // formats share IsCalm = false but each still wants its own distinct default mood.
     private static IReadOnlyList<ContentFormatDef> BuildFormats() =>
     [
-        BuildFormat("retellingArc", weight: 35, isCalm: true, rate: "-8%", pitch: "-4%",
+        // Pacing (2026-11-12, standing rule): narration runs at about -10% - the
+        // videos felt too fast. Formats already slower than that (none here) stay.
+        BuildFormat("retellingArc", weight: 35, isCalm: true, rate: "-10%", pitch: "-4%",
             narrationStyleLabel: "grave, cinematic", defaultMusicMood: "somber orchestral"),
-        BuildFormat("whatIf", weight: 15, isCalm: false, rate: "0%", pitch: "0%",
+        BuildFormat("whatIf", weight: 15, isCalm: false, rate: "-10%", pitch: "0%",
             narrationStyleLabel: "urgent, speculative", defaultMusicMood: "tense atmospheric"),
-        BuildFormat("topFive", weight: 20, isCalm: false, rate: "+4%", pitch: "+2%",
+        BuildFormat("topFive", weight: 20, isCalm: false, rate: "-10%", pitch: "+2%",
             narrationStyleLabel: "brisk, punchy", defaultMusicMood: "driving epic"),
-        BuildFormat("explainer", weight: 20, isCalm: false, rate: "0%", pitch: "0%",
+        BuildFormat("explainer", weight: 20, isCalm: false, rate: "-10%", pitch: "0%",
             narrationStyleLabel: "clear, documentary", defaultMusicMood: "curious ambient"),
-        BuildFormat("mythBust", weight: 10, isCalm: false, rate: "+2%", pitch: "0%",
+        BuildFormat("mythBust", weight: 10, isCalm: false, rate: "-10%", pitch: "0%",
             narrationStyleLabel: "wry, contrarian", defaultMusicMood: "mysterious tense"),
     ];
 

@@ -9,8 +9,13 @@ API_Keys.txt
 /F Insta Curl Commands.txt
 Claude-API/
 Youtube/
+youtube/
 client_secret*.json
 *token*.json
+# Plaintext token stores / scratch scripts inside secrets-store (the
+# encrypted .gpg bundle is the only thing from there that is committed).
+secrets-store/*.json
+secrets-store/check_*.py
 !**/Uploader.runtimeconfig.json
 !**/*.deps.json
 
@@ -23,7 +28,11 @@ UploaderApp/
 
 # --- Generated media & work dirs ---
 Videos/
+videos/
 VideoGen/work/
+work/
+tmp/
+remotion-assembler/out/
 generated-image.png
 
 # --- graphify ---

@@ -35,12 +35,15 @@ const KenBurnsImage: React.FC<{ asset: SceneAsset; durationInFrames: number }> =
   durationInFrames,
 }) => {
   const frame = useCurrentFrame();
-  const zoomRange: [number, number] = asset.motionIntensity === "subtle" ? [1, 1.06] : [1, 1.12];
+  // Pacing (2026-11-12, standing rule): slower zoom than before - the videos felt
+  // too fast. The zoom still spans the whole scene, so the smaller range is the
+  // slowdown (and scenes are longer now, which stretches it further).
+  const zoomRange: [number, number] = asset.motionIntensity === "subtle" ? [1, 1.03] : [1, 1.06];
   const scale = interpolate(frame, [0, durationInFrames], zoomRange, {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const translateRange = asset.motionIntensity === "subtle" ? 0 : 15;
+  const translateRange = asset.motionIntensity === "subtle" ? 0 : 8;
   const translateX = interpolate(frame, [0, durationInFrames], [0, -translateRange], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
@@ -67,6 +70,15 @@ const KenBurnsImage: React.FC<{ asset: SceneAsset; durationInFrames: number }> =
           height: "100%",
           objectFit: "contain",
           transform: `scale(${scale}) translateX(${translateX}px)`,
+          // Zoom anchors to the centre: the sharp layer is contain-fit
+          // (see above), so the whole figure is visible with headroom
+          // and a centre zoom trims top and bottom symmetrically by ~3%
+          // instead of pushing the bottom out. (The old top anchor made
+          // sense for the pre-cropped cover path, where a head tight to
+          // the top of the frame got pushed out by a centre zoom — that
+          // path is gone since 2026-11-13, when the landscape asset
+          // became the square itself.)
+          transformOrigin: "50% 50%",
         }}
       />
     </BlurPadBackground>
@@ -78,16 +90,48 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
   durationInFrames,
 }) => {
   const frame = useCurrentFrame();
-  const scale = interpolate(frame, [0, durationInFrames], [1, 1.04], {
+  const { fps } = useVideoConfig();
+  // Pacing (2026-11-12): gentler zoom for stock clips too (was 1.04).
+  const scale = interpolate(frame, [0, durationInFrames], [1, 1.02], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
 
+  // A stock clip can be shorter than its scene (scene = narration + 0.5s), and a
+  // <Video> asked for a frame at/past the clip's exact end never becomes ready -
+  // the 2026-11-11 test render died this way at scene 2 (16.56s scene, 16.23s
+  // clip: the element was asked for time 16.2333s and hung past Remotion's 28s
+  // delayRender window). trimAfter (Remotion 4's name for endAt) wraps the video
+  // in an inner Sequence that ends at that frame, so the element is never asked
+  // for a time past it; the narration and caption keep playing over the last
+  // frame for the remaining tail. Only applied when the clip would otherwise
+  // run out mid-scene - a clip longer than its scene renders untouched, exactly
+  // as before. Two frames of margin keep float rounding from landing on the end.
+  const clipFrames =
+    asset.videoDurationInSeconds !== undefined
+      ? Math.floor(asset.videoDurationInSeconds * fps)
+      : undefined;
+  const trimAfter =
+    clipFrames !== undefined && clipFrames - 2 < durationInFrames
+      ? Math.max(1, clipFrames - 2)
+      : undefined;
+
+  // The sharp layer is a cover crop, not contain: since 2026-11-11 each
+  // context scene downloads ONE clip (landscape-first), and the same clip
+  // must fill both renders. Cover keeps the clip's full height in the
+  // portrait render (cutting only the sides) and uses it as-is in
+  // landscape. objectPosition anchors the crop window to the top, so if
+  // the single source ever is a portrait clip, the landscape render crops
+  // its bottom, never its top — heads stay in frame. The zoom is anchored
+  // to the top for the same reason. The blurred cover layer behind is
+  // fully hidden by the sharp cover layer; it stays as a safety net for
+  // any frame the sharp layer does not cover.
   return (
     <BlurPadBackground>
       <Video
         src={staticFile(asset.path)}
         muted
+        trimAfter={trimAfter}
         style={{
           width: "100%",
           height: "100%",
@@ -99,13 +143,16 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
       <Video
         src={staticFile(asset.path)}
         muted
+        trimAfter={trimAfter}
         style={{
           position: "absolute",
           inset: 0,
           width: "100%",
           height: "100%",
-          objectFit: "contain",
+          objectFit: "cover",
+          objectPosition: "50% 0",
           transform: `scale(${scale})`,
+          transformOrigin: "50% 0",
         }}
       />
     </BlurPadBackground>

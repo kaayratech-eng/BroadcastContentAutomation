@@ -9,6 +9,13 @@ using GiggleGarden.Shared;
 
 static partial class VideoAssembler
 {
+    // Pacing (2026-11-12, standing rule): every scene's image lingers this long
+    // after its narration ends instead of cutting immediately - the shorts felt
+    // too fast at ~5.5s/scene. Added on top of the 0.5s breathing room in every
+    // per-scene duration: both assemble paths, the SRT cues, and Program.cs's
+    // vertical-trim budget (so the rendered teaser still fits VerticalMaxSeconds).
+    public const double PostNarrationHoldSeconds = 1.5;
+
     // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
     // still with a camera move over it. Same crossfade/subtitle/music treatment as the
     // image path, so the two produce interchangeable output.
@@ -36,7 +43,7 @@ static partial class VideoAssembler
             if (preferredClip is not { } clipPath || !File.Exists(clipPath))
                 throw new InvalidOperationException($"Scene {i + 1} has no downloaded clip.");
 
-            var duration = s.DurationSeconds + 0.5;              // breathing room
+            var duration = s.DurationSeconds + 0.5 + PostNarrationHoldSeconds;   // breathing room + post-narration hold
             var fontSize = h > w ? 52 : 46;
             var subtitle = BuildSubtitleFilter(cfg, s.Narration, language, workDir, i, tag, w, h, fontSize);
 
@@ -68,7 +75,7 @@ static partial class VideoAssembler
         await MixBackgroundMusicAsync(profile, cfg, concatPath, music, total, outputPath);
     }
 
-    // The no-Vidu path for a profile with AllowsContextScenes = true (Deliverable 6,
+    // The no-Vidu path for a profile with UsesRemotionStills = true (Deliverable 6,
     // tasks/todo.md): every scene already carries its own resolved visual - Scene.ImagePath
     // for a manually-drawn character moment or a Pexels photo, Scene.ClipPath for a Pexels
     // video - so there is no Ken Burns/crossfade/subtitle-burn-in work for ffmpeg to do
@@ -97,7 +104,8 @@ static partial class VideoAssembler
         string ToPublicDirRelative(string absolutePath) =>
             Path.GetRelativePath(workDir, Path.GetFullPath(absolutePath)).Replace('\\', '/');
 
-        var assets = scenes.Select(s =>
+        var assets = new List<RemotionSceneAsset>();
+        foreach (var s in scenes)
         {
             // Dual-orientation: a landscape render (w > h, the YouTube master)
             // prefers the landscape asset when one was resolved, otherwise it
@@ -111,16 +119,27 @@ static partial class VideoAssembler
                 ?? throw new InvalidOperationException(
                     "A scene has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
 
-            return new RemotionSceneAsset(
+            // A Pexels clip is whatever length Pexels had, and a scene lasts its
+            // narration plus 0.5s - so a clip can be shorter than its scene. The
+            // <Video> element then gets asked for a frame at/past the clip's end
+            // and never becomes ready, which hung the 2026-11-11 test render on
+            // Remotion's delayRender timeout (scene 2: 16.56s scene, 16.23s
+            // clip). Pass the clip's real length through so Assembly.tsx can
+            // trim the video a couple of frames short of its end instead.
+            double? videoDuration = null;
+            if (isVideo) videoDuration = await GetVideoDurationAsync(cfg, clipPath!);
+
+            assets.Add(new RemotionSceneAsset(
                 Kind: isVideo ? "video" : "image",
                 Path: ToPublicDirRelative(path),
-                DurationInSeconds: s.DurationSeconds + 0.5,        // same breathing room as AssembleFromClipsAsync
+                DurationInSeconds: s.DurationSeconds + 0.5 + PostNarrationHoldSeconds,   // breathing room + post-narration hold (2026-11-12 pacing)
                 NarrationAudioPath: s.AudioPath is { } a ? ToPublicDirRelative(a) : null,
                 CaptionText: s.Narration,
                 // Context/b-roll scenes read better with a slower pan than the wider push
                 // used for a character moment - see remotion-assembler/src/Assembly.tsx.
-                MotionIntensity: s.SceneKind == "context" ? "subtle" : "normal");
-        }).ToList();
+                MotionIntensity: s.SceneKind == "context" ? "subtle" : "normal",
+                VideoDurationInSeconds: videoDuration));
+        }
 
         // The one asset that does NOT already live under workDir - copied in rather than
         // pointed at directly, so it lands under the same --public-dir root as everything
@@ -193,7 +212,8 @@ static partial class VideoAssembler
 
     private sealed record RemotionSceneAsset(
         string Kind, string Path, double DurationInSeconds,
-        string? NarrationAudioPath, string? CaptionText, string MotionIntensity);
+        string? NarrationAudioPath, string? CaptionText, string MotionIntensity,
+        double? VideoDurationInSeconds);
 
     private sealed record RemotionAssemblyProps(
         List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx, int Fps,
@@ -516,7 +536,7 @@ static partial class VideoAssembler
     // Real caption file (SRT) alongside the burned-in subtitles: gives platforms and
     // accessibility tools indexable/toggleable caption text, which drawtext (burned into
     // the pixels) cannot provide. Uses the same per-scene duration math as the clips
-    // above (DurationSeconds + 0.5s breathing room) so cue timing matches the video.
+    // above (DurationSeconds + 0.5s breathing room + post-narration hold) so cue timing matches the video.
     public static async Task WriteSrtAsync(IReadOnlyList<Scene> scenes, string outputPath)
     {
         var sb = new StringBuilder();
@@ -524,7 +544,7 @@ static partial class VideoAssembler
 
         for (var i = 0; i < scenes.Count; i++)
         {
-            var duration = TimeSpan.FromSeconds(scenes[i].DurationSeconds + 0.5);
+            var duration = TimeSpan.FromSeconds(scenes[i].DurationSeconds + 0.5 + PostNarrationHoldSeconds);
             var end = cursor + duration;
 
             sb.AppendLine((i + 1).ToString(CultureInfo.InvariantCulture));
@@ -644,6 +664,60 @@ static partial class VideoAssembler
         await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
     }
 
+    // Landscape mirror of FitToPortraitAsync: fits a square (or otherwise
+    // mismatched) image into the 1920x1080 frame on a blurred copy of
+    // itself. Not used by the scene-art flow since the identical-image rule
+    // of 2026-11-11 (both orientations are cover-crops of one square
+    // source); kept as a general utility alongside FitToPortraitAsync,
+    // which CharacterSource still uses for the portrait fit.
+    public static async Task FitToLandscapeAsync(GenConfig cfg, string sourcePath, string outputPath)
+    {
+        const string filter =
+            "split[bg][fg];" +
+            "[bg]scale=1920:1080:force_original_aspect_ratio=increase,crop=1920:1080,gblur=sigma=28[bgb];" +
+            "[fg]scale=1920:1080:force_original_aspect_ratio=decrease[fgs];" +
+            "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
+
+        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+    }
+
+    // Scales an image to cover the target frame exactly, cropping the
+    // overflow — no blur, no distortion. Used for provider outputs
+    // that arrive in the right orientation but the wrong exact size
+    // (e.g. Pollinations returns 768x1280 for a 1080x1920 request: a ~6%
+    // side crop, then upscale). A no-op re-encode is avoided by callers,
+    // which check dimensions first when the provider usually returns exact.
+    //
+    // verticalBias positions the crop window vertically when the scaled
+    // source is taller than the target: 0.5 is dead-centre (the old
+    // behaviour), 0 is flush with the top, 1 flush with the bottom.
+    // The landscape derivation passes 0.1: a full-body figure's head sits
+    // at ~15-25% of a square source, and a centred 16:9 window keeps only
+    // rows 22%-78%, cutting the head off — the 2026-11-11 test video
+    // showed Athena headless in the landscape render. A top-biased window
+    // keeps rows ~4%-61%: head in frame, feet cut instead (the accepted
+    // trade; heads matter more). Horizontal centring is unchanged, and a
+    // target that already matches the scaled height is unaffected
+    // (the vertical term is zero there).
+    public static async Task CropScaleToExactAsync(GenConfig cfg, string sourcePath, string outputPath, int width, int height, double verticalBias = 0.5)
+    {
+        var filter =
+            $"scale={width}:{height}:force_original_aspect_ratio=increase," +
+            $"crop={width}:{height}:(in_w-{width})/2:(in_h-{height})*{Text.Invariant(verticalBias)}";
+        // Render to a temp file and move into place, so a failed ffmpeg run
+        // never leaves a partial file at outputPath that a resume would
+        // mistake for a finished image. The temp file MUST carry a real image
+        // extension: ffmpeg picks the output muxer from the filename, and an
+        // extensionless ".tmp" makes it exit 234 ("Unable to choose an output
+        // format") - which is exactly what silently sent every Pollinations
+        // image to the Cloudflare fallback in the 2026-11-11 test run.
+        var temp = Path.Combine(
+            Path.GetDirectoryName(outputPath) ?? ".",
+            Path.GetFileNameWithoutExtension(outputPath) + ".tmp" + Path.GetExtension(outputPath));
+        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -vf \"{filter}\" -frames:v 1 \"{temp}\"");
+        File.Move(temp, outputPath, overwrite: true);
+    }
+
     // Audio polish (2026-10-25, priority 6, all free FFmpeg filters):
     // TrimSilence removes leading/trailing silence below -50dB from a TTS
     // file in place (best-effort: if FFmpeg fails, the original is kept).
@@ -664,18 +738,65 @@ static partial class VideoAssembler
     // Short platforms are louder than -14 in practice, but a -14 master is
     // not turned down by YouTube and is not far from Reels/TikTok targets;
     // a quiet -34 mix would be turned up noisily by the platform instead.
+    //
+    // This is also the delivery-format gate (2026-11-13): the finished file
+    // must be limited-range yuv420p video + 48 kHz AAC stereo, or Meta's
+    // transcoder refuses it ("Video Transcoding Error: both HD and SD
+    // progressive failed to transcode" - the Medusa teaser failed Instagram
+    // 5/5 on exactly this). Two separate causes, both fixed here:
+    // - loudnorm resamples its output to 96 kHz when no -ar is given
+    //   (verified: 48 kHz in, 96 kHz out), so the encode always pins -ar 48000.
+    // - Remotion renders full-range yuvj420p. A bare `-pix_fmt yuv420p` does
+    //   NOT convert it (verified 2026-11-13: the pix_fmt survived); the range
+    //   conversion needs the explicit scale filter below. A file that is
+    //   already limited-range yuv420p keeps a video stream copy, so the
+    //   ffmpeg-clip pipeline (which already encodes that way) pays nothing.
     public static async Task NormalizeLoudnessAsync(GenConfig cfg, string videoPath)
     {
         var temp = videoPath + ".loud.mp4";
-        await RunFfmpegAsync(cfg, $"-y -i \"{videoPath}\" -af \"loudnorm=I=-14:TP=-1.5:LRA=11:linear=true\" -c:v copy -c:a aac -b:a 128k \"{temp}\"");
+        var (pixFmt, colorRange) = await GetVideoFormatAsync(cfg, videoPath);
+        var videoArgs = pixFmt == "yuv420p" && colorRange == "tv"
+            ? "-c:v copy"
+            : "-vf \"scale=in_range=pc:out_range=tv,format=yuv420p\" -c:v libx264 -preset medium -crf 20";
+        await RunFfmpegAsync(cfg, $"-y -i \"{videoPath}\" -af \"loudnorm=I=-14:TP=-1.5:LRA=11:linear=true\" {videoArgs} -c:a aac -b:a 128k -ar 48000 \"{temp}\"");
         File.Move(temp, videoPath, overwrite: true);
     }
 
-    public static async Task<double> GetAudioDurationAsync(GenConfig cfg, string audioPath)
+    // Pixel format + color range of the first video stream, for the delivery
+    // gate in NormalizeLoudnessAsync. Returns ("", "") when ffprobe can't tell.
+    private static async Task<(string PixFmt, string ColorRange)> GetVideoFormatAsync(GenConfig cfg, string videoPath)
     {
         var ffprobe = string.IsNullOrEmpty(cfg.FfprobePath) ? "ffprobe" : cfg.FfprobePath;
         var psi = new ProcessStartInfo(ffprobe,
-            $"-v error -show_entries format=duration -of csv=p=0 \"{audioPath}\"")
+            $"-v error -select_streams v:0 -show_entries stream=pix_fmt,color_range -of csv=p=0 \"{videoPath}\"")
+        { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
+
+        using var p = StartOrThrow(psi, ffprobe);
+        var stdout = await p.StandardOutput.ReadToEndAsync();
+        await p.StandardError.ReadToEndAsync();
+        await p.WaitForExitAsync();
+
+        if (p.ExitCode != 0) return ("", "");
+        var parts = stdout.Trim().Split(',');
+        return parts.Length >= 2 ? (parts[0].Trim(), parts[1].Trim()) : ("", "");
+    }
+
+    public static Task<double> GetAudioDurationAsync(GenConfig cfg, string audioPath) =>
+        GetMediaDurationAsync(cfg, audioPath);
+
+    // Same ffprobe format-duration probe as the audio path above, for a video
+    // clip. The assemble step needs a stock clip's real length so Remotion
+    // never asks the <Video> element for a frame at/past the clip's end (see
+    // AssembleWithRemotionAsync) - a Pexels clip shorter than its scene's
+    // narration hung the 2026-11-11 test render on a delayRender timeout.
+    public static Task<double> GetVideoDurationAsync(GenConfig cfg, string videoPath) =>
+        GetMediaDurationAsync(cfg, videoPath);
+
+    private static async Task<double> GetMediaDurationAsync(GenConfig cfg, string mediaPath)
+    {
+        var ffprobe = string.IsNullOrEmpty(cfg.FfprobePath) ? "ffprobe" : cfg.FfprobePath;
+        var psi = new ProcessStartInfo(ffprobe,
+            $"-v error -show_entries format=duration -of csv=p=0 \"{mediaPath}\"")
         { RedirectStandardOutput = true, RedirectStandardError = true, UseShellExecute = false };
 
         using var p = StartOrThrow(psi, ffprobe);
@@ -686,10 +807,10 @@ static partial class VideoAssembler
         // Without this check, a missing or failing ffprobe surfaces as an opaque
         // FormatException from double.Parse("") rather than the real cause.
         if (p.ExitCode != 0)
-            throw new Exception($"ffprobe failed (exit {p.ExitCode}) on {Path.GetFileName(audioPath)}:\n{Text.Tail(stderr, 500)}");
+            throw new Exception($"ffprobe failed (exit {p.ExitCode}) on {Path.GetFileName(mediaPath)}:\n{Text.Tail(stderr, 500)}");
 
         if (!double.TryParse(stdout.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var seconds) || seconds <= 0)
-            throw new Exception($"ffprobe returned no usable duration for {Path.GetFileName(audioPath)} (got \"{stdout.Trim()}\").");
+            throw new Exception($"ffprobe returned no usable duration for {Path.GetFileName(mediaPath)} (got \"{stdout.Trim()}\").");
 
         return seconds;
     }

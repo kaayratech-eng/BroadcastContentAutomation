@@ -240,7 +240,8 @@ static class ScriptGenerator
         ContentProfile profile, string? topic, string language, IScriptProvider provider,
         string? trendContext = null, CharacterBrief? character = null,
         IReadOnlyList<string>? avoidNames = null, string? formatOverride = null,
-        bool longForm = false, IReadOnlyList<string>? avoidTopics = null)
+        bool longForm = false, IReadOnlyList<string>? avoidTopics = null,
+        Func<VideoScript, int, Task>? onActComplete = null)
     {
         if (!profile.UsesCharacterMascot)
             throw new NotSupportedException(
@@ -504,10 +505,18 @@ Respond ONLY with JSON, no markdown fences:
 """;
 
         var script = await CompleteAndParseAsync<VideoScript>(provider, prompt, "script",
-            validate: s => ValidateContextScenes(s.Scenes, profile));
+            validate: s => ValidateScenes(s.Scenes, profile));
 
         if (script.Scenes.Count == 0) throw new Exception("Claude returned a script with no scenes.");
         if (string.IsNullOrWhiteSpace(script.Title)) throw new Exception("Claude returned a script with no title.");
+
+        // Checkpoint: a long-form script is built act by act, and a failure in a
+        // later act (e.g. Gemini 402 at Act 3 on 2026-11-12) used to lose the acts
+        // already paid for, because nothing was saved until all four acts finished.
+        // Save after each act so the completed acts survive on disk. Short-form
+        // scripts have no acts, so the callback never fires for them.
+        if (longForm && onActComplete is not null)
+            await onActComplete(script, 1);
 
         // Acts 2-4: smaller follow-up requests that continue the same story (see
         // sceneCountLine above for why Act 1 alone only asked for ~18-22 scenes). Runs
@@ -522,6 +531,8 @@ Respond ONLY with JSON, no markdown fences:
                     profile, formatDef, effectiveContentRules, sceneKindGuidance, colourGuidance,
                     langName, provider, script, act, actRoles[act - 2], moodStyles);
                 script.Scenes.AddRange(scenes);
+                if (onActComplete is not null)
+                    await onActComplete(script, act);
             }
         }
 
@@ -630,7 +641,11 @@ Respond ONLY with JSON, no markdown fences:
     {
         var nextVisualGroup = scriptSoFar.Scenes.Max(s => s.VisualGroup) + 1;
 
-        var recap = string.Join(" ", scriptSoFar.Scenes.TakeLast(4).Select(s => s.Narration));
+        // Feed the FULL script so far - every prior scene's narration, numbered, in
+        // order - so the model has the whole story for continuity, not just the tail
+        // of the previous act. Narration is the story; image/motion prompts are left
+        // out to keep the prompt lean.
+        var recap = string.Join("\n", scriptSoFar.Scenes.Select((s, i) => $"{i + 1}. {s.Narration}"));
 
         var moodGuidance = moodStyles.Count > 0
             ? $"""
@@ -659,7 +674,8 @@ Every imagePrompt and every motionPrompt{{(profile.AllowsContextScenes ? " on a 
 visual features - the picture generator has no memory between scenes, so "the character" on
 its own is not enough. Do not change the species, colours, or accessories.
 
-What happened so far, so you can continue naturally from here (do not repeat any of this):
+The full story so far (every scene, in order) - continue naturally from the last
+scene; do not repeat any beat already covered:
 {{recap}}
 {{sceneKindGuidance}}{{moodGuidance}}
 
@@ -702,7 +718,7 @@ Respond ONLY with JSON, no markdown fences:
 """;
 
         var result = await CompleteAndParseAsync<ScenesOnly>(provider, prompt, $"act {actNumber}",
-            validate: r => ValidateContextScenes(r.Scenes, profile));
+            validate: r => ValidateScenes(r.Scenes, profile));
 
         if (result.Scenes.Count == 0)
             throw new Exception($"The script provider returned an act {actNumber} with no scenes.");
@@ -750,14 +766,9 @@ Respond ONLY with JSON, no markdown fences:
                 scene.SceneKind.Equals("context", StringComparison.OrdinalIgnoreCase)
                 ? "context" : "character";
 
-        if (profile.AllowsContextScenes)
-        {
-            var badContextScene = script.Scenes.FirstOrDefault(
-                s => s.SceneKind == "context" && string.IsNullOrWhiteSpace(s.StockQuery));
-            if (badContextScene is not null)
-                throw new Exception(
-                    $"Scene \"{badContextScene.Narration}\" is sceneKind \"context\" but has no stockQuery.");
-        }
+        // Same fail-fast check as a generated script (see ValidateScenes) - a
+        // hand-written scene with no narration fails at TTS time otherwise.
+        ValidateScenes(script.Scenes, profile);
 
         NormalizeSceneMoods(script.Scenes, profile.NarrationMoodStyles.GetValueOrDefault(language, []));
 
@@ -810,18 +821,41 @@ Respond ONLY with JSON, no markdown fences:
         throw new Exception("unreachable");
     }
 
-    // A "context" scene with no stockQuery has nothing for StockFootageClient to search
-    // for (see Scene.StockQuery) - thrown as InvalidDataException, not Exception, so
-    // CompleteAndParseAsync's catch can tell this apart from an unrelated downstream error
-    // and retry it the same way it retries malformed JSON.
-    static void ValidateContextScenes(IEnumerable<Scene> scenes, ContentProfile profile)
+    // Fail fast at script time, not mid-TTS: a model slip that leaves a scene's
+    // narration empty only surfaced in the 2026-11-11 test run when TTS threw
+    // "Cannot synthesize empty narration" on scene 3 of 9, after minutes of
+    // script and art work. Thrown as InvalidDataException, not Exception, so
+    // CompleteAndParseAsync's catch can tell this apart from an unrelated
+    // downstream error and retry it the same way it retries malformed JSON - a
+    // persistent slip still fails here, with the scene number, instead of
+    // deep in --prep. Character scenes need an imagePrompt (art generation has
+    // nothing to draw from without it); MotionPrompt is deliberately not
+    // required here because GenerateAsync fills it in from the image prompt
+    // when the model omits it. Context scenes need a stockQuery instead, and
+    // leave imagePrompt/motionPrompt empty by design.
+    static void ValidateScenes(IReadOnlyList<Scene> scenes, ContentProfile profile)
     {
-        if (!profile.AllowsContextScenes) return;
-        var bad = scenes.FirstOrDefault(
-            s => s.SceneKind.Equals("context", StringComparison.OrdinalIgnoreCase) && string.IsNullOrWhiteSpace(s.StockQuery));
-        if (bad is not null)
-            throw new InvalidDataException(
-                "a scene was tagged sceneKind: \"context\" but returned no stockQuery");
+        for (var i = 0; i < scenes.Count; i++)
+        {
+            var scene = scenes[i];
+            var label = $"scene {i + 1}";
+            if (string.IsNullOrWhiteSpace(scene.Narration))
+                throw new InvalidDataException(
+                    $"{label} has no narration - every scene needs something for TTS to read.");
+            var isContext = profile.AllowsContextScenes &&
+                scene.SceneKind.Equals("context", StringComparison.OrdinalIgnoreCase);
+            if (isContext)
+            {
+                if (string.IsNullOrWhiteSpace(scene.StockQuery))
+                    throw new InvalidDataException(
+                        $"{label} was tagged sceneKind: \"context\" but returned no stockQuery");
+            }
+            else if (string.IsNullOrWhiteSpace(scene.ImagePrompt))
+            {
+                throw new InvalidDataException(
+                    $"{label} has no imagePrompt - a character scene needs one for its art.");
+            }
+        }
     }
 
     // A mood tag outside the profile's own menu (a hallucination, a typo, capitalization

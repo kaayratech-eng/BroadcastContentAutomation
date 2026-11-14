@@ -3,6 +3,9 @@
 // free Standard/WaveNet Punjabi voice, so pa must always reach Azure regardless of
 // GenConfig.TtsProvider. See tasks/todo.md Part 2 for the sourced free-tier numbers
 // behind this choice.
+// "google-helper" is auto's routing with the Google leg via the vault-backed
+// helper (custom.googlecloudtts) instead of a config key - the Muse-system
+// default (see appsettings.Local.json).
 static class TtsProviderFactory
 {
     public static ITtsProvider Create(GenConfig cfg, ContentProfile profile, string language)
@@ -18,6 +21,13 @@ static class TtsProviderFactory
                     "TtsProvider is forced to \"google\" but there is no free Google Cloud TTS voice for Punjabi " +
                     "(pa) - set TtsProvider to \"auto\" or \"azure\" instead of silently falling back.");
             return new GoogleTtsProvider(cfg);
+        }
+
+        if (mode == "google-helper")
+        {
+            if (language == "pa")
+                return new AzureTtsProvider(cfg, profile.VoiceOverride);
+            return new GoogleHelperTtsProvider(cfg);
         }
 
         // auto: free provider where one exists, Azure where it doesn't.

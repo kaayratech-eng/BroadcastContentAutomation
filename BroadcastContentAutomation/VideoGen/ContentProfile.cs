@@ -137,6 +137,15 @@ record ContentProfile
     // visual style is fully illustrated throughout, no stock footage mixed in.
     public bool AllowsContextScenes { get; init; } = false;
 
+    // When true, the profile renders through the no-Vidu stills pipeline: scenes are
+    // resolved to still images during --prep (RunVisualLoopAsync) and composed with
+    // Ken Burns motion in Remotion during --assemble (AssembleWithRemotionAsync).
+    // Distinct from AllowsContextScenes, which additionally lets the script tag
+    // scenes as "context" moments fetched from Pexels stock. GiggleGarden sets
+    // this true with AllowsContextScenes false: 100% illustrated stills, no
+    // stock footage, no Vidu clips (Test 2, 2026-11-13).
+    public bool UsesRemotionStills { get; init; } = false;
+
     // The three below only matter when CharacterPoolPath is a folder - they drive
     // CharacterSource.Resolve's build-up/mix/reuse policy so the cast grows on its own
     // instead of staying a stranger every video.

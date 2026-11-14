@@ -26,9 +26,18 @@ record GenConfig
     // ScriptProviderFactory.
     public string ScriptProvider { get; init; } = "hybrid";
     public string GroqApiKey { get; init; } = "";
-    public string GroqModel { get; init; } = "llama-3.3-70b-versatile";
+    public string GroqModel { get; init; } = "openai/gpt-oss-120b"; // was llama-3.3-70b-versatile, decommissioned - verified 2026-11-11: the live models list returns model_not_found for it, and the key's catalog lists gpt-oss-120b/20b and qwen3.8-27b as the chat models; gpt-oss-120b is the strongest and the providers already handle gpt-oss reasoning (low effort, no reasoning in content)
     public string GeminiApiKey { get; init; } = "";
     public string GeminiModel { get; init; } = "gemini-3.6-flash";
+
+    // Vault-backed helper paths (set up 2026-11-11, same pattern as the
+    // scene-art helpers): the keys live in Muse's secure vault, and the
+    // helpers perform the authd surrogate exchange at call time. No key
+    // value ever appears in config, arguments or environment variables.
+    // The "-helper" script providers (see ScriptProviderFactory) shell out
+    // to these instead of calling the API directly with a config key.
+    public string GeminiHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.gemini/bin/gemini_image.py";
+    public string GroqHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.groq/bin/groq_chat.py";
 
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
@@ -38,12 +47,17 @@ record GenConfig
     // per-language routing this key enables. Restricted API key from GCP Console,
     // scoped to "Cloud Text-to-Speech API" (same auth shape as YouTubeApiKey above).
     public string GoogleCloudTtsApiKey { get; init; } = "";
+    // Vault-backed helper path (set up 2026-11-11): the GCP key lives in the
+    // secure vault (custom.googlecloudtts); GoogleHelperTtsProvider shells
+    // out to this helper instead of calling the API with a config key.
+    public string GoogleTtsHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.googlecloudtts/bin/gcp_tts.py";
 
     // auto (default) = route by language via TtsProviderFactory (en/hi -> Google,
     // pa -> Azure, since no free Punjabi voice exists on any provider). azure/google
     // force every language onto one provider - azure is the zero-risk safety switch,
     // google is for testing only and will hard-fail on pa rather than silently
-    // degrading to a paid/unintended voice.
+    // degrading to a paid/unintended voice. "google-helper" is auto's routing with
+    // the Google leg via the vault-backed helper instead of a config key.
     public string TtsProvider { get; init; } = "auto";
 
     // Vidu image-to-video (see ViduClient.cs) - the source of every scene's picture.
@@ -62,6 +76,35 @@ record GenConfig
     public string OpenAiImageModel { get; init; } = "gpt-image-1";
     public string StabilityApiKey { get; init; } = "";
 
+    // Scene art provider (decided 2026-11-04, refined 2026-11-10/11):
+    // "manual" = ManualArtClient prompt-and-wait on gemini.google.com.
+    // "pollinations" (default) = PollinationsKeyedClient, the keyed
+    // Pollinations.ai FLUX endpoint, ONE square (1024x1024) image per
+    // visual beat, from which both orientations are centre cover-cropped
+    // so portrait and landscape are identical (rule changed 2026-11-11
+    // after the user found the old two-separate-generations rule produced
+    // different images per orientation). "cloudflare" = CloudflareArtClient
+    // (FLUX square, same model) with the same one-square-per-beat shape.
+    // Whichever provider is primary, the other is the automatic fallback
+    // on failure, and Cloudflare SDXL square is the last resort. No
+    // blur-pad anywhere in the scene-art flow.
+    // before --prep in every mode, and are picked up without prompting.
+    // The API keys live in Muse's secure vault, not in config: the clients
+    // shell out to the Python helpers below, which perform the authd
+    // surrogate exchange at call time. The Cloudflare account id is a
+    // non-secret identifier, so it lives here like the Page/IG ids in the
+    // Uploader config. Helper paths are Linux/Muse-system paths; override
+    // them in appsettings.Local.json when running elsewhere.
+    public string SceneArtProvider { get; init; } = "pollinations";
+    public string PollinationsModel { get; init; } = "flux";
+    public string PollinationsHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.pollinations/bin/pollinations_image.py";
+    public string CloudflareAccountId { get; init; } = "f15282dd52108829bfcadc311ef96ec8";
+    public string CloudflareHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.cloudflare/bin/cf_workers_ai.py";
+    public string CloudflareImageModel { get; init; } = "@cf/stabilityai/stable-diffusion-xl-base-1.0";
+    public int CloudflareSdxlSteps { get; init; } = 20;
+    public double CloudflareSdxlGuidance { get; init; } = 7.5;
+    public int CloudflareFluxSteps { get; init; } = 4;
+
     // Pexels stock photo/video search (see StockFootageClient) - the auto-fetched
     // "context/b-roll moment" visual source for the stock-footage/Remotion pipeline.
     // Free API, no card required; license permits commercial/monetized use with no
@@ -69,12 +112,18 @@ record GenConfig
     // below for profiles with AllowsContextScenes = true (chronicleandchaos) - the
     // Vidu-only gigglegarden profile never calls StockFootageClient.
     public string PexelsApiKey { get; init; } = "";
+    // Vault-backed helper path (set up 2026-11-11): the Pexels key lives in
+    // the secure vault (custom.pexels). When no real key is in config,
+    // Program.cs uses StockFootageHelperClient, which shells out to this
+    // helper for the authenticated searches and downloads the (public)
+    // media links directly.
+    public string PexelsHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.pexels/bin/pexels_search.py";
 
     // Absolute path to the remotion-assembler sibling project (Deliverable 6,
     // tasks/todo.md) - VideoAssembler.AssembleWithRemotionAsync shells out to
     // `npx remotion render` there, the same way RunFfmpegAsync shells out to ffmpeg.
-    // Only read when the active profile has AllowsContextScenes = true; GiggleGarden's
-    // Vidu/ffmpeg path never reaches it, so an unset value doesn't block that channel.
+    // Only read when the active profile has UsesRemotionStills = true; a Vidu-only
+    // profile never reaches it, so an unset value doesn't block that channel.
     public string RemotionProjectPath { get; init; } = "";
 
     // Ceiling on a single `npx remotion render` call - headless-Chromium frame rendering
@@ -130,46 +179,64 @@ record GenConfig
             _ => "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
         };
 
-    public void Validate(ContentProfile profile)
+    // A config value counts as a real key only when it is set and is not one
+    // of the "PUT-..." placeholders shipped in appsettings.json. Used by
+    // Validate() and by the helper-vs-direct selection in Program.cs: a
+    // missing key is fine when the vault-backed helper exists instead.
+    public static bool HasRealKey(string? value) =>
+        !string.IsNullOrWhiteSpace(value) && !value.StartsWith("PUT-");
+
+    public void Validate(ContentProfile profile, string language)
     {
         var missing = new List<string>();
         // Anthropic is only needed when the script provider is actually Claude;
         // hybrid/groq/gemini runs previously failed validation for a key they
         // never used.
         if (ScriptProvider.Equals("claude", StringComparison.OrdinalIgnoreCase)
-            && (string.IsNullOrWhiteSpace(AnthropicApiKey) || AnthropicApiKey.StartsWith("PUT-"))) missing.Add(nameof(AnthropicApiKey));
-        if (string.IsNullOrWhiteSpace(AzureSpeechKey) || AzureSpeechKey.StartsWith("PUT-")) missing.Add(nameof(AzureSpeechKey));
+            && !HasRealKey(AnthropicApiKey)) missing.Add(nameof(AnthropicApiKey));
 
-        // Only a profile still on the Vidu image-to-video path (gigglegarden) ever
-        // constructs a ViduClient (see Program.cs's `!profile.AllowsContextScenes`
-        // gates) - the no-Vidu hybrid pipeline never touches it.
-        if (!profile.AllowsContextScenes && (string.IsNullOrWhiteSpace(ViduApiKey) || ViduApiKey.StartsWith("PUT-")))
+        // Azure is only reachable when TtsProvider forces it, or when the
+        // run's language is Punjabi (auto routes pa to Azure - see
+        // TtsProviderFactory). An en/hi run never constructs an Azure
+        // provider, so demanding the key there blocked test runs that
+        // needed nothing from Azure.
+        var azureReachable = TtsProvider.Equals("azure", StringComparison.OrdinalIgnoreCase)
+            || language.Equals("pa", StringComparison.OrdinalIgnoreCase);
+        if (azureReachable && !HasRealKey(AzureSpeechKey)) missing.Add(nameof(AzureSpeechKey));
+
+        // Only a profile still on the Vidu image-to-video path ever
+        // constructs a ViduClient (see Program.cs's `!profile.UsesRemotionStills`
+        // gates) - the no-Vidu stills pipeline never touches it.
+        if (!profile.UsesRemotionStills && !HasRealKey(ViduApiKey))
             missing.Add(nameof(ViduApiKey));
 
-        // Only the context-scene pipeline (chronicleandchaos) calls StockFootageClient.
-        if (profile.AllowsContextScenes && (string.IsNullOrWhiteSpace(PexelsApiKey) || PexelsApiKey.StartsWith("PUT-")))
+        // Only the context-scene pipeline (chronicleandchaos) calls stock
+        // footage. A real config key is one route; the vault-backed helper
+        // is the other - only fail when neither exists.
+        if (profile.AllowsContextScenes && !HasRealKey(PexelsApiKey) && !File.Exists(PexelsHelperPath))
             missing.Add(nameof(PexelsApiKey));
 
         // "azure" forces every language onto Azure, so Google's key is genuinely unused
-        // in that mode - only require it when routing can actually reach Google.
-        var googleReachable = !TtsProvider.Equals("azure", StringComparison.OrdinalIgnoreCase);
-        if (googleReachable && (string.IsNullOrWhiteSpace(GoogleCloudTtsApiKey) || GoogleCloudTtsApiKey.StartsWith("PUT-")))
+        // in that mode - only require it when routing can actually reach Google
+        // with a config key ("google-helper" uses the vault instead).
+        var googleReachable = TtsProvider.Equals("auto", StringComparison.OrdinalIgnoreCase)
+            || TtsProvider.Equals("google", StringComparison.OrdinalIgnoreCase);
+        if (googleReachable && !HasRealKey(GoogleCloudTtsApiKey))
             missing.Add(nameof(GoogleCloudTtsApiKey));
 
-        // "claude" (the default) never touches Groq/Gemini, so only require a key
-        // when ScriptProvider can actually route there.
-        var groqReachable = ScriptProvider.Equals("groq", StringComparison.OrdinalIgnoreCase);
-        if (groqReachable && (string.IsNullOrWhiteSpace(GroqApiKey) || GroqApiKey.StartsWith("PUT-")))
+        // Only require a config key when ScriptProvider can actually route
+        // there with a config key - the "-helper" variants use the vault.
+        var groqReachable = ScriptProvider.Equals("groq", StringComparison.OrdinalIgnoreCase)
+            || ScriptProvider.Equals("hybrid", StringComparison.OrdinalIgnoreCase);
+        if (groqReachable && !HasRealKey(GroqApiKey))
             missing.Add(nameof(GroqApiKey));
 
         // "hybrid" needs both keys - it routes different acts of the same script
         // to Groq and Gemini (see HybridScriptProvider/ScriptProviderFactory).
-        var hybrid = ScriptProvider.Equals("hybrid", StringComparison.OrdinalIgnoreCase);
-        var geminiReachable = hybrid || ScriptProvider.Equals("gemini", StringComparison.OrdinalIgnoreCase);
-        if (geminiReachable && (string.IsNullOrWhiteSpace(GeminiApiKey) || GeminiApiKey.StartsWith("PUT-")))
+        var geminiReachable = ScriptProvider.Equals("gemini", StringComparison.OrdinalIgnoreCase)
+            || ScriptProvider.Equals("hybrid", StringComparison.OrdinalIgnoreCase);
+        if (geminiReachable && !HasRealKey(GeminiApiKey))
             missing.Add(nameof(GeminiApiKey));
-        if (hybrid && (string.IsNullOrWhiteSpace(GroqApiKey) || GroqApiKey.StartsWith("PUT-")))
-            missing.Add(nameof(GroqApiKey));
 
         if (missing.Count > 0)
             throw new InvalidOperationException(

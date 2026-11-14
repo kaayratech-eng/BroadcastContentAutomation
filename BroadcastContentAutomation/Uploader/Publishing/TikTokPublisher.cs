@@ -72,6 +72,23 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
                 ? $"{ApiBase}/post/publish/video/init/"
                 : $"{ApiBase}/post/publish/inbox/video/init/";
 
+            // TikTok accepts the file in chunks: init declares chunk_size and
+            // total_chunk_count, then each chunk goes up as its own PUT with a
+            // Content-Range header. Verified live 2026-11-13: chunk_size must
+            // be 10 MB (1, 2 and 4 MB are rejected "chunk size is invalid")
+            // and total_chunk_count must be floor(video_size / chunk_size) —
+            // ceil is rejected "total chunk count is invalid". The last chunk
+            // absorbs the remainder, so it can be larger than chunk_size.
+            // A single 64 MB PUT dies on this VM (the egress proxy throttles
+            // sustained uploads and breaks long streams), so chunking is what
+            // makes a large upload possible at all. Files at or under the
+            // chunk size go up as one chunk, exactly as the demo did.
+            const long chunkSize = 10L * 1024 * 1024;
+            var totalChunks = info.Length <= chunkSize
+                ? 1
+                : (int)(info.Length / chunkSize);
+            var initChunkSize = totalChunks == 1 ? info.Length : chunkSize;
+
             object initPayload = cfg.DirectPost
                 ? new
                 {
@@ -83,11 +100,11 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
                         disable_comment = cfg.DisableComment,
                         disable_stitch = cfg.DisableStitch,
                     },
-                    source_info = new { source = "FILE_UPLOAD", video_size = info.Length, chunk_size = info.Length, total_chunk_count = 1 },
+                    source_info = new { source = "FILE_UPLOAD", video_size = info.Length, chunk_size = initChunkSize, total_chunk_count = totalChunks },
                 }
                 : new
                 {
-                    source_info = new { source = "FILE_UPLOAD", video_size = info.Length, chunk_size = info.Length, total_chunk_count = 1 },
+                    source_info = new { source = "FILE_UPLOAD", video_size = info.Length, chunk_size = initChunkSize, total_chunk_count = totalChunks },
                 };
 
             using var initResp = await http.PostAsync(initEndpoint,
@@ -98,19 +115,66 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
             var publishId = data.GetProperty("publish_id").GetString()!;
             var uploadUrl = data.GetProperty("upload_url").GetString()!;
 
-            log.Info($"  [tiktok] publish {publishId}, uploading {Text.Bytes(info.Length)}");
+            log.Info($"  [tiktok] publish {publishId}, uploading {Text.Bytes(info.Length)} in {totalChunks} chunks");
             log.Info($"  [tiktok] caption (also saved to {Path.GetFileName(captionFile)}) - copy-paste into the draft:\n{caption}");
 
-            await using (var stream = File.OpenRead(request.VideoPath))
-            using (var content = new StreamContent(stream))
+            // The last chunk absorbs the remainder, so it can be larger than
+            // chunk_size; size the buffer for it.
+            var maxChunkBytes = totalChunks == 1
+                ? info.Length
+                : Math.Max(chunkSize, info.Length - (totalChunks - 1) * chunkSize);
+            var buffer = new byte[maxChunkBytes];
+            await using var stream = File.OpenRead(request.VideoPath);
+            long offset = 0;
+            for (var chunkIndex = 1; chunkIndex <= totalChunks; chunkIndex++)
             {
-                content.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
-                content.Headers.ContentRange = new ContentRangeHeaderValue(0, info.Length - 1, info.Length);
+                var toRead = chunkIndex == totalChunks
+                    ? (int)(info.Length - offset)
+                    : (int)chunkSize;
+                var read = 0;
+                while (read < toRead)
+                {
+                    var n = await stream.ReadAsync(buffer.AsMemory(read, toRead - read), ct);
+                    if (n == 0) throw new IOException("Unexpected end of file while reading upload chunk.");
+                    read += n;
+                }
 
-                using var putResp = await http.PutAsync(uploadUrl, content, ct);
-                if (!putResp.IsSuccessStatusCode)
-                    return PublishResult.Retry(
-                        $"TikTok upload failed ({(int)putResp.StatusCode}): {Text.Tail(await putResp.Content.ReadAsStringAsync(ct), 400)}");
+                Exception? lastError = null;
+                var sent = false;
+                for (var attempt = 1; attempt <= 3 && !sent; attempt++)
+                {
+                    try
+                    {
+                        using var chunkContent = new ByteArrayContent(buffer, 0, toRead);
+                        chunkContent.Headers.ContentType = new MediaTypeHeaderValue("video/mp4");
+                        chunkContent.Headers.ContentRange = new ContentRangeHeaderValue(offset, offset + toRead - 1, info.Length);
+
+                        using var chunkCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                        chunkCts.CancelAfter(TimeSpan.FromMinutes(5));
+
+                        using var putResp = await http.PutAsync(uploadUrl, chunkContent, chunkCts.Token);
+                        if (!putResp.IsSuccessStatusCode)
+                            throw new TikTokApiException(
+                                $"TikTok chunk upload failed ({(int)putResp.StatusCode}): {Text.Tail(await putResp.Content.ReadAsStringAsync(chunkCts.Token), 400)}",
+                                Permanent: false);
+                        sent = true;
+                    }
+                    catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or TikTokApiException)
+                    {
+                        lastError = ex;
+                        if (attempt < 3)
+                        {
+                            log.Info($"  [tiktok] chunk {chunkIndex}/{totalChunks} attempt {attempt}/3 failed ({ex.Message}); retrying.");
+                            await Task.Delay(TimeSpan.FromSeconds(2 * attempt), ct);
+                        }
+                    }
+                }
+
+                if (!sent)
+                    return PublishResult.Retry($"TikTok chunk {chunkIndex}/{totalChunks} failed after 3 attempts: {lastError?.Message}");
+
+                offset += toRead;
+                log.Info($"  [tiktok] uploaded chunk {chunkIndex}/{totalChunks} ({Text.Bytes(offset)}/{Text.Bytes(info.Length)})");
             }
 
             return await WaitForPublishAsync(http, publishId, ct);

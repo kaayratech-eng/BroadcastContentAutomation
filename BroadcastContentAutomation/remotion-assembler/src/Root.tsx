@@ -33,8 +33,22 @@ export const RemotionRoot: React.FC = () => {
         calculateMetadata={async ({ props }) => {
           const totalSeconds =
             props.scenes.reduce((sum, s) => sum + s.durationInSeconds, 0) + props.outroSeconds;
+          // In a <TransitionSeries> each transition's duration is shared time: the
+          // following sequence starts that many frames early, so the real content
+          // ends transitionCount * transitionFrames before the nominal end. Without
+          // subtracting it the composition runs that long past the outro into black
+          // (9 calm transitions x 14 frames = 126 frames / 4.2s on a 9-scene video).
+          // Must mirror Assembly.tsx exactly: a transition follows every scene when
+          // an outro exists, otherwise only between scenes; calm formats (isCalm)
+          // dissolve for 0.45s, brisk ones for 0.2s.
+          const transitionFrames = Math.round(props.fps * (props.isCalm ? 0.45 : 0.2));
+          const transitionCount =
+            props.outroSeconds > 0 ? props.scenes.length : Math.max(0, props.scenes.length - 1);
           return {
-            durationInFrames: Math.max(1, Math.round(totalSeconds * props.fps)),
+            durationInFrames: Math.max(
+              1,
+              Math.round(totalSeconds * props.fps) - transitionCount * transitionFrames,
+            ),
             fps: props.fps,
             width: props.widthPx,
             height: props.heightPx,

@@ -125,10 +125,13 @@ static class CharacterSource
     // Draws the character the script just invented, so the picture matches the words
     // rather than the other way round.
     //
-    // Goes through the human-in-the-loop Gemini prompt-and-pickup loop (ManualArtClient)
-    // rather than ImageClient's OpenAI/Stability calls - Deliverable 6 (tasks/todo.md)
-    // moved both profiles' character art off paid image APIs onto free, by-hand
-    // generation. ImageClient's automated code stays in the repo but is now dormant;
+    // Automated scene-art providers (pollinations/cloudflare) draw the portrait from
+    // the same square-art chain the scene art uses (see GenerateSquareArtAsync below,
+    // twin of Program.cs's) - a square source centre-cropped to 9:16, which keeps
+    // the full height the prompt asks for - so an unattended --prep never blocks on
+    // the human Gemini loop. Manual mode keeps the original prompt-and-wait loop:
+    // go to gemini.google.com, paste the prompt, save the image, press Enter.
+    // ImageClient's automated code stays in the repo but is now dormant;
     // BuildPrompt is the one piece of it this path still reuses.
     public static async Task<string> DrawAsync(ContentProfile profile, GenConfig cfg, VideoScript script, string workDir)
     {
@@ -147,10 +150,71 @@ static class CharacterSource
             "with a friendly welcoming pose, the whole character visible with space around it, plain " +
             "uncluttered background.",
             profile.CharacterStyle, profile.CharacterPortraitStyleSuffix, ImageClient.Orientation.Portrait, matchReference: false);
-        var saved = await ManualArtClient.PromptAndWaitAsync(prompt, raw, ImageClient.Orientation.Portrait);
+
+        string saved;
+        if (IsAutomatedProvider(cfg))
+        {
+            var squarePrompt = ImageClient.BuildPrompt(
+                $"{script.CharacterName}: {script.CharacterDescription}. Full body, standing, facing the viewer " +
+                "with a friendly welcoming pose, the whole character visible with space around it, plain " +
+                "uncluttered background.",
+                profile.CharacterStyle, profile.CharacterPortraitStyleSuffix, ImageClient.Orientation.Square, matchReference: false);
+            var squarePath = await GenerateSquareArtAsync(cfg, squarePrompt, Path.Combine(workDir, "character-square"));
+            await VideoAssembler.CropScaleToExactAsync(cfg, squarePath, raw, 1080, 1920);
+            saved = raw;
+        }
+        else
+        {
+            saved = await ManualArtClient.PromptAndWaitAsync(prompt, raw, ImageClient.Orientation.Portrait);
+        }
 
         await VideoAssembler.FitToPortraitAsync(cfg, saved, fitted);
         return fitted;
+    }
+
+    // Automated providers are "pollinations" and "cloudflare" (same rule as
+    // Program.cs's IsAutomatedProvider - kept in sync by hand, it is two lines).
+    private static bool IsAutomatedProvider(GenConfig cfg) =>
+        cfg.SceneArtProvider.Equals("pollinations", StringComparison.OrdinalIgnoreCase) ||
+        cfg.SceneArtProvider.Equals("cloudflare", StringComparison.OrdinalIgnoreCase);
+
+    // One square source image with the provider chain: primary per SceneArtProvider,
+    // then the other automated provider's square, then Cloudflare SDXL square.
+    // Twin of Program.cs's GenerateSquareArtAsync (top-level local functions can't
+    // be shared) - keep the attempt order identical.
+    private static async Task<string> GenerateSquareArtAsync(GenConfig cfg, string prompt, string squareBase)
+    {
+        var existing = ManualArtClient.ImageExtensions
+            .Select(ext => squareBase + ext).FirstOrDefault(File.Exists);
+        if (existing is not null) return existing;
+
+        var primaryIsPollinations = cfg.SceneArtProvider.Equals(
+            "pollinations", StringComparison.OrdinalIgnoreCase);
+        var attempts = new List<Func<Task<string>>>
+        {
+            () => primaryIsPollinations
+                ? PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg")
+                : CloudflareArtClient.GenerateFluxSquareAsync(cfg, prompt, squareBase + ".jpg"),
+            () => primaryIsPollinations
+                ? CloudflareArtClient.GenerateFluxSquareAsync(cfg, prompt, squareBase + ".jpg")
+                : PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg"),
+            () => CloudflareArtClient.GenerateAsync(cfg, prompt, squareBase + ".png", 1024, 1024),
+        };
+        Exception? lastError = null;
+        foreach (var attempt in attempts)
+        {
+            try
+            {
+                return await attempt();
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"  Square art provider step failed ({ex.Message}), trying next provider...");
+                lastError = ex;
+            }
+        }
+        throw new Exception(
+            $"All scene-art providers failed for {squareBase} (1024x1024 square).", lastError);
     }
 
     // Character names used by recent videos, so the invent-a-new-character prompt can

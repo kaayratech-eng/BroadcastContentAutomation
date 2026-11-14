@@ -29,7 +29,10 @@ using var stream = new FileStream(args[0], FileMode.Open, FileAccess.Read);
 
 var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
     GoogleClientSecrets.FromStream(stream).Secrets,
-    new[] { YouTubeService.Scope.YoutubeUpload, YouTubeService.Scope.YoutubeReadonly },
+    // yt-analytics.readonly added 2026-11-04 for the analytics learning loop
+    // (views/CTR/retention). Existing upload+readonly tokens must be
+    // re-captured with this scope before the Analytics API fetch can run.
+    new[] { YouTubeService.Scope.YoutubeUpload, YouTubeService.Scope.YoutubeReadonly, "https://www.googleapis.com/auth/yt-analytics.readonly" },
     "gigglegarden-channel-owner",          // user key — must match the uploader; the per-channel
                                             // folder (not this key) is what keeps channels separate
     CancellationToken.None,

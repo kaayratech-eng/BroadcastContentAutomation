@@ -107,10 +107,18 @@ static class MetaGraph
         return new GraphError(code, sub, message, Permanent: !transient);
     }
 
-    // Meta's resumable protocol: a single POST of the whole file with an offset and
-    // file_size header. Not retried by RetryHandler (the body is far over its cap),
-    // so failures here surface as retryable and the whole publish is re-attempted
-    // on the next run.
+    // Meta's resumable protocol, as the server actually enforces it (verified
+    // live 2026-11-13): a POST must span from its `offset` to the END of the
+    // file. A shorter "chunk" is answered 206 PartialRequestError and its
+    // bytes are DISCARDED — the server's accepted offset stays 0, so a later
+    // chunk at a higher offset is rejected 412 OffsetInvalidError ("Maximum
+    // accepted offset: 0"). Sending the file in fixed 4 MB chunks therefore
+    // can never complete. The working shape is: POST the REMAINDER
+    // [offset, EOF) in one stream; if that stream stalls or breaks, ask the
+    // server where it got to (a POST at an overshoot offset is rejected 412
+    // and the message names the maximum accepted offset), then re-POST the
+    // shorter remainder from there. Each attempt is a fresh connection, so a
+    // stalled stream costs one retry, not the whole file.
     public static async Task UploadBinaryAsync(
         HttpClient http, string uploadUrl, string accessToken, string filePath, CancellationToken ct,
         Action<string>? log = null)
@@ -120,30 +128,100 @@ static class MetaGraph
             throw new MetaGraphException(new GraphError(0, 0,
                 $"File is {Text.Bytes(info.Length)}; Meta's limit is {Text.Bytes(MaxReelBytes)}.", Permanent: true));
 
-        // The whole file goes up in one POST, and in practice the endpoint starts
-        // rejecting well below Meta's documented 1 GB ceiling: a 36 MB reel failed
-        // repeatedly with an opaque 400 where the same video at 18 MB published fine.
-        // Warn rather than block, since the real threshold is undocumented and the
-        // bare 400 gives a caller no clue that size is what it is objecting to.
-        if (info.Length > LargeUploadWarningBytes)
-            log?.Invoke($"{Text.Bytes(info.Length)} is large for a single-shot upload; " +
-                        "a rejection here is most likely the file size, not the encoding.");
+        var total = info.Length;
+        long offset = 0;
 
-        await using var stream = File.OpenRead(filePath);
-        using var content = new StreamContent(stream);
-        content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
-        content.Headers.ContentLength = info.Length;
+        for (var attempt = 1; attempt <= 5; attempt++)
+        {
+            var remaining = total - offset;
+            try
+            {
+                await using var stream = File.OpenRead(filePath);
+                stream.Seek(offset, SeekOrigin.Begin);
+                using var content = new StreamContent(stream);
+                content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+                content.Headers.ContentLength = remaining;
 
-        using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl) { Content = content };
-        request.Headers.TryAddWithoutValidation("Authorization", $"OAuth {accessToken}");
-        request.Headers.TryAddWithoutValidation("offset", "0");
-        request.Headers.TryAddWithoutValidation("file_size", info.Length.ToString());
+                using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl) { Content = content };
+                request.Headers.TryAddWithoutValidation("Authorization", $"OAuth {accessToken}");
+                request.Headers.TryAddWithoutValidation("offset", offset.ToString());
+                request.Headers.TryAddWithoutValidation("file_size", total.ToString());
 
-        var resp = await http.SendAsync(request, ct);
-        using var doc = await ReadAsync(resp, ct);
+                using var attemptCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                attemptCts.CancelAfter(TimeSpan.FromMinutes(10));
 
-        if (doc.RootElement.TryGetProperty("success", out var ok) && ok.ValueKind == JsonValueKind.False)
-            throw new MetaGraphException(new GraphError(0, 0, "Upload reported success=false.", Permanent: false));
+                var resp = await http.SendAsync(request, attemptCts.Token);
+                using var doc = await ReadAsync(resp, attemptCts.Token);
+
+                if (doc.RootElement.TryGetProperty("success", out var ok) && ok.ValueKind == JsonValueKind.False)
+                    throw new MetaGraphException(new GraphError(0, 0, "Upload reported success=false.", Permanent: false));
+
+                log?.Invoke($"  uploaded {Text.Bytes(total)} (offset {Text.Bytes(offset)} -> done)");
+                return;
+            }
+            catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException or MetaGraphException)
+            {
+                // The stream broke before the server had the whole remainder.
+                // Ask the server how much it kept, then resume from there.
+                var probed = await ProbeAcceptedOffsetAsync(http, uploadUrl, accessToken, total, ct);
+                if (probed.HasValue)
+                {
+                    if (probed.Value >= total)
+                    {
+                        log?.Invoke("  server already holds the whole file; treating the upload as done.");
+                        return;
+                    }
+                    if (probed.Value > offset)
+                    {
+                        log?.Invoke($"  attempt {attempt} stalled ({ex.Message}); server kept {Text.Bytes(probed.Value)}, resuming from there.");
+                        offset = probed.Value;
+                        continue;
+                    }
+                }
+                log?.Invoke($"  attempt {attempt} failed ({ex.Message}); retrying the remainder from {Text.Bytes(offset)}.");
+                if (attempt < 5)
+                    await Task.Delay(TimeSpan.FromSeconds(2 * attempt), ct);
+            }
+        }
+
+        throw new MetaGraphException(new GraphError(0, 0,
+            $"Upload did not complete after 5 attempts (server holds {Text.Bytes(offset)} of {Text.Bytes(total)}).", Permanent: false));
+    }
+
+    // Ask the rupload endpoint how much of the file it already holds: a POST
+    // whose offset overshoots what the server has is rejected 412, and the
+    // error message names the maximum accepted offset. A 1-byte body keeps
+    // the probe cheap; the server validates the offset before reading it.
+    private static async Task<long?> ProbeAcceptedOffsetAsync(
+        HttpClient http, string uploadUrl, string accessToken, long total, CancellationToken ct)
+    {
+        try
+        {
+            using var content = new ByteArrayContent(new byte[] { 0 });
+            content.Headers.ContentType = new MediaTypeHeaderValue("application/octet-stream");
+            content.Headers.ContentLength = 1;
+
+            using var request = new HttpRequestMessage(HttpMethod.Post, uploadUrl) { Content = content };
+            request.Headers.TryAddWithoutValidation("Authorization", $"OAuth {accessToken}");
+            request.Headers.TryAddWithoutValidation("offset", total.ToString());
+            request.Headers.TryAddWithoutValidation("file_size", total.ToString());
+
+            using var probeCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            probeCts.CancelAfter(TimeSpan.FromMinutes(2));
+
+            var resp = await http.SendAsync(request, probeCts.Token);
+            var body = await resp.Content.ReadAsStringAsync(probeCts.Token);
+            var m = System.Text.RegularExpressions.Regex.Match(body, @"Maximum accepted offset: (\d+)");
+            if (m.Success && long.TryParse(m.Groups[1].Value, out var accepted))
+                return accepted;
+            if (resp.IsSuccessStatusCode)
+                return total;
+            return null;
+        }
+        catch
+        {
+            return null;
+        }
     }
 
     // Both surfaces process asynchronously; publishing before the transcode finishes

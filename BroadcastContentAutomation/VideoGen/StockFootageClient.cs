@@ -7,7 +7,7 @@ using GiggleGarden.Shared;
 // adopting - see todo.md), so this queries and downloads with no human review step,
 // unlike the manual Gemini character-art loop it sits alongside. Wikimedia/Archive.org
 // stay out of this client entirely for that reason - they're manual-approval only.
-class StockFootageClient(GenConfig cfg)
+class StockFootageClient(GenConfig cfg) : IStockFootageClient
 {
     private const string VideoSearchUrl = "https://api.pexels.com/videos/search";
     private const string PhotoSearchUrl = "https://api.pexels.com/v1/search";
@@ -41,8 +41,13 @@ class StockFootageClient(GenConfig cfg)
         // Prefer the highest-resolution mp4 file that actually matches the requested
         // orientation and isn't absurdly large (cap at ~1080p) - Pexels returns every
         // encode of every candidate clip, not just one file per video.
+        // Frame rate first (2026-11-13: a 24fps clip in the 30fps composition
+        // plays back with 3:2 judder — duplicated frames alternating with
+        // double-steps — which reads as shaking. 30fps is native; 60fps
+        // decimates evenly to 30; 25fps judders less than 24fps), then area.
         string? bestLink = null;
         long bestArea = 0;
+        var bestFpsScore = -1;
         foreach (var clip in videos.EnumerateArray())
         {
             if (!clip.TryGetProperty("video_files", out var files)) continue;
@@ -55,9 +60,17 @@ class StockFootageClient(GenConfig cfg)
                 var matchesOrientation = orientation == ImageClient.Orientation.Portrait ? h > w : w >= h;
                 if (!matchesOrientation) continue;
 
+                var fps = file.TryGetProperty("fps", out var fpsEl) && fpsEl.ValueKind == JsonValueKind.Number
+                    ? fpsEl.GetDouble()
+                    : 0;
+                var fpsScore = Math.Abs(fps - 30) < 0.5 || Math.Abs(fps - 29.97) < 0.5 ? 3
+                    : Math.Abs(fps - 60) < 1 ? 3
+                    : Math.Abs(fps - 25) < 0.5 ? 2 : 1;
+
                 var area = (long)w * h;
-                if (area <= 1920L * 1080 && area > bestArea)
+                if (area <= 1920L * 1080 && (fpsScore > bestFpsScore || (fpsScore == bestFpsScore && area > bestArea)))
                 {
+                    bestFpsScore = fpsScore;
                     bestArea = area;
                     bestLink = file.GetProperty("link").GetString();
                 }

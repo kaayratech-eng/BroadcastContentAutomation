@@ -8,13 +8,22 @@
 // the terms/limits that make each one safe to use for real (not just
 // prototyping) at low volume. "claude" is the zero-free-tier-quota-risk,
 // paid fallback.
+// The "-helper" variants ("gemini-helper", "groq-helper", "hybrid-helper")
+// are the same providers routed through the vault-backed Python helpers
+// (custom.gemini / custom.groq) instead of a key in config - use them
+// whenever the key lives in Muse's secure vault. "gemini-helper" is the
+// Muse-system default (see appsettings.Local.json): the Gemini key is in
+// the vault, and a short-form test needs only one provider.
 static class ScriptProviderFactory
 {
     public static IScriptProvider Create(GenConfig cfg) => cfg.ScriptProvider.ToLowerInvariant() switch
     {
         "groq" => new GroqScriptProvider(cfg),
         "gemini" => new GeminiScriptProvider(cfg),
+        "gemini-helper" => new GeminiHelperScriptProvider(cfg),
+        "groq-helper" => new GroqHelperScriptProvider(cfg),
         "hybrid" => new HybridScriptProvider(new GroqScriptProvider(cfg), new GeminiScriptProvider(cfg), firstProviderCalls: 2),
+        "hybrid-helper" => new HybridScriptProvider(new GroqHelperScriptProvider(cfg), new GeminiHelperScriptProvider(cfg), firstProviderCalls: 2),
         _ => new ClaudeScriptProvider(cfg),
     };
 }
