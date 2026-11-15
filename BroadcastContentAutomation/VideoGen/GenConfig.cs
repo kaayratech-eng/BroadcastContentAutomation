@@ -41,6 +41,10 @@ record GenConfig
 
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
+    // Vault-backed helper path (set up 2026-11-14): the Azure Speech key lives
+    // in the secure vault (custom.azure-speech); AzureHelperTtsProvider shells
+    // out to this helper instead of calling the API with a config key.
+    public string AzureTtsHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.azure-speech/bin/azure_tts.py";
 
     // Google Cloud Text-to-Speech: Standard voices are free to 4M chars/mo, WaveNet to
     // 1M chars/mo (resets monthly, doesn't expire) - see TtsProviderFactory for the
@@ -58,6 +62,9 @@ record GenConfig
     // google is for testing only and will hard-fail on pa rather than silently
     // degrading to a paid/unintended voice. "google-helper" is auto's routing with
     // the Google leg via the vault-backed helper instead of a config key.
+    // "azure-helper" routes every language to Azure via the vault-backed helper
+    // instead of a config key, restoring the original Harper/DavisNeural voices
+    // with per-scene mood variation (see TtsProviderFactory).
     public string TtsProvider { get; init; } = "auto";
 
     // Vidu image-to-video (see ViduClient.cs) - the source of every scene's picture.
@@ -201,8 +208,14 @@ record GenConfig
         // provider, so demanding the key there blocked test runs that
         // needed nothing from Azure.
         var azureReachable = TtsProvider.Equals("azure", StringComparison.OrdinalIgnoreCase)
-            || language.Equals("pa", StringComparison.OrdinalIgnoreCase);
+            || (language.Equals("pa", StringComparison.OrdinalIgnoreCase)
+                && !TtsProvider.Equals("azure-helper", StringComparison.OrdinalIgnoreCase));
         if (azureReachable && !HasRealKey(AzureSpeechKey)) missing.Add(nameof(AzureSpeechKey));
+
+        // "azure-helper" reaches Azure through the vault-backed helper instead
+        // of a config key - only fail when the helper itself is missing.
+        if (TtsProvider.Equals("azure-helper", StringComparison.OrdinalIgnoreCase)
+            && !File.Exists(AzureTtsHelperPath)) missing.Add(nameof(AzureTtsHelperPath));
 
         // Only a profile still on the Vidu image-to-video path ever
         // constructs a ViduClient (see Program.cs's `!profile.UsesRemotionStills`

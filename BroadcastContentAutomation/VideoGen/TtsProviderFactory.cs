@@ -6,6 +6,9 @@
 // "google-helper" is auto's routing with the Google leg via the vault-backed
 // helper (custom.googlecloudtts) instead of a config key - the Muse-system
 // default (see appsettings.Local.json).
+// "azure-helper" routes every language to Azure via the vault-backed helper
+// (custom.azure-speech) instead of a config key, keeping the profile's
+// VoiceOverride picks (Harper/DavisNeural) and per-scene mood variation.
 static class TtsProviderFactory
 {
     public static ITtsProvider Create(GenConfig cfg, ContentProfile profile, string language)
@@ -13,6 +16,8 @@ static class TtsProviderFactory
         var mode = cfg.TtsProvider.ToLowerInvariant();
 
         if (mode == "azure") return new AzureTtsProvider(cfg, profile.VoiceOverride);
+
+        if (mode == "azure-helper") return new AzureHelperTtsProvider(cfg, profile.VoiceOverride);
 
         if (mode == "google")
         {
