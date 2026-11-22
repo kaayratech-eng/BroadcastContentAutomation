@@ -10,6 +10,7 @@ static class ContentProfileRegistry
         {
             ["gigglegarden"] = GiggleGardenProfile.Value,
             ["chronicleandchaos"] = MythologyProfile.Value,
+            ["trendlinenow"] = TrendlineNowProfile.Value,
         };
 
     public static ContentProfile Get(string id) =>

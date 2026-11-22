@@ -1,0 +1,111 @@
+{
+  "_comment": "Continuous-production configuration. Read by production/driver.sh, production/healthcheck.sh and production/finish-chunks.py. Tunables only \u2014 no secrets here.",
+  "dotnet_root": "/home/hatch/.dotnet",
+  "health": {
+    "disk_critical_gb": 10,
+    "disk_warn_gb": 20,
+    "driver_stale_minutes": 30,
+    "max_consecutive_failures_before_escalation": 3,
+    "prep_log_silence_warn_minutes": 20,
+    "render_log_silence_warn_minutes": 10
+  },
+  "production_dir": "/home/hatch/workspace/BroadcastContentAutomation/production",
+  "profiles": {
+    "chronicleandchaos": {
+      "landscape_targets": [
+        "youtube"
+      ],
+      "long_form": true,
+      "made_for_kids": false,
+      "prep_args": [
+        "--long"
+      ],
+      "vertical_targets": [
+        "youtube",
+        "instagram",
+        "facebook",
+        "tiktok",
+        "instagram_story",
+        "facebook_story"
+      ]
+    },
+    "gigglegarden": {
+      "landscape_targets": [
+        "youtube"
+      ],
+      "long_form": false,
+      "made_for_kids": true,
+      "prep_args": [],
+      "vertical_targets": [
+        "youtube",
+        "instagram",
+        "facebook",
+        "tiktok",
+        "instagram_story",
+        "facebook_story"
+      ]
+    },
+    "trendlinenow": {
+      "landscape_targets": [
+        "youtube"
+      ],
+      "long_form": true,
+      "made_for_kids": false,
+      "prep_args": [
+        "--long"
+      ],
+      "vertical_targets": [
+        "youtube",
+        "instagram",
+        "facebook",
+        "tiktok",
+        "instagram_story",
+        "facebook_story"
+      ]
+    }
+  },
+  "queue_policy": {
+    "_comment": "New videos alternate Chronicle long-form / GiggleGarden short. Pre-prepped jobs in state.queue render first (FIFO). Nothing uploads without sidecar approval \u2014 the driver never touches the uploader.",
+    "alternate": [
+      "chronicleandchaos",
+      "gigglegarden"
+    ],
+    "fps": 30,
+    "post_narration_hold_seconds": 1.5,
+    "vertical_max_seconds": 85
+  },
+  "remotion_dir": "/home/hatch/workspace/BroadcastContentAutomation/BroadcastContentAutomation/remotion-assembler",
+  "render": {
+    "_comment": "Scene-aligned chunks, 5 scenes each (~25-35 min). --concurrency=1: chunk C14 OOMed twice at concurrency 2 (2026-11-16).",
+    "chunk_log_silence_kill_minutes": 30,
+    "concurrency": 1,
+    "max_assemble_retries": 2,
+    "max_chunk_retries": 3,
+    "scenes_per_chunk": 5,
+    "verify_duration_tolerance_seconds": 3.0
+  },
+  "repo_root": "/home/hatch/workspace/BroadcastContentAutomation",
+  "script_provider_env": "groq-helper",
+  "services": {
+    "_comment": "Reachability probes only (any HTTP response, even 401, proves the endpoint is up). No quota is burned. These do NOT check quota \u2014 a Pollinations 402 (Quest Pollen exhausted) or an Azure 429 only shows up in a prep log.",
+    "groq": {
+      "ping_url": "https://api.groq.com/openai/v1/models"
+    },
+    "pexels": {
+      "ping_url": "https://api.pexels.com/v1/search?query=test&per_page=1"
+    },
+    "pollinations": {
+      "ping_url": "https://image.pollinations.ai/prompt/test"
+    }
+  },
+  "tmpdir": "/home/hatch/workspace/tmp",
+  "tts": {
+    "_comment": "Azure Free F0 throttles (HTTP 429) after ~20-35 rapid TTS calls. Prep dies on the first 429; the driver backs off then --resumes (each resume skips scenes already on disk).",
+    "max_prep_resumes": 6,
+    "throttle_backoff_minutes": 45
+  },
+  "videogen_dir": "/home/hatch/workspace/BroadcastContentAutomation/BroadcastContentAutomation/VideoGen",
+  "videogen_dll": "bin/Release/net8.0/VideoGen.dll",
+  "videos_dir": "/home/hatch/workspace/BroadcastContentAutomation/videos",
+  "work_dir": "/home/hatch/workspace/BroadcastContentAutomation/work"
+}

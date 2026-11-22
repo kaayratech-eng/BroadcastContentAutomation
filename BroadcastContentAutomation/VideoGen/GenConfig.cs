@@ -112,6 +112,15 @@ record GenConfig
     public double CloudflareSdxlGuidance { get; init; } = 7.5;
     public int CloudflareFluxSteps { get; init; } = 4;
 
+    // Free image-generation pool (see ArtPoolClient) - tries OVHcloud SDXL,
+    // Pollinations anonymous, AI Horde and Pexels stock in order until one
+    // returns a real image, all without a key in this config. Added
+    // 2026-11-22 after all three keyed scene-art providers failed at once
+    // (Cloudflare FLUX quota exhausted, Pollinations $0 balance, Cloudflare
+    // SDXL deprecated). The pool is tried FIRST in GenerateSquareArtAsync;
+    // the keyed providers below remain as backup.
+    public string ArtPoolHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.artpool/bin/art_pool.py";
+
     // Pexels stock photo/video search (see StockFootageClient) - the auto-fetched
     // "context/b-roll moment" visual source for the stock-footage/Remotion pipeline.
     // Free API, no card required; license permits commercial/monetized use with no

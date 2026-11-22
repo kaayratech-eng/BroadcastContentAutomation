@@ -177,6 +177,30 @@ record ContentProfile
     // Azure/Google would otherwise spell out letter by letter.
     public required string OutroDestinationSpoken { get; init; }
 
+    // Branded outro card (Trendline Now, 2026-11-21): the outro's on-screen lines,
+    // replacing the generic "LIKE, FOLLOW & SUBSCRIBE" + destination pair. Null means
+    // "use the legacy pair" - other profiles keep the old card unchanged.
+    public string[]? OutroLines { get; init; }
+
+    // TTS-friendly spoken form of OutroLines, used only for the outro's voiceover.
+    // Null means "use the legacy spoken line". The handle is written out as the
+    // channel name here - Azure would otherwise spell "@trendlinenow" letter by letter.
+    public string? OutroSpoken { get; init; }
+
+    // Platform names shown as chips on the branded outro card (e.g. YouTube,
+    // Instagram, TikTok, Facebook), all pointing at OutroDestinationText. Empty
+    // means no chips - the legacy card has none.
+    public string[] OutroHandles { get; init; } = [];
+
+    // Animated intro sting (Trendline Now, 2026-11-21): the brand logo image
+    // drawn by Remotion's Intro component at the very start of every render,
+    // plus the sting's duration in seconds. Empty/0 means "no intro" - other
+    // profiles render exactly as before. The path is re-rooted by
+    // ApplyAssetMapping (Program.cs) the same way BackgroundMusicPath is, so a
+    // Windows-origin path still resolves on Linux.
+    public string IntroLogoPath { get; init; } = "";
+    public double IntroSeconds { get; init; } = 0;
+
     // Closed menu of Azure express-as styles this profile's active voice actually supports
     // (verified live against /cognitiveservices/voices/list - see VoiceOverride), keyed by
     // the same language code VoiceOverride uses. Per-language because a profile's languages
@@ -190,6 +214,15 @@ record ContentProfile
     // Azure call.
     public IReadOnlyDictionary<string, IReadOnlyList<string>> NarrationMoodStyles { get; init; } =
         new Dictionary<string, IReadOnlyList<string>>();
+
+    // Topic-aware styling (Trendline Now, 2026-11-21): the per-category style
+    // table (TopicCategoryStyles.cs) - gaming is neon and fast, finance is
+    // data-heavy with charts, politics is newsroom-serious with timelines. Null
+    // for profiles that never classify topics (every profile except Trendline
+    // Now today); ScriptGenerator injects the resolved category's block into
+    // the news prompt, and Program.cs takes TTS pacing from it. Data, not
+    // code - a new category is one table entry.
+    public IReadOnlyDictionary<string, TopicStyleProfile>? CategoryStyles { get; init; }
 
     public void Validate()
     {

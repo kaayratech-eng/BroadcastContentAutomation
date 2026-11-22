@@ -326,7 +326,7 @@ static async Task<Sidecar> ResolveSidecarAsync(
     if (existing is not null)
     {
         log.Info($"Using sidecar metadata for {Path.GetFileName(videoPath)}");
-        return existing;
+        return AppendTrendlineDisclaimer(existing, channel, log);
     }
 
     log.Info("No sidecar — generating metadata from YouTube trends + free Groq/Gemini.");
@@ -338,7 +338,7 @@ static async Task<Sidecar> ResolveSidecarAsync(
     var trends = await youtube.FetchTrendingDataAsync(cfg.TrendQueries, log, CancellationToken.None);
     var meta = await GenerateMetadataAsync(videoPath, trends, cfg, log);
 
-    return new Sidecar
+    return AppendTrendlineDisclaimer(new Sidecar
     {
         Title = meta.Title,
         Description = meta.Description,
@@ -350,7 +350,38 @@ static async Task<Sidecar> ResolveSidecarAsync(
         // Aspect ratio of a manually dropped video is unknown, so default to
         // the one target every render supports regardless of orientation.
         Targets = [Platforms.YouTube],
-    };
+    }, channel, log);
+}
+
+// Legal disclaimer (Rishi 2026-11-21) - every Trendline Now video description,
+// long-form AND the 60s Short/vertical cut, carries this notice. Applied here,
+// in ResolveSidecarAsync, the uploader's single choke point for descriptions,
+// so no upload can go out without it. The sidecar on disk is untouched until
+// the uploader next saves it; the Contains check keeps a re-run (retry, or a
+// sidecar already saved with the disclaimer) from stacking a second copy.
+// Other channels are unaffected. This is a notice, not a shield: it does not
+// make a false factual claim about a named person safe - rules 1-3 in
+// TrendlineNowProfile.SafetyFraming are what keep the content itself legal.
+static Sidecar AppendTrendlineDisclaimer(Sidecar sidecar, string channel, Logger log)
+{
+    // Local const (not a top-level const - the compiler flags top-level const
+    // declarations after the entry point's return as unreachable code).
+    const string disclaimer =
+        "Disclaimer: This video is for informational and entertainment purposes. " +
+        "We work from publicly reported facts, but some segments include commentary, " +
+        "opinion, and speculation — these are clearly labelled and are not presented " +
+        "as established fact. News develops quickly and details may change after " +
+        "publication. If you spot an error, tell us in the comments and we will correct it.";
+
+    if (!channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+        return sidecar;
+    if (string.IsNullOrWhiteSpace(sidecar.Description))
+        return sidecar;
+    if (sidecar.Description.Contains(disclaimer, StringComparison.Ordinal))
+        return sidecar;
+    sidecar.Description = sidecar.Description.TrimEnd() + "\n\n" + disclaimer;
+    log.Info("Appended the Trendline Now legal disclaimer to the description.");
+    return sidecar;
 }
 
 // ---- Free metadata generation (fallback for videos with no sidecar) -------

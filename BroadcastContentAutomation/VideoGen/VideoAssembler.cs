@@ -14,7 +14,10 @@ static partial class VideoAssembler
     // too fast at ~5.5s/scene. Added on top of the 0.5s breathing room in every
     // per-scene duration: both assemble paths, the SRT cues, and Program.cs's
     // vertical-trim budget (so the rendered teaser still fits VerticalMaxSeconds).
-    public const double PostNarrationHoldSeconds = 1.5;
+    // 2026-11-21 (Rishi): video #1 was too slow - hold 1.5 -> 0.75s, and TTS
+    // rate -10% -> 0% (TrendlineNowProfile.BuildFormat). Applies from video #3
+    // onward; video #2 was already rendered at the old pace.
+    public const double PostNarrationHoldSeconds = 0.75;
 
     // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
     // still with a camera move over it. Same crossfade/subtitle/music treatment as the
@@ -87,7 +90,9 @@ static partial class VideoAssembler
         ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes,
         string workDir, string outputPath, int w, int h, string? musicMood = null,
         IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null,
-        bool isCalm = false)
+        bool isCalm = false, string? introLogoPath = null, double introSeconds = 0,
+        IReadOnlyList<string>? outroHandles = null,
+        IReadOnlyList<Scene>? briefScenes = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
@@ -104,9 +109,30 @@ static partial class VideoAssembler
         string ToPublicDirRelative(string absolutePath) =>
             Path.GetRelativePath(workDir, Path.GetFullPath(absolutePath)).Replace('\\', '/');
 
-        var assets = new List<RemotionSceneAsset>();
-        foreach (var s in scenes)
+        // One scene -> one Remotion asset (shared by the main scenes and the
+        // curiosity brief, which reuses the same image/video resolution).
+        async Task<RemotionSceneAsset> BuildAssetAsync(Scene s)
         {
+            // A "visual" scene has no image or clip - its data visual is drawn
+            // natively by Remotion's VisualScene component from the spec, so it
+            // never enters the clip/image resolution below. The spec travels in
+            // the props as a typed object (VisualSpec record, camelCased by
+            // RemotionPropsJsonOptions), and Assembly.tsx draws it.
+            if (s.SceneKind == "visual")
+            {
+                if (s.VisualSpec is null)
+                    throw new InvalidOperationException("A \"visual\" scene has no visualSpec to render.");
+                return new RemotionSceneAsset(
+                    Kind: "visual", Path: "",
+                    DurationInSeconds: s.DurationSeconds + 0.5 + PostNarrationHoldSeconds,   // breathing room + post-narration hold (2026-11-12 pacing)
+                    NarrationAudioPath: s.AudioPath is { } audio ? ToPublicDirRelative(audio) : null,
+                    CaptionText: s.Narration,
+                    MotionIntensity: "subtle",
+                    VideoDurationInSeconds: null,
+                    VisualSpec: s.VisualSpec,
+                    IsSpeculative: s.IsSpeculative);
+            }
+
             // Dual-orientation: a landscape render (w > h, the YouTube master)
             // prefers the landscape asset when one was resolved, otherwise it
             // falls back to the portrait asset and Assembly.tsx's blurred-fill
@@ -129,7 +155,7 @@ static partial class VideoAssembler
             double? videoDuration = null;
             if (isVideo) videoDuration = await GetVideoDurationAsync(cfg, clipPath!);
 
-            assets.Add(new RemotionSceneAsset(
+            return new RemotionSceneAsset(
                 Kind: isVideo ? "video" : "image",
                 Path: ToPublicDirRelative(path),
                 DurationInSeconds: s.DurationSeconds + 0.5 + PostNarrationHoldSeconds,   // breathing room + post-narration hold (2026-11-12 pacing)
@@ -138,8 +164,21 @@ static partial class VideoAssembler
                 // Context/b-roll scenes read better with a slower pan than the wider push
                 // used for a character moment - see remotion-assembler/src/Assembly.tsx.
                 MotionIntensity: s.SceneKind == "context" ? "subtle" : "normal",
-                VideoDurationInSeconds: videoDuration));
+                VideoDurationInSeconds: videoDuration,
+                IsSpeculative: s.IsSpeculative);
         }
+
+        var assets = new List<RemotionSceneAsset>();
+        foreach (var s in scenes)
+            assets.Add(await BuildAssetAsync(s));
+
+        // Curiosity brief (Rishi 2026-11-21, video #3 onward): the teaser
+        // scenes play BEFORE the intro sting (Assembly.tsx renders them
+        // first). Empty for scripts written before this feature.
+        var briefAssets = new List<RemotionSceneAsset>();
+        if (briefScenes is { Count: > 0 })
+            foreach (var s in briefScenes)
+                briefAssets.Add(await BuildAssetAsync(s));
 
         // The one asset that does NOT already live under workDir - copied in rather than
         // pointed at directly, so it lands under the same --public-dir root as everything
@@ -186,6 +225,21 @@ static partial class VideoAssembler
             }
         }
 
+        // The intro sting's logo - same copy-in-then-relativize treatment as
+        // the music track and outro voiceover above: the brand logo lives in
+        // the assets folder, outside workDir, so it needs to land under
+        // --public-dir before staticFile() can reach it. The sting itself is
+        // drawn by Remotion's Intro component (Assembly.tsx) from this path
+        // plus IntroSeconds; a 0 duration or a null path renders no intro.
+        string? introLogoRelative = null;
+        if (introLogoPath is not null && introSeconds > 0)
+        {
+            var introLogoDest = Path.Combine(workDir, Path.GetFileName(introLogoPath));
+            if (!string.Equals(Path.GetFullPath(introLogoPath), Path.GetFullPath(introLogoDest), StringComparison.OrdinalIgnoreCase))
+                File.Copy(introLogoPath, introLogoDest, overwrite: true);
+            introLogoRelative = ToPublicDirRelative(introLogoDest);
+        }
+
         var props = new RemotionAssemblyProps(
             Scenes: assets, WidthPx: w, HeightPx: h, Fps: 30,
             BackgroundMusicPath: musicRelative,
@@ -193,7 +247,18 @@ static partial class VideoAssembler
             OutroSeconds: outroSeconds,
             OutroLines: outroLines?.ToList() ?? [],
             OutroAudioPath: outroAudioRelative,
-            IsCalm: isCalm);
+            OutroHandles: outroHandles?.ToList() ?? [],
+            OutroHandle: profile.OutroDestinationText,
+            // Only a real intro when the logo actually landed in the public
+            // dir - passing the raw seconds with a null logo would make
+            // Root.tsx's duration math count a transition that Assembly.tsx
+            // never renders.
+            IntroSeconds: introLogoRelative is not null ? introSeconds : 0,
+            IntroLogoPath: introLogoRelative,
+            IsCalm: isCalm,
+            // Curiosity brief (Rishi 2026-11-21): teaser scenes rendered
+            // before the intro sting. Empty list renders no brief.
+            BriefScenes: briefAssets);
 
         var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
         await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
@@ -213,12 +278,15 @@ static partial class VideoAssembler
     private sealed record RemotionSceneAsset(
         string Kind, string Path, double DurationInSeconds,
         string? NarrationAudioPath, string? CaptionText, string MotionIntensity,
-        double? VideoDurationInSeconds);
+        double? VideoDurationInSeconds, VisualSpec? VisualSpec = null,
+        bool IsSpeculative = false);
 
     private sealed record RemotionAssemblyProps(
         List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx, int Fps,
         string? BackgroundMusicPath, double BackgroundMusicVolume, double OutroSeconds,
-        List<string> OutroLines, string? OutroAudioPath, bool IsCalm);
+        List<string> OutroLines, string? OutroAudioPath, List<string> OutroHandles,
+        string OutroHandle, double IntroSeconds, string? IntroLogoPath, bool IsCalm,
+        List<RemotionSceneAsset> BriefScenes);
 
     // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. On Windows
     // it is routed through cmd.exe: npx resolves to npx.cmd on Windows, and
@@ -238,12 +306,16 @@ static partial class VideoAssembler
         // this is what makes those relative paths resolvable: Remotion serves --public-dir
         // over its own local HTTP server, which staticFile()/getAbsoluteSrc resolve against
         // in Assembly.tsx, instead of the browser trying (and failing) to load file:// srcs.
+        // --concurrency=1: this VM has 1.5 shared CPUs and ~6 GiB RAM, and
+        // Remotion chunk renders OOM at concurrency 2 (2026-11-13 lesson).
+        // One Chromium at a time is slower but finishes; a second one kills
+        // the render with no useful error.
         var isWindows = OperatingSystem.IsWindows();
         var psi = isWindows
             ? new ProcessStartInfo("cmd.exe",
-                $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\"")
+                $"/c npx remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\" --concurrency=1")
             : new ProcessStartInfo("npx",
-                $"remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\"")
+                $"remotion render src/index.ts Assembly \"{outputPath}\" --props=\"{propsPath}\" --public-dir=\"{workDir}\" --concurrency=1")
         {
             WorkingDirectory = cfg.RemotionProjectPath,
             RedirectStandardOutput = true,
@@ -537,10 +609,10 @@ static partial class VideoAssembler
     // accessibility tools indexable/toggleable caption text, which drawtext (burned into
     // the pixels) cannot provide. Uses the same per-scene duration math as the clips
     // above (DurationSeconds + 0.5s breathing room + post-narration hold) so cue timing matches the video.
-    public static async Task WriteSrtAsync(IReadOnlyList<Scene> scenes, string outputPath)
+    public static async Task WriteSrtAsync(IReadOnlyList<Scene> scenes, string outputPath, double offsetSeconds = 0)
     {
         var sb = new StringBuilder();
-        var cursor = TimeSpan.Zero;
+        var cursor = TimeSpan.FromSeconds(offsetSeconds);
 
         for (var i = 0; i < scenes.Count; i++)
         {

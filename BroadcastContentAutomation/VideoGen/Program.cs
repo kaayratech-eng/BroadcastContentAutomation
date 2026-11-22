@@ -23,6 +23,7 @@
 
 using GiggleGarden.Shared;
 using Microsoft.Extensions.Configuration;
+using System.Runtime.InteropServices;
 
 var config = new ConfigurationBuilder()
     .SetBasePath(AppContext.BaseDirectory)
@@ -50,6 +51,7 @@ for (var i = 0; i < args.Length; i++)
         case "--retts": mode = "retts"; break;
         case "--test-tts": mode = "test-tts"; break;
         case "--dry-script": mode = "dry-script"; break;
+        case "--self-test": mode = "self-test"; break;
         case "--long": longForm = true; break;
         case "--job" when i + 1 < args.Length: job = args[++i]; break;
         case "--topic" when i + 1 < args.Length: topic = args[++i]; break;
@@ -61,12 +63,14 @@ for (var i = 0; i < args.Length; i++)
             break;
         case "--help" or "-h":
             Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format <id>] [--long]   (valid --format ids depend on --profile; see that profile's Formats catalog. --long generates a 12-15 minute YouTube documentary cut instead of the usual ~8-scene short; only supported by profiles with AllowsContextScenes.)");
+            Console.WriteLine("       VideoGen --prep --job job-YYYYMMDD-HHMMSS [--long] [--profile ...]   resume a --prep that died during script generation, continuing from the next act after the job's script-partial.json checkpoint (acts already saved are reused, never regenerated)");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
-            Console.WriteLine("       VideoGen --resume   [--job job-YYYYMMDD-HHMMSS]   continue an interrupted --prep, skipping any scene whose audio/art is already on disk");
+            Console.WriteLine("       VideoGen --resume   [--job job-YYYYMMDD-HHMMSS]   continue an interrupted --prep, skipping any scene whose audio/art is already on disk (falls back to the script-partial.json checkpoint when no script.json exists yet)");
             Console.WriteLine("       VideoGen --manual --script-file <path> --format <id> [--language en|hi|pa] [--profile ...]   start a new job from a hand-written script.json-shaped file instead of calling the AI script provider");
             Console.WriteLine("       VideoGen --retts    [--job job-YYYYMMDD-HHMMSS]   re-voice an existing job");
             Console.WriteLine("       VideoGen --test-tts [--language en|hi|pa]   synthesize a sample line on every reachable provider, no Vidu/Claude spend");
-            Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...] [--long]   one script-generation call only, no TTS/character-draw/Vidu spend");
+            Console.WriteLine("       VideoGen --dry-script [--topic \"...\"] [--language en|hi|pa] [--format ...] [--long] [--job job-YYYYMMDD-HHMMSS]   one script-generation call only, no TTS/character-draw/Vidu spend (--job resumes generation from that job's script-partial.json checkpoint, for testing the resume path)");
+            Console.WriteLine("       VideoGen --self-test   run the built-in checks (JSON salvage repair) with no API spend");
             Console.WriteLine("       VideoGen --status   lists every job with a decision still pending: never rendered, rendered but not approved, or approved and processed but never actually published anywhere");
             return 0;
     }
@@ -122,6 +126,23 @@ if (longForm && !profile.AllowsContextScenes)
 
 var jsonOptions = Sidecar.Options;
 
+// If the process is killed by a signal (driver shutdown, VM teardown), say
+// so in the log instead of vanishing silently - the last checkpoint line
+// plus this line pin down where it died. SIGKILL/OOM cannot be caught;
+// the per-act heartbeat lines in ScriptGenerator are the backstop there.
+using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
+{
+    Console.Error.WriteLine(
+        $"[{DateTime.UtcNow:HH:mm:ss}Z] FATAL: received SIGTERM - killed externally " +
+        "(driver/VM shutdown?). Last checkpoint is in script-partial.json; re-run --prep --job to resume.");
+    ctx.Cancel = false;
+});
+using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx =>
+{
+    Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}Z] FATAL: received SIGINT - interrupted.");
+    ctx.Cancel = false;
+});
+
 try
 {
     return mode switch
@@ -133,12 +154,13 @@ try
         "retts" => await RunRettsAsync(),
         "test-tts" => await RunTestTtsAsync(),
         "dry-script" => await RunDryScriptAsync(),
+        "self-test" => RunSelfTest(),
         _ => await RunAssembleAsync(),
     };
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"FATAL: {ex.Message}");
+    Console.Error.WriteLine($"FATAL: [{ex.GetType().Name}] {ex.Message}");
     return 1;
 }
 
@@ -146,6 +168,22 @@ catch (Exception ex)
 
 async Task<int> RunPrepAsync()
 {
+    // Resume-from-partial: --prep --job <existing job dir> continues script
+    // generation from the next act after the job's script-partial.json
+    // checkpoint. The saved acts are reused verbatim; only the missing acts
+    // are generated, then the normal prep tail (intro, TTS, visuals) runs.
+    if (job is not null)
+    {
+        var resumeDir = ResolveJobDirectory();
+        if (File.Exists(Path.Combine(resumeDir, "script.json")))
+            throw new InvalidOperationException(
+                $"{resumeDir} already has a script.json - run --resume --job {Path.GetFileName(resumeDir)} instead.");
+        if (!File.Exists(Path.Combine(resumeDir, "script-partial.json")))
+            throw new InvalidOperationException(
+                $"--prep --job {job}: no script-partial.json in {resumeDir} - nothing to resume. Omit --job for a fresh prep.");
+        return await RunPrepResumeAsync(resumeDir);
+    }
+
     var workDir = Directory.CreateDirectory(
         Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
     Console.WriteLine($"Workspace: {workDir}");
@@ -161,7 +199,11 @@ async Task<int> RunPrepAsync()
     var recentNames = profile.UsesCharacterMascot && pooled is null
         ? CharacterSource.RecentNames(cfg, workDir) : [];
 
-    var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
+    // The news profile needs the structured report (category + headline list)
+    // for its faceless prompt; other profiles only ever read the text block,
+    // so FetchAsync's plain-text wrapper still serves them unchanged.
+    var trendReport = topic is null ? await TrendResearch.FetchReportAsync(profile, cfg) : null;
+    var trendContext = trendReport?.Text;
     // Trend snapshot per job (priority 3) + analytics brief (priority 1):
     // both are saved into the job folder so the script, tags, and later
     // learning all reference the same source, and so a job can be audited
@@ -180,12 +222,28 @@ async Task<int> RunPrepAsync()
     }
     var recentTopics = topic is null ? await TopicHistory.RecentAsync(profile.Id) : [];
     var scriptProvider = ScriptProviderFactory.Create(cfg);
+    // Total acts for the checkpoint: news long-form has 3 acts, mascot
+    // long-form has 4. (Older checkpoints recorded 4 for the news path -
+    // the resume path derives the total from the profile instead.)
+    var totalActs = longForm ? (profile.UsesCharacterMascot ? 4 : 3) : 1;
     var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm, recentTopics,
-        onActComplete: (s, act) => SavePartialScriptAsync(workDir, s, act));
+        onActComplete: (s, act) => SavePartialScriptAsync(workDir, s, act, totalActs),
+        topicCategory: trendReport?.Category, newsItems: trendReport?.News);
+    return await FinishPrepAsync(workDir, script, pooled, addToPool);
+}
+
+// Shared tail of --prep (fresh and resumed): once GenerateAsync has returned
+// a full script, persist it, add the intro bumper, draw the character, and
+// run the TTS/visual loops. Called by RunPrepAsync and RunPrepResumeAsync
+// alike, so a resumed prep finishes identically to a fresh one.
+async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBrief? pooled, bool addToPool)
+{
     // Full script generated: script.json (saved below) supersedes the checkpoints.
     DeletePartialScriptFiles(workDir);
-    script.Language = language!;
-    script.Profile = profile.Id;
+    // GenerateAsync sets these early now, so they are normally already set;
+    // only fill them in when a script arrived without them.
+    if (string.IsNullOrWhiteSpace(script.Language)) script.Language = language!;
+    if (string.IsNullOrWhiteSpace(script.Profile)) script.Profile = profile.Id;
     Console.WriteLine($"Hook score: {script.HookScore}/100, Title SEO score: {script.SeoScoreValue}/100 — \"{script.Title}\"");
     if (script.HookScore < 50)
         Console.WriteLine("  Warning: hook score is low — scene 1 may not stop a scroll. Consider rewriting it before TTS.");
@@ -218,6 +276,14 @@ async Task<int> RunPrepAsync()
     //    GenerateAsync, so it never needed the drawn portrait to exist first.
     InsertIntroScene(script);
 
+    // Curiosity brief (Rishi 2026-11-21, video #3 onward): build the brief
+    // scenes from script.Brief (2 teaser sentences) BEFORE the TTS loop so
+    // their narration is voiced with the rest. Images are NOT set here - the
+    // main scenes' art is only resolved by RunVisualLoopAsync below, so
+    // ResolveBriefImages(script) fills them in after that loop, reusing the
+    // most dramatic main-scene images (no new art generated).
+    BuildBriefScenes(script);
+
     // Persist right away, before the blocking manual-art step below - a script this far
     // along already spent real API quota to generate, so a crash, a closed terminal, or a
     // stuck art prompt must not lose it. --resume picks up from exactly this file (and
@@ -228,12 +294,18 @@ async Task<int> RunPrepAsync()
     // reusing its topic.
     await SaveScriptAsync(workDir, script);
 
-    var characterImage = pooled?.ImagePath ?? await CharacterSource.DrawAsync(profile, cfg, script, workDir);
+    // Faceless profiles have no character to draw - the intro bumper is a title
+    // card and every scene is art, stock, or a data visual. characterImage stays
+    // empty; RunVisualLoopAsync never uses it for an automated art provider.
+    var characterImage = !profile.UsesCharacterMascot ? ""
+        : pooled?.ImagePath ?? await CharacterSource.DrawAsync(profile, cfg, script, workDir);
     script.CharacterImagePath = characterImage;
     if (addToPool) CharacterSource.SaveToPool(profile, script, characterImage);
     await SaveScriptAsync(workDir, script);
 
-    Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+    Console.WriteLine(profile.UsesCharacterMascot
+        ? $"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}"
+        : $"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, category {script.TopicCategory}");
 
     // 3. Narration, then visuals - both shared with --resume, which calls the same two
     //    loops against a loaded-not-generated script and skips whatever is already on disk.
@@ -244,6 +316,10 @@ async Task<int> RunPrepAsync()
         await RunVisualLoopAsync(workDir, script, characterImage);
     else
         credits = await RunViduLoopAsync(workDir, script, characterImage);
+
+    // Brief images (Rishi 2026-11-21): now that the main scenes' art is
+    // resolved, fill the brief scenes' images from the most dramatic ones.
+    ResolveBriefImages(script);
 
     await SaveScriptAsync(workDir, script);
 
@@ -264,6 +340,84 @@ async Task<int> RunPrepAsync()
     return 0;
 }
 
+// Loads a job's script-partial.json + script-progress.json: the script as of
+// the last completed act, and how many acts that was. Throws a clear error
+// when there is nothing usable to resume from.
+async Task<(VideoScript Script, int CompletedActs)> LoadPartialScriptAsync(string workDir)
+{
+    var partialPath = Path.Combine(workDir, "script-partial.json");
+    var script = System.Text.Json.JsonSerializer.Deserialize<VideoScript>(
+        await File.ReadAllTextAsync(partialPath), jsonOptions)
+        ?? throw new InvalidDataException($"{partialPath} is not valid script JSON.");
+    if (script.Scenes.Count == 0)
+        throw new InvalidDataException($"{partialPath} has no scenes - nothing to resume.");
+    if (string.IsNullOrWhiteSpace(script.Title))
+        throw new InvalidDataException($"{partialPath} has no title - nothing to resume.");
+    var completedActs = 0;
+    var progressPath = Path.Combine(workDir, "script-progress.json");
+    if (File.Exists(progressPath))
+    {
+        try
+        {
+            using var doc = System.Text.Json.JsonDocument.Parse(await File.ReadAllTextAsync(progressPath));
+            if (doc.RootElement.TryGetProperty("completedActs", out var ca) && ca.TryGetInt32(out var n))
+                completedActs = n;
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  Warning: could not read {progressPath}: {ex.Message}");
+        }
+    }
+    if (completedActs <= 0)
+        throw new InvalidDataException(
+            $"{progressPath} is missing or has no completedActs - cannot tell how many acts are done.");
+    return (script, completedActs);
+}
+
+// Continues a --prep that died during script generation: loads the job's
+// partial checkpoint, generates only the missing acts, then runs the normal
+// prep tail. The saved acts are never regenerated. The trend snapshot the
+// original prep saved is the facts source for the remaining acts - trending
+// news is NOT re-fetched, which could pick a different story and break
+// continuity with the saved acts.
+async Task<int> RunPrepResumeAsync(string workDir)
+{
+    Console.WriteLine($"Workspace: {workDir}");
+    var (partial, completedActs) = await LoadPartialScriptAsync(workDir);
+    // A partial only ever exists for long-form (short-form has no acts).
+    // The total is derived from the profile, not the stored value: older
+    // checkpoints recorded 4 for the news path, which only has 3 acts.
+    var totalActs = profile.UsesCharacterMascot ? 4 : 3;
+    // A newer checkpoint carries the profile it was written under, which
+    // wins over the CLI hint; an older checkpoint has an empty Profile and
+    // the CLI --profile is then authoritative.
+    profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(partial.Profile) ? profile : ContentProfileRegistry.Get(partial.Profile));
+    Console.WriteLine(
+        $"  Resuming \"{partial.Title}\" from act {completedActs}/{totalActs} " +
+        $"({partial.Scenes.Count} scenes kept, category {partial.TopicCategory}, profile {profile.Id})");
+    if (completedActs >= totalActs)
+    {
+        Console.WriteLine("  All acts are already saved - finalizing the partial as the full script.");
+        return await FinishPrepAsync(workDir, partial, null, false);
+    }
+    var snapshotPath = Path.Combine(workDir, "trend-snapshot.txt");
+    var trendContext = File.Exists(snapshotPath) ? await File.ReadAllTextAsync(snapshotPath) : null;
+    if (trendContext is null)
+        Console.WriteLine("  Warning: no trend-snapshot.txt in this job - continuation acts validate against the recap only.");
+    // Language: the CLI flag wins when it is non-default; otherwise the
+    // partial's recorded language (new checkpoints carry the right one).
+    var resumeLanguage = language != "en" ? language!
+        : string.IsNullOrWhiteSpace(partial.Language) ? "en" : partial.Language;
+    var formatOverrideForResume = string.IsNullOrWhiteSpace(partial.Format) ? formatOverride : partial.Format;
+    var scriptProvider = ScriptProviderFactory.Create(cfg);
+    var script = await ScriptGenerator.GenerateAsync(profile, topic: null, resumeLanguage, scriptProvider, trendContext,
+        character: null, avoidNames: null, formatOverride: formatOverrideForResume, longForm: true, avoidTopics: [],
+        onActComplete: (s, act) => SavePartialScriptAsync(workDir, s, act, totalActs),
+        topicCategory: partial.TopicCategory, newsItems: null,
+        resumeFrom: new ScriptResume(partial, completedActs));
+    return await FinishPrepAsync(workDir, script, null, false);
+}
+
 // The branded intro bumper as scene zero - shared by --prep and --manual, since a
 // hand-written script needs the exact same channel greeting/thumbnail-source clip a
 // generated one gets. See RunPrepAsync's comment above the call site for why this has to
@@ -278,7 +432,70 @@ void InsertIntroScene(VideoScript script)
         Narration = script.IntroText,
         ImagePrompt = introImagePrompt,
         MotionPrompt = introMotionPrompt,
+        // Faceless profiles have no character: the intro bumper is an art scene,
+        // not a character moment (it used to keep the Scene default "character",
+        // which mislabelled scene 1 in every Trendline Now job).
+        SceneKind = profile.UsesCharacterMascot ? "character" : "art",
     });
+}
+
+// Curiosity brief (Rishi 2026-11-21, video #3 onward): split script.Brief
+// (the model's 2 teaser sentences) into one BriefScene per sentence, so the
+// teaser plays as 2 short beats before the intro sting. Images are NOT set
+// here - the main scenes' art is only resolved by RunVisualLoopAsync, so
+// ResolveBriefImages fills them in after that loop. A script with no Brief
+// (pre-feature, video #1/#2) gets no brief scenes at all.
+void BuildBriefScenes(VideoScript script)
+{
+    script.BriefScenes = [];
+    if (string.IsNullOrWhiteSpace(script.Brief)) return;
+    // Split into sentences on ". " / "! " / "? " boundaries; take the first
+    // two (the model was asked for exactly two). A single-sentence brief
+    // still yields one brief scene.
+    var sentences = script.Brief
+        .Split(['.', '!', '?'], StringSplitOptions.RemoveEmptyEntries)
+        .Select(s => s.Trim())
+        .Where(s => s.Length > 0)
+        .Take(2)
+        .Select(s => s + ".")
+        .ToList();
+    foreach (var sentence in sentences)
+    {
+        script.BriefScenes.Add(new Scene
+        {
+            Narration = sentence,
+            // Art scene so the assembler renders it as an image (not a data
+            // visual); the image itself is filled in by ResolveBriefImages.
+            SceneKind = "art",
+        });
+    }
+    if (script.BriefScenes.Count > 0)
+        Console.WriteLine($"  Brief: {script.BriefScenes.Count} teaser scene(s) ({script.BriefScenes.Sum(s => s.Narration.Length)} chars) - plays before the intro sting.");
+}
+
+// Fill the brief scenes' images from the main scenes' most dramatic art:
+// the first two story scenes (index >= 1, skipping the intro bumper) that
+// have a resolved image. Reuses art, so no new image is generated for the
+// brief. If no main scene has an image yet, the brief is dropped (a brief
+// with no visual cannot render).
+void ResolveBriefImages(VideoScript script)
+{
+    if (script.BriefScenes.Count == 0) return;
+    var dramatic = script.Scenes
+        .Skip(1)
+        .Where(s => s.ImagePath is not null || s.LandscapeImagePath is not null)
+        .Take(script.BriefScenes.Count)
+        .ToList();
+    for (var i = 0; i < script.BriefScenes.Count; i++)
+    {
+        if (i >= dramatic.Count) { script.BriefScenes.RemoveRange(i, script.BriefScenes.Count - i); break; }
+        script.BriefScenes[i].ImagePath = dramatic[i].ImagePath;
+        script.BriefScenes[i].LandscapeImagePath = dramatic[i].LandscapeImagePath;
+        script.BriefScenes[i].ClipPath = dramatic[i].ClipPath;
+        script.BriefScenes[i].LandscapeClipPath = dramatic[i].LandscapeClipPath;
+    }
+    if (script.BriefScenes.Count == 0)
+        Console.WriteLine("  Brief dropped: no dramatic main-scene image to reuse.");
 }
 
 // Narration for every scene. Shared by --prep and --resume: a scene whose scene{i:D2}.mp3
@@ -289,6 +506,10 @@ void InsertIntroScene(VideoScript script)
 async Task RunTtsLoopAsync(string workDir, VideoScript script)
 {
     var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
+    // Topic-aware pacing (Trendline Now): the resolved category's rate/pitch win
+    // over the format's, so a gaming video reads faster than a finance one while
+    // the voice (DavisNeural) stays the same.
+    var (rate, pitch) = ResolvePacing(profile, script, formatDef);
     var tts = TtsProviderFactory.Create(cfg, profile, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
@@ -303,7 +524,11 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
             continue;
         }
 
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
+        // Voice variations OFF (Rishi 2026-11-17): no per-scene mood styles for
+        // either channel - the express-as variations sound poor. Narration is
+        // plain (no styleOverride); the profile's fixed style is null too, so
+        // the voice stays consistent across every scene.
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, rate, pitch, null);
         // Silence trim (priority 6, free FFmpeg): TTS files often start/end
         // with dead air, and dead air at the start of a Short is a scroll-past.
         // Trimming here also shortens DurationSeconds, which is what the
@@ -313,18 +538,62 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({scene.DurationSeconds:0.0}s)");
         await SaveScriptAsync(workDir, script);
+        // Pace the calls (2026-11-21): Azure Free F0 throttles with HTTP 429
+        // after ~20-35 rapid synth calls - the first long-form prep died at
+        // 34/43. A 2s gap between calls keeps the burst rate down; the
+        // provider's retry (AzureHelperTtsProvider) covers any throttle
+        // that still lands.
+        if (i < script.Scenes.Count - 1) await Task.Delay(TimeSpan.FromSeconds(2));
+    }
+
+    // Brief narration (Rishi 2026-11-21, video #3 onward): same voice/pace as
+    // the main scenes, saved as brief00.mp3 / brief01.mp3 so they never clash
+    // with scene00.mp3. Skipped when the script has no brief (pre-feature).
+    for (var i = 0; i < script.BriefScenes.Count; i++)
+    {
+        var scene = script.BriefScenes[i];
+        var audioPath = Path.Combine(workDir, $"brief{i:D2}.mp3");
+
+        if (File.Exists(audioPath))
+        {
+            scene.AudioPath = audioPath;
+            scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
+            Console.WriteLine($"Brief TTS {i + 1}/{script.BriefScenes.Count}: already on disk ({scene.DurationSeconds:0.0}s)");
+            continue;
+        }
+
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, rate, pitch, null);
+        await VideoAssembler.TrimSilenceAsync(cfg, audioPath);
+        scene.AudioPath = audioPath;
+        scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
+        Console.WriteLine($"Brief TTS {i + 1}/{script.BriefScenes.Count} ({scene.DurationSeconds:0.0}s)");
+        await SaveScriptAsync(workDir, script);
+        if (i < script.BriefScenes.Count - 1) await Task.Delay(TimeSpan.FromSeconds(2));
     }
 
     var total = script.Scenes.Sum(s => s.DurationSeconds + 0.5);
     Console.WriteLine($"Narration total: {total:0}s");
 }
 
+// Category pacing override for profiles with a CategoryStyles table: the
+// script's persisted TopicCategory picks the style; anything unresolved falls
+// back to the format's own rate/pitch. DavisNeural stays the voice throughout
+// - only the delivery speed/energy shifts with the topic.
+(string Rate, string Pitch) ResolvePacing(ContentProfile p, VideoScript s, ContentFormatDef f) =>
+    !string.IsNullOrWhiteSpace(s.TopicCategory) && p.CategoryStyles is not null &&
+    p.CategoryStyles.TryGetValue(s.TopicCategory, out var style)
+        ? (style.PacingRate, style.PacingPitch)
+        : (f.Rate, f.Pitch);
+
 // The "like, follow & subscribe" outro line is fixed per channel (see
 // ContentProfile.OutroDestinationSpoken) rather than per-video, so it is synthesized once
 // and cached on disk under VideoGen/assets/audio/outro - every later render for the same
 // profile/language/text reuses the same file instead of paying TTS again for words that
 // never change.
-async Task<string> ResolveOutroAudioAsync(string spokenText)
+// The outro voiceover uses the same pacing as the scenes (the resolved
+// category/format rate/pitch, passed in by the caller) so the end card sounds
+// like the same narrator, not a different read.
+async Task<string> ResolveOutroAudioAsync(string spokenText, string rate, string pitch)
 {
     // Linux port: outro voiceovers are cached under the run's WorkDirectory
     // (shared across jobs) instead of a hardcoded Windows assets folder, so
@@ -338,7 +607,7 @@ async Task<string> ResolveOutroAudioAsync(string spokenText)
     if (File.Exists(audioPath)) return audioPath;
 
     var tts = TtsProviderFactory.Create(cfg, profile, language!);
-    await tts.SynthesizeAsync(spokenText, language!, audioPath, "-10%", "+6%");
+    await tts.SynthesizeAsync(spokenText, language!, audioPath, rate, pitch);
     Console.WriteLine($"Outro audio synthesized: {audioPath}");
     return audioPath;
 }
@@ -379,7 +648,19 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
         var isIntro = i == 0;
         var canReuse = script.IsLongForm && !isIntro && lastGroup == scene.VisualGroup && lastSceneKind == scene.SceneKind;
 
-        if (scene.SceneKind == "context")
+        if (scene.SceneKind == "visual")
+        {
+            // Data visuals are drawn by Remotion from the spec at assemble time -
+            // nothing to download or generate here. Re-check the spec (a
+            // hand-edited script.json could carry a bad one); the spec travels
+            // with the scene into the Remotion props. Group reuse below treats it
+            // like any other resolved visual (its ImagePath/ClipPath stay null,
+            // so a following art/context scene in the same group never reuses it).
+            if (scene.VisualSpec is null)
+                throw new InvalidOperationException($"Scene {label}: a \"visual\" scene needs a visualSpec.");
+            Console.WriteLine($"Visual {label}: {scene.VisualSpec.Kind} \"{scene.VisualSpec.Title ?? scene.VisualSpec.Text}\"");
+        }
+        else if (scene.SceneKind == "context")
         {
             var stockBase = Path.Combine(workDir, $"scene{i:D2}-stock");
             var existing = File.Exists(stockBase + ".mp4") ? stockBase + ".mp4"
@@ -461,7 +742,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                 // keeps the full height.
                 var squarePrompt = ImageClient.BuildPrompt(
                     scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                    ImageClient.Orientation.Square, matchReference: true);
+                    ImageClient.Orientation.Square, matchReference: profile.UsesCharacterMascot);
                 var squarePath = await GenerateSquareArtAsync(cfg, squarePrompt, artBase + "-square");
                 scene.ImagePath = await DeriveArtAsync(cfg, squarePath, artBase + ".png", 1080, 1920);
                 scene.LandscapeImagePath = squarePath;
@@ -471,7 +752,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
             {
                 var prompt = ImageClient.BuildPrompt(
                     scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                    ImageClient.Orientation.Portrait, matchReference: true);
+                    ImageClient.Orientation.Portrait, matchReference: profile.UsesCharacterMascot);
                 scene.ImagePath = await ManualArtClient.PromptAndWaitAsync(
                     prompt, artBase + ".png", ImageClient.Orientation.Portrait, characterImage);
 
@@ -508,7 +789,7 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                     {
                         var landscapePrompt = ImageClient.BuildPrompt(
                             scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
-                            ImageClient.Orientation.Landscape, matchReference: true);
+                            ImageClient.Orientation.Landscape, matchReference: profile.UsesCharacterMascot);
                         scene.LandscapeImagePath = await ManualArtClient.PromptAndWaitAsync(
                             landscapePrompt, landscapeBase + ".png", ImageClient.Orientation.Landscape, characterImage);
                     }
@@ -553,6 +834,11 @@ static async Task<string> GenerateSquareArtAsync(
         "pollinations", StringComparison.OrdinalIgnoreCase);
     var attempts = new List<Func<Task<string>>>
     {
+        // Free pool first (2026-11-22): OVHcloud SDXL -> Pollinations
+        // anonymous -> AI Horde -> Pexels stock. All three keyed providers
+        // failed at once on 2026-11-21, so the pool is the primary path now;
+        // the keyed providers below remain as backup.
+        () => ArtPoolClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg"),
         () => primaryIsPollinations
             ? PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg")
             : CloudflareArtClient.GenerateFluxSquareAsync(cfg, prompt, squareBase + ".jpg"),
@@ -640,6 +926,16 @@ async Task<int> RunResumeAsync()
     var workDir = ResolveJobDirectory();
     Console.WriteLine($"Workspace: {workDir}");
 
+    // No script.json yet but a partial checkpoint exists: the prep died
+    // during script generation, so resume generation from the next act
+    // instead of failing - the same path --prep --job takes.
+    if (!File.Exists(Path.Combine(workDir, "script.json")) &&
+        File.Exists(Path.Combine(workDir, "script-partial.json")))
+    {
+        Console.WriteLine("  No script.json yet - resuming script generation from the partial checkpoint.");
+        return await RunPrepResumeAsync(workDir);
+    }
+
     var script = await LoadScriptAsync(workDir);
     language = string.IsNullOrWhiteSpace(script.Language) ? language : script.Language;
     profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile));
@@ -647,9 +943,13 @@ async Task<int> RunResumeAsync()
     if (script.Scenes.Count == 0)
         throw new InvalidOperationException($"{workDir} has a script.json but no scenes yet - nothing to resume. Re-run --prep.");
 
-    Console.WriteLine($"Resuming \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+    Console.WriteLine(profile.UsesCharacterMascot
+        ? $"Resuming \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}"
+        : $"Resuming \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, category {script.TopicCategory}");
 
-    var characterImage = script.CharacterImagePath is { Length: > 0 } saved && File.Exists(saved)
+    // Faceless profiles have no character image to resolve.
+    var characterImage = !profile.UsesCharacterMascot ? ""
+        : script.CharacterImagePath is { Length: > 0 } saved && File.Exists(saved)
         ? saved
         : File.Exists(Path.Combine(workDir, "character.png"))
             ? Path.Combine(workDir, "character.png")
@@ -723,11 +1023,15 @@ async Task<int> RunManualAsync()
 
     // Manual scripts always draw fresh rather than pulling from the character pool - the
     // script already names a specific figure, not an interchangeable pool pick.
-    var characterImage = await CharacterSource.DrawAsync(profile, cfg, script, workDir);
+    // Faceless profiles have no character to draw.
+    var characterImage = !profile.UsesCharacterMascot ? ""
+        : await CharacterSource.DrawAsync(profile, cfg, script, workDir);
     script.CharacterImagePath = characterImage;
     await SaveScriptAsync(workDir, script);
 
-    Console.WriteLine($"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}");
+    Console.WriteLine(profile.UsesCharacterMascot
+        ? $"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, starring {script.CharacterName}"
+        : $"Script: \"{script.Title}\" — {script.Format} — {script.Scenes.Count} scenes, category {script.TopicCategory}");
 
     await RunTtsLoopAsync(workDir, script);
 
@@ -772,17 +1076,25 @@ async Task<int> RunRettsAsync()
     profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(script.Profile) ? profile : ContentProfileRegistry.Get(script.Profile));
 
     var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
+    var (rate, pitch) = ResolvePacing(profile, script, formatDef);
     var tts = TtsProviderFactory.Create(cfg, profile, language!);
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var scene = script.Scenes[i];
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
-        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, formatDef.Rate, formatDef.Pitch, scene.Mood);
+        // Voice variations OFF (Rishi 2026-11-17): no per-scene mood styles -
+        // see the prep call site. Plain narration, no styleOverride.
+        await tts.SynthesizeAsync(scene.Narration, language!, audioPath, rate, pitch, null);
         scene.AudioPath = audioPath;
 
         var before = scene.DurationSeconds;
         scene.DurationSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, audioPath);
         Console.WriteLine($"TTS {i + 1}/{script.Scenes.Count} ({before:0.0}s -> {scene.DurationSeconds:0.0}s)");
+        // Pace the calls (2026-11-21): Azure Free F0 throttles with HTTP 429
+        // after ~20-35 rapid synth calls. A 2s gap plus the provider's retry
+        // (AzureHelperTtsProvider) keeps a 77-scene re-voice from dying
+        // partway through.
+        if (i < script.Scenes.Count - 1) await Task.Delay(TimeSpan.FromSeconds(2));
     }
 
     await SaveScriptAsync(workDir, script);
@@ -838,23 +1150,85 @@ async Task<int> RunTestTtsAsync()
 // so it never collides with a real job- folder --assemble would look for.
 async Task<int> RunDryScriptAsync()
 {
-    var trendContext = topic is null ? await TrendResearch.FetchAsync(profile, cfg) : null;
-    var scriptProvider = ScriptProviderFactory.Create(cfg);
     var outDir = Directory.CreateDirectory(Path.Combine(cfg.WorkDirectory, "dry-script")).FullName;
-    var script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride, longForm,
-        onActComplete: (s, act) => SavePartialScriptAsync(outDir, s, act));
+    VideoScript script;
+    if (job is not null)
+    {
+        // --dry-script --job <dir>: resume generation from that job's partial
+        // checkpoint (no TTS/art, no writes to the job dir) - the way to prove
+        // the resume path works without spending anything on a real prep.
+        var resumeDir = ResolveJobDirectory();
+        var (partial, completedActs) = await LoadPartialScriptAsync(resumeDir);
+        var totalActs = profile.UsesCharacterMascot ? 4 : 3;
+        profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(partial.Profile) ? profile : ContentProfileRegistry.Get(partial.Profile));
+        var snapshotPath = Path.Combine(resumeDir, "trend-snapshot.txt");
+        var trendContext = File.Exists(snapshotPath) ? await File.ReadAllTextAsync(snapshotPath) : null;
+        var scriptProvider = ScriptProviderFactory.Create(cfg);
+        var resumeLanguage = language != "en" ? language!
+            : string.IsNullOrWhiteSpace(partial.Language) ? "en" : partial.Language;
+        var formatOverrideForResume = string.IsNullOrWhiteSpace(partial.Format) ? formatOverride : partial.Format;
+        Console.WriteLine($"Workspace: {resumeDir} (dry-script resume - the job dir is not modified)");
+        Console.WriteLine(
+            $"  Resuming \"{partial.Title}\" from act {completedActs}/{totalActs} " +
+            $"({partial.Scenes.Count} scenes kept, category {partial.TopicCategory}, profile {profile.Id})");
+        // Snapshot the partial's scene content BEFORE generation: GenerateAsync
+        // appends to the same list object, so comparing against `partial`
+        // after the call would compare the list to itself.
+        var partialSceneContent = partial.Scenes
+            .Select(s => (s.Narration, s.ImagePrompt, s.StockQuery))
+            .ToList();
+        script = await ScriptGenerator.GenerateAsync(profile, topic: null, resumeLanguage, scriptProvider, trendContext,
+            character: null, avoidNames: null, formatOverride: formatOverrideForResume, longForm: true, avoidTopics: [],
+            onActComplete: (s, act) => SavePartialScriptAsync(outDir, s, act, totalActs),
+            topicCategory: partial.TopicCategory, newsItems: null,
+            resumeFrom: new ScriptResume(partial, completedActs));
+        // Verify the saved acts came back verbatim: the resumed script's
+        // first N scenes must carry the same model-authored content as the
+        // partial's. (SceneKind/IsSpeculative are excluded - the
+        // post-generation normalization pass may legitimately adjust those,
+        // exactly as a fresh full run would.)
+        var kept = script.Scenes.Take(partialSceneContent.Count).ToList();
+        var verbatim = kept.Count == partialSceneContent.Count &&
+            kept.Zip(partialSceneContent).All(p =>
+                p.First.Narration == p.Second.Narration &&
+                p.First.ImagePrompt == p.Second.ImagePrompt &&
+                p.First.StockQuery == p.Second.StockQuery);
+        Console.WriteLine(
+            $"  Resume check: first {partialSceneContent.Count} scenes " +
+            $"{(verbatim ? "IDENTICAL to the partial (reused verbatim)" : "DIFFER - resume did not reuse the saved acts!")}; " +
+            $"total scenes now {script.Scenes.Count} (was {partialSceneContent.Count})");
+        if (!verbatim)
+            throw new InvalidDataException("Resume verification failed - the resumed script did not reuse the partial's scenes verbatim.");
+    }
+    else
+    {
+        var trendReport = topic is null ? await TrendResearch.FetchReportAsync(profile, cfg) : null;
+        var trendContext = trendReport?.Text;
+        var scriptProvider = ScriptProviderFactory.Create(cfg);
+        var totalActs = longForm ? (profile.UsesCharacterMascot ? 4 : 3) : 1;
+        script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride, longForm,
+            onActComplete: (s, act) => SavePartialScriptAsync(outDir, s, act, totalActs),
+            topicCategory: trendReport?.Category, newsItems: trendReport?.News);
+    }
     // Full script generated: the timestamped save below supersedes the checkpoints.
     DeletePartialScriptFiles(outDir);
 
     Console.WriteLine($"Format: {script.Format}   Title: \"{script.Title}\"   IsLongForm: {script.IsLongForm}");
-    Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
+    if (profile.UsesCharacterMascot)
+        Console.WriteLine($"Character: {script.CharacterName} - {script.CharacterDescription}");
+    else
+        Console.WriteLine($"Topic category: {script.TopicCategory}");
     Console.WriteLine($"MusicMood: {script.MusicMood}   NarrationStyle: {script.NarrationStyle}");
     Console.WriteLine($"Intro: {script.IntroText}");
     for (var i = 0; i < script.Scenes.Count; i++)
     {
         var s = script.Scenes[i];
         var groupTag = script.IsLongForm ? $" [group {s.VisualGroup}]" : "";
-        Console.WriteLine($"  Scene {i + 1} ({s.Narration.Length} chars){groupTag}: {s.Narration}");
+        var kindTag = profile.UsesCharacterMascot ? "" : $" [{s.SceneKind}]";
+        var visualTag = s.SceneKind == "visual" && s.VisualSpec is not null
+            ? $" -> {s.VisualSpec.Kind} \"{s.VisualSpec.Title ?? s.VisualSpec.Text}\""
+            : "";
+        Console.WriteLine($"  Scene {i + 1} ({s.Narration.Length} chars){groupTag}{kindTag}{visualTag}: {s.Narration}");
     }
     if (script.IsLongForm)
     {
@@ -869,6 +1243,61 @@ async Task<int> RunDryScriptAsync()
     Console.WriteLine($"Saved -> {outPath}");
 
     return 0;
+}
+
+// Built-in checks with no API spend: verifies the JSON salvage repair
+// (ScriptGenerator.SalvageTruncatedJson) against synthetic truncated
+// payloads. Exit 0 when every case passes, 1 otherwise.
+int RunSelfTest()
+{
+    var failures = 0;
+    void Check(bool ok, string name)
+    {
+        Console.WriteLine($"  {(ok ? "PASS" : "FAIL")}: {name}");
+        if (!ok) failures++;
+    }
+
+    // Case 1: a response cut off mid-scene inside the scenes array - the
+    // exact failure mode from job-20261122-000432 ("Expected depth to be
+    // zero ... Path: $.scenes[11]"). The 10 complete scenes must survive.
+    var scenes = string.Join(",\n", Enumerable.Range(1, 12).Select(i =>
+        $$"""{"narration": "Scene {{i}} narration here.", "imagePrompt": "Image {{i}}", "sceneKind": "art", "visualGroup": {{i}}}"""));
+    var full = $$"""{"title": "Test", "description": "d", "tags": [], "scenes": [{{scenes}}]}""";
+    // Truncate inside scene 11's narration (after "Scene 11 narr").
+    var cutAt = full.IndexOf("Scene 11 narr", StringComparison.Ordinal) + "Scene 11 narr".Length;
+    var truncated = full[..cutAt];
+    var salvaged = ScriptGenerator.SalvageTruncatedJson(truncated);
+    Check(salvaged is not null, "truncated mid-scene response salvages to parseable JSON");
+    if (salvaged is not null)
+    {
+        try
+        {
+            var parsed = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, System.Text.Json.JsonElement>>(salvaged);
+            var count = parsed is not null && parsed.TryGetValue("scenes", out var arr) ? arr.GetArrayLength() : -1;
+            Check(count == 10, $"salvage keeps the 10 complete scenes (got {count})");
+            Check(parsed is not null && parsed.TryGetValue("title", out var t) && t.GetString() == "Test",
+                "salvage keeps the metadata head (title)");
+        }
+        catch (Exception ex)
+        {
+            Check(false, $"salvaged JSON parses ({ex.Message})");
+        }
+    }
+
+    // Case 2: a complete, valid response passes through untouched.
+    Check(ScriptGenerator.SalvageTruncatedJson(full) == full, "complete valid JSON is returned unchanged");
+
+    // Case 3: garbage with no scenes array cannot be salvaged.
+    Check(ScriptGenerator.SalvageTruncatedJson("not json at all") is null, "garbage with no scenes array returns null");
+    Check(ScriptGenerator.SalvageTruncatedJson("""{"title": "x", "scenes": []}""") is null,
+        "a scenes array with no complete scenes returns null");
+
+    // Case 4: markdown fences around a truncated response are stripped first.
+    var fenced = "```json\n" + truncated + "\n```";
+    Check(ScriptGenerator.SalvageTruncatedJson(fenced) is not null, "markdown-fenced truncated response salvages");
+
+    Console.WriteLine(failures == 0 ? "self-test: all checks passed" : $"self-test: {failures} check(s) FAILED");
+    return failures == 0 ? 0 : 1;
 }
 
 // ------------------------------------------------------------ assemble ------
@@ -890,7 +1319,9 @@ async Task<int> RunAssembleAsync()
         script.HookScore = GiggleGarden.Shared.SeoScore.ScoreHook(script.Scenes[0].Narration);
         if (script.TitleVariants.Count == 0) script.TitleVariants = GiggleGarden.Shared.SeoScore.TitleVariants(script.Title);
         if (string.IsNullOrWhiteSpace(script.CommentPrompt))
-            script.CommentPrompt = $"Which part of {script.CharacterName}'s story surprised you most? Tell us in the comments.";
+            script.CommentPrompt = profile.UsesCharacterMascot
+                ? $"Which part of {script.CharacterName}'s story surprised you most? Tell us in the comments."
+                : "What do you think happens next? Tell us in the comments.";
     }
     var formatDef = ScriptGenerator.PickFormat(profile, script.Format);
 
@@ -965,6 +1396,51 @@ async Task<int> RunAssembleAsync()
     Directory.CreateDirectory(outputDir);
     var rendered = new List<string>();
 
+    // Outro card/voiceover appended to every render. Profiles with branded
+    // OutroLines/OutroSpoken (Trendline Now) use those; everyone else keeps the
+    // legacy "LIKE, FOLLOW & SUBSCRIBE" + destination pair. The outro voiceover
+    // uses the same pacing as the scenes (ResolvePacing), so the end card
+    // sounds like the same narrator. AllowsContextScenes profiles additionally
+    // fold a "watch the full video" line into the vertical short only, since
+    // that render is a trimmed teaser for the landscape master.
+    var (outroRate, outroPitch) = ResolvePacing(profile, script, formatDef);
+    var baseOutroLines = profile.OutroLines ?? ["LIKE, FOLLOW & SUBSCRIBE", profile.OutroDestinationText];
+    var baseOutroSpoken = profile.OutroSpoken
+        ?? $"Like, follow, and subscribe on YouTube — {profile.OutroDestinationSpoken}!";
+    var baseOutroAudio = await ResolveOutroAudioAsync(baseOutroSpoken, outroRate, outroPitch);
+    var shortOutroLines = profile.AllowsContextScenes
+        ? [.. baseOutroLines, "Watch the full video on YouTube"]
+        : baseOutroLines;
+    var shortOutroSpoken = profile.AllowsContextScenes
+        ? $"{baseOutroSpoken} Watch the full video on YouTube."
+        : baseOutroSpoken;
+    var shortOutroAudio = profile.AllowsContextScenes
+        ? await ResolveOutroAudioAsync(shortOutroSpoken, outroRate, outroPitch)
+        : baseOutroAudio;
+
+    // Animated intro sting (Trendline Now): fail fast here, before either
+    // render, if the profile asks for one but the logo file is not where
+    // ApplyAssetMapping put it - a missing logo must never silently drop the
+    // intro from a finished video.
+    var introSeconds = profile.IntroSeconds;
+    string? introLogoPath = null;
+    if (introSeconds > 0)
+    {
+        if (string.IsNullOrWhiteSpace(profile.IntroLogoPath) || !File.Exists(profile.IntroLogoPath))
+            throw new InvalidOperationException(
+                $"IntroSeconds is {introSeconds} but the intro logo \"{profile.IntroLogoPath}\" does not exist. " +
+                "Copy the brand logo into the assets folder (see TrendlineNowProfile.IntroLogoPath).");
+        introLogoPath = profile.IntroLogoPath;
+    }
+
+    // The outro card's rendered length (voiceover + trailing beat) and the
+    // intro sting both count against the vertical cap - Reels reject anything
+    // over 90s, so the scene budget is VerticalMaxSeconds minus both, not the
+    // full cap. The outro runs after the last scene, the intro before the
+    // first, so neither overlaps a scene.
+    var shortOutroSeconds = await VideoAssembler.GetAudioDurationAsync(cfg, shortOutroAudio) + 0.75;
+    var shortSceneBudget = cfg.VerticalMaxSeconds - introSeconds - shortOutroSeconds;
+
     // Reels reject anything over 90s, so the vertical cut is trimmed to whole scenes
     // that fit the budget rather than shipping a render the platform will refuse.
     var shortScenes = new List<Scene>();
@@ -974,35 +1450,20 @@ async Task<int> RunAssembleAsync()
         // Budget in rendered seconds (narration + breathing room + post-narration
         // hold), so the trimmed teaser stays within VerticalMaxSeconds as rendered.
         var next = running + scene.DurationSeconds + 0.5 + VideoAssembler.PostNarrationHoldSeconds;
-        if (shortScenes.Count > 0 && next > cfg.VerticalMaxSeconds) break;
+        if (shortScenes.Count > 0 && next > shortSceneBudget) break;
         shortScenes.Add(scene);
         running = next;
     }
 
     if (shortScenes.Count < script.Scenes.Count)
-        Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s) for the {cfg.VerticalMaxSeconds}s cap.");
-
-    // "LIKE, FOLLOW & SUBSCRIBE" outro card/voiceover appended to every render (see
-    // ContentProfile.OutroDestinationText/-Spoken) - AllowsContextScenes profiles (today:
-    // chronicleandchaos) additionally fold in a "watch the full video" line on the vertical
-    // short only, since that render is a trimmed teaser for the landscape master rather
-    // than the full video itself.
-    var baseOutroLines = new[] { "LIKE, FOLLOW & SUBSCRIBE", profile.OutroDestinationText };
-    var baseOutroSpoken = $"Like, follow, and subscribe on YouTube — {profile.OutroDestinationSpoken}!";
-    var baseOutroAudio = await ResolveOutroAudioAsync(baseOutroSpoken);
+        Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s scenes + {introSeconds:0.#}s intro + {shortOutroSeconds:0.#}s outro) for the {cfg.VerticalMaxSeconds}s cap.");
 
     var vertical = Path.Combine(outputDir, $"{slug}-{language}-short.mp4");
     if (profile.AllowsContextScenes)
     {
-        var shortOutroLines = new[]
-        {
-            "LIKE, FOLLOW & SUBSCRIBE", "Watch the full video on YouTube", profile.OutroDestinationText,
-        };
-        var shortOutroSpoken =
-            $"Like, follow, and subscribe. Watch the full video on YouTube — {profile.OutroDestinationSpoken}.";
-        var shortOutroAudio = await ResolveOutroAudioAsync(shortOutroSpoken);
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
-            outroLines: shortOutroLines, outroAudioPath: shortOutroAudio, isCalm: formatDef.IsCalm);
+            outroLines: shortOutroLines, outroAudioPath: shortOutroAudio, isCalm: formatDef.IsCalm,
+            introLogoPath: introLogoPath, introSeconds: introSeconds, outroHandles: profile.OutroHandles);
     }
     else if (profile.UsesRemotionStills)
     {
@@ -1010,7 +1471,8 @@ async Task<int> RunAssembleAsync()
         // landscape master), so it keeps the base outro, not the "watch the full
         // video" line the context-scene profiles add above.
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, shortScenes, workDir, vertical, 1080, 1920, script.MusicMood,
-            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm,
+            introLogoPath: introLogoPath, introSeconds: introSeconds, outroHandles: profile.OutroHandles);
     }
     else
     {
@@ -1018,7 +1480,7 @@ async Task<int> RunAssembleAsync()
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     }
     await VideoAssembler.NormalizeLoudnessAsync(cfg, vertical);
-    await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"));
+    await VideoAssembler.WriteSrtAsync(shortScenes, Path.ChangeExtension(vertical, ".srt"), introSeconds);
     Console.WriteLine($"Rendered: {vertical}");
 
     await new Sidecar
@@ -1053,27 +1515,42 @@ async Task<int> RunAssembleAsync()
     var landscape = Path.Combine(outputDir, $"{slug}-{language}.mp4");
     if (profile.UsesRemotionStills)
         await VideoAssembler.AssembleWithRemotionAsync(profile, cfg, script.Scenes, workDir, landscape, 1920, 1080, script.MusicMood,
-            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm);
+            outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm,
+            introLogoPath: introLogoPath, introSeconds: introSeconds, outroHandles: profile.OutroHandles,
+            // Curiosity brief (Rishi 2026-11-21, video #3 onward): plays before
+            // the intro sting on the long-form only - the Short's opening scenes
+            // already are its hook, so it carries no brief.
+            briefScenes: script.BriefScenes);
     else
         await VideoAssembler.AssembleFromClipsAsync(profile, cfg, script.Scenes, language!, workDir, landscape, 1920, 1080, script.MusicMood,
             outroLines: baseOutroLines, outroAudioPath: baseOutroAudio);
     await VideoAssembler.NormalizeLoudnessAsync(cfg, landscape);
-    await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"));
+    await VideoAssembler.WriteSrtAsync(script.Scenes, Path.ChangeExtension(landscape, ".srt"), introSeconds);
     Console.WriteLine($"Rendered: {landscape}");
 
-    // Dedicated thumbnail (priority 7, free): prefer the landscape art for
-    // scene 0 over a frame pulled from the finished render. A render frame
-    // carries burned-in subtitles and a Ken Burns crop, so the face is
-    // smaller and text competes with it; the raw landscape art is
-    // full-bleed, uncaptioned, and reads at phone size. Fall back to a
-    // render frame only when no landscape art exists for scene 0.
-    string thumbBase;
-    if (script.Scenes.Count > 0 && script.Scenes[0].LandscapeImagePath is { } landscapeArt && File.Exists(landscapeArt))
+    // Dedicated thumbnail (priority 7, free): prefer a MAJOR story picture
+    // (Rishi 2026-11-21: video #1's scene-0 title-card thumbnail was wrong)
+    // - the first story scene (index >= 1) with landscape art - over a frame
+    // pulled from the finished render. A render frame carries burned-in
+    // subtitles and a Ken Burns crop, so the face is smaller and text competes
+    // with it; the raw landscape art is full-bleed, uncaptioned, and reads at
+    // phone size. Fall back to scene 0, then to a render frame.
+    string? thumbBase = null;
+    for (int i = 1; i < script.Scenes.Count; i++)
+    {
+        if (script.Scenes[i].LandscapeImagePath is { } storyArt && File.Exists(storyArt))
+        {
+            thumbBase = storyArt;
+            Console.WriteLine($"Thumbnail: using landscape art for scene {i} (a major story picture, not the title card).");
+            break;
+        }
+    }
+    if (thumbBase is null && script.Scenes.Count > 0 && script.Scenes[0].LandscapeImagePath is { } landscapeArt && File.Exists(landscapeArt))
     {
         thumbBase = landscapeArt;
-        Console.WriteLine("Thumbnail: using landscape art for scene 0 (not a render frame).");
+        Console.WriteLine("Thumbnail: using landscape art for scene 0 (fallback - no story scene art).");
     }
-    else
+    if (thumbBase is null)
     {
         thumbBase = Path.Combine(workDir, "thumbnail-frame.jpg");
         var grabAt = Math.Min(3.0, Math.Max(0.5, script.Scenes[0].DurationSeconds * 0.6));
@@ -1270,7 +1747,7 @@ async Task SaveScriptAsync(string workDir, VideoScript script)
 // unfinished script as a complete video. Once GenerateAsync returns, the full
 // script.json is saved by the caller and these files are deleted.
 // Best-effort by design: a failed checkpoint must never fail generation.
-async Task SavePartialScriptAsync(string dir, VideoScript script, int completedAct)
+async Task SavePartialScriptAsync(string dir, VideoScript script, int completedAct, int totalActs)
 {
     try
     {
@@ -1279,8 +1756,8 @@ async Task SavePartialScriptAsync(string dir, VideoScript script, int completedA
         await File.WriteAllTextAsync(temp, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
         File.Move(temp, path, overwrite: true);
         await File.WriteAllTextAsync(Path.Combine(dir, "script-progress.json"),
-            System.Text.Json.JsonSerializer.Serialize(new { completedActs = completedAct, totalActs = 4 }, jsonOptions));
-        Console.WriteLine($"  Checkpoint: act {completedAct}/4 saved ({script.Scenes.Count} scenes) -> {path}");
+            System.Text.Json.JsonSerializer.Serialize(new { completedActs = completedAct, totalActs }, jsonOptions));
+        Console.WriteLine($"  Checkpoint: act {completedAct}/{totalActs} saved ({script.Scenes.Count} scenes) -> {path}");
     }
     catch (Exception ex)
     {
@@ -1349,5 +1826,11 @@ ContentProfile ApplyAssetMapping(ContentProfile p)
         CharacterPoolPath = string.IsNullOrWhiteSpace(p.CharacterPoolPath)
             ? p.CharacterPoolPath
             : Path.Combine(cfg.AssetsDirectory, LastSegment(p.CharacterPoolPath)),
+        // The intro logo is a brand asset, not a Windows-origin path - but the
+        // same last-segment re-root keeps it working wherever the assets folder
+        // lives, and keeps the profile's value a plain filename.
+        IntroLogoPath = string.IsNullOrWhiteSpace(p.IntroLogoPath)
+            ? p.IntroLogoPath
+            : Path.Combine(cfg.AssetsDirectory, LastSegment(p.IntroLogoPath)),
     };
 }

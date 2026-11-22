@@ -1,0 +1,20 @@
+[Unit]
+Description=Kintaro landscape chunk render (BroadcastContentAutomation)
+After=network.target
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/home/hatch/workspace/BroadcastContentAutomation/production
+Environment=DOTNET_ROOT=/home/hatch/.dotnet
+Environment=TMPDIR=/home/hatch/workspace/tmp
+ExecStart=/bin/bash ./render-chunks.sh --job /home/hatch/workspace/BroadcastContentAutomation/work/chronicleandchaos/job-20261116-195026 --orientation landscape
+StandardOutput=append:/home/hatch/workspace/tmp/chunks-kintaro-landscape-systemd-20261117.log
+StandardError=append:/home/hatch/workspace/tmp/chunks-kintaro-landscape-systemd-20261117.log
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

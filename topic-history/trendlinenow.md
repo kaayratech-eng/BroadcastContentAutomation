@@ -1,0 +1,6 @@
+- 2026-11-21: Trump’s D.C. Memorial Arch Faces a Second Court Block – Why It Matters #Shorts
+- 2026-11-21: Trump’s D.C. Memorial Arch Faces a Second Court Block – Why It Matters
+- 2026-11-22: Trump’s D.C. Memorial Arch Faces a Second Court Block – Why It Matters #Shorts
+- 2026-11-22: Trump’s D.C. Memorial Arch Faces a Second Court Block – Why It Matters #Shorts
+- 2026-11-22: Trump’s D.C. Memorial Arch Faces a Second Court Block – Why It Matters #Shorts
+- 2026-11-21: Trump’s D.C. Memorial Arch Faces a Second Court Block – Why It Matters #Shorts

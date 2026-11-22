@@ -186,17 +186,22 @@ static class GiggleGardenProfile
         // Pacing (2026-11-12, standing rule): narration runs at about -10% - the
         // videos felt too fast. poem (-12%) and bedtime (-22%) are already slower
         // than that, so they stay as they are.
-        BuildFormat("educational", weight: 30, isCalm: false, rate: "-10%", pitch: "+9%",
+        // Pitch (2026-11-17, Rishi): Harper pitched UP to +25% on the bright
+        // formats so it sounds like a child - children's voices are higher than
+        // adults' (~250-400 Hz vs ~200 Hz), and Harper at +9% still sounded like
+        // an adult even at +15%. Rishi confirmed +25% sounds childlike. poem and
+        // bedtime keep their lower pitches on purpose (calm/soothing content).
+        BuildFormat("educational", weight: 30, isCalm: false, rate: "-10%", pitch: "+25%",
             narrationStyleLabel: "bright, lively"),
-        BuildFormat("rhyme", weight: 20, isCalm: false, rate: "-10%", pitch: "+9%",
+        BuildFormat("rhyme", weight: 20, isCalm: false, rate: "-10%", pitch: "+25%",
             narrationStyleLabel: "bright, playful"),
         BuildFormat("poem", weight: 10, isCalm: true, rate: "-12%", pitch: "+2%",
             narrationStyleLabel: "gentle, measured"),
         BuildFormat("bedtime", weight: 15, isCalm: true, rate: "-22%", pitch: "-6%",
             narrationStyleLabel: "calm, slow, soft"),
-        BuildFormat("singAlong", weight: 15, isCalm: false, rate: "-10%", pitch: "+9%",
+        BuildFormat("singAlong", weight: 15, isCalm: false, rate: "-10%", pitch: "+25%",
             narrationStyleLabel: "bright, singable"),
-        BuildFormat("countingSong", weight: 10, isCalm: false, rate: "-10%", pitch: "+9%",
+        BuildFormat("countingSong", weight: 10, isCalm: false, rate: "-10%", pitch: "+25%",
             narrationStyleLabel: "bright, playful"),
     ];
 
