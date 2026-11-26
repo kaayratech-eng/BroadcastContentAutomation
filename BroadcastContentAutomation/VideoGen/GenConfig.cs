@@ -23,7 +23,10 @@ record GenConfig
     // requests/day/model on gemini-3.6-flash, a separate quota bucket from
     // Groq's), or claude (zero free-tier-quota risk, but paid). See
     // GroqScriptProvider/GeminiScriptProvider/HybridScriptProvider/
-    // ScriptProviderFactory.
+    // ScriptProviderFactory. "pool-helper" (2026-11-22, Trendline Now) is a
+    // per-call fallback pool - Groq, then Cloudflare Workers AI, then
+    // Pollinations text (see FallbackScriptProvider) - Gemini excluded,
+    // credits depleted. "cloudflare-helper" / "pollinations" pin to one leg.
     public string ScriptProvider { get; init; } = "hybrid";
     public string GroqApiKey { get; init; } = "";
     public string GroqModel { get; init; } = "openai/gpt-oss-120b"; // was llama-3.3-70b-versatile, decommissioned - verified 2026-11-11: the live models list returns model_not_found for it, and the key's catalog lists gpt-oss-120b/20b and qwen3.8-27b as the chat models; gpt-oss-120b is the strongest and the providers already handle gpt-oss reasoning (low effort, no reasoning in content)
@@ -38,6 +41,49 @@ record GenConfig
     // to these instead of calling the API directly with a config key.
     public string GeminiHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.gemini/bin/gemini_image.py";
     public string GroqHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.groq/bin/groq_chat.py";
+    // Script-pool expansion (2026-11-23): Z.ai GLM-4.7-Flash ($0) and
+    // OpenRouter :free (50 requests/day unfunded) as extra fallback legs.
+    // Both are vault-backed helpers like the Groq/Gemini ones above, and
+    // both are KEY-BLOCKED until Rishi adds the key (see
+    // custom.zai/CONNECTOR.md and custom.openrouter/CONNECTOR.md): with
+    // no connection registered the helper fails fast (~0.2s surrogate
+    // error) and the pool falls through to the next leg.
+    public string ZaiHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.zai/bin/zai_chat.py";
+    public string OpenRouterHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.openrouter/bin/openrouter_chat.py";
+    // Script-pool expansion (2026-11-25): NVIDIA NIM (Nemotron 3 Ultra
+    // 550B, trial credits, ~40 requests/min) as a sixth fallback leg.
+    // Vault-backed helper like the ones above; KEY-BLOCKED until Rishi
+    // adds the key (see custom.nvidia/CONNECTOR.md).
+    public string NvidiaHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.nvidia/bin/nvidia_chat.py";
+
+    // Usage governor (2026-11-23, Trendline Now): trendline/governor.py is
+    // the single source of truth for free-tier budgets (see
+    // GovernorClient.cs). The pools ask it before calling a leg and park
+    // a leg (mark-cooled) after a 429/limit failure; a missing helper
+    // fails open, so it never blocks a run by itself.
+    public string GovernorHelperPath { get; init; } = "/home/hatch/workspace/BroadcastContentAutomation/trendline/governor.py";
+    // Estimated usage per script act call, passed to `governor.py
+    // acquire`: every leg charges ~7,000 tokens/act except Cloudflare,
+    // which charges ~926 Workers AI neurons/act (see governor-config.json).
+    public int GovernorTokensPerActCall { get; init; } = 7000;
+    public int GovernorCloudflareUnitsPerActCall { get; init; } = 926;
+    // Estimated usage per FLUX image call (~172.8 neurons metered for a
+    // 4-step 1024x1024 image, bake-off 2026-11-24), charged against the
+    // SAME "cloudflare" 10,000-neuron/day bucket as the script acts — see
+    // ImagePool.cs. One bucket, never two: script + image can never
+    // exceed 10k/day combined.
+    public int GovernorCloudflareUnitsPerImageCall { get; init; } = 173;
+
+    // Image legs (see ImagePool.cs for the chain order): the Leonardo
+    // image helper (custom.leonardo — NO connection exists yet). It is
+    // DORMANT until its key exists: a missing key fails fast and the leg
+    // is skipped for the rest of the run, never an error. Leonardo also
+    // needs a model id (empty = the leg cannot run; pick a current one
+    // from GET /platformModels when activating). (Z.ai CogView was a leg
+    // here until 2026-11-24 — dropped: free CogView is not served on
+    // api.z.ai. The Z.ai script leg is untouched.)
+    public string LeonardoHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.leonardo/bin/leonardo_image.py";
+    public string LeonardoModelId { get; init; } = "";
 
     public string AzureSpeechKey { get; init; } = "";
     public string AzureSpeechRegion { get; init; } = "eastus";
@@ -85,16 +131,14 @@ record GenConfig
 
     // Scene art provider (decided 2026-11-04, refined 2026-11-10/11):
     // "manual" = ManualArtClient prompt-and-wait on gemini.google.com.
-    // "pollinations" (default) = PollinationsKeyedClient, the keyed
-    // Pollinations.ai FLUX endpoint, ONE square (1024x1024) image per
-    // visual beat, from which both orientations are centre cover-cropped
-    // so portrait and landscape are identical (rule changed 2026-11-11
-    // after the user found the old two-separate-generations rule produced
-    // different images per orientation). "cloudflare" = CloudflareArtClient
-    // (FLUX square, same model) with the same one-square-per-beat shape.
-    // Whichever provider is primary, the other is the automatic fallback
-    // on failure, and Cloudflare SDXL square is the last resort. No
-    // blur-pad anywhere in the scene-art flow.
+    // "pollinations" (default) / "cloudflare" = automated: ONE square
+    // (1024x1024) image per visual beat, from which both orientations
+    // are centre cover-cropped so portrait and landscape are identical.
+    // The value selects automated vs manual ONLY — the chain order is
+    // fixed by the 2026-11-24 bake-off (see ImagePool.ChainOrder):
+    // Cloudflare FLUX first, then Pexels, then OVHcloud, then the
+    // dormant keyed legs. It no longer picks a primary provider.
+    // No blur-pad anywhere in the scene-art flow.
     // before --prep in every mode, and are picked up without prompting.
     // The API keys live in Muse's secure vault, not in config: the clients
     // shell out to the Python helpers below, which perform the authd
@@ -107,18 +151,28 @@ record GenConfig
     public string PollinationsHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.pollinations/bin/pollinations_image.py";
     public string CloudflareAccountId { get; init; } = "f15282dd52108829bfcadc311ef96ec8";
     public string CloudflareHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.cloudflare/bin/cf_workers_ai.py";
-    public string CloudflareImageModel { get; init; } = "@cf/stabilityai/stable-diffusion-xl-base-1.0";
-    public int CloudflareSdxlSteps { get; init; } = 20;
-    public double CloudflareSdxlGuidance { get; init; } = 7.5;
+    // Workers AI text model for the script leg. Llama 3.3 70B is the
+    // default (~926 neurons/act, ~10 acts/day from the 10,000-neuron free
+    // pool). @cf/openai/gpt-oss-120b would roughly double that (~400
+    // neurons/act, ~25/day, per a third-party summary of Cloudflare's
+    // pricing) - the model name was verified accepted by the API
+    // (2026-11-23 probe: quota error 4006, not a model error), but the
+    // NEURON RATE is unverified (dashboard-only), so the switch stays a
+    // config change, not the default. Flip this to
+    // "@cf/openai/gpt-oss-120b" only after watching the neuron burn for
+    // a day in the Cloudflare dashboard.
+    public string CloudflareTextModel { get; init; } = "@cf/meta/llama-3.3-70b-instruct-fp8-fast";
     public int CloudflareFluxSteps { get; init; } = 4;
 
-    // Free image-generation pool (see ArtPoolClient) - tries OVHcloud SDXL,
-    // Pollinations anonymous, AI Horde and Pexels stock in order until one
-    // returns a real image, all without a key in this config. Added
-    // 2026-11-22 after all three keyed scene-art providers failed at once
-    // (Cloudflare FLUX quota exhausted, Pollinations $0 balance, Cloudflare
-    // SDXL deprecated). The pool is tried FIRST in GenerateSquareArtAsync;
-    // the keyed providers below remain as backup.
+    // Free image-generation pool (see ArtPoolClient) — the fallback after
+    // Cloudflare FLUX in the rebuilt chain (ImagePool.ChainOrder). The
+    // helper tries only OVHcloud SDXL and Pexels stock now (Pollinations
+    // anonymous + AI Horde were discarded in the 2026-11-24 bake-off and
+    // deleted from the helper); --only forces one leg, --query passes a
+    // topic/entity query to Pexels, --seen-file dedupes photos per job.
+    // Added 2026-11-22 after all three keyed scene-art providers failed
+    // at once (Cloudflare FLUX quota exhausted, Pollinations $0 balance,
+    // Cloudflare SDXL deprecated).
     public string ArtPoolHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.artpool/bin/art_pool.py";
 
     // Pexels stock photo/video search (see StockFootageClient) - the auto-fetched
@@ -134,6 +188,20 @@ record GenConfig
     // helper for the authenticated searches and downloads the (public)
     // media links directly.
     public string PexelsHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.pexels/bin/pexels_search.py";
+
+    // Multi-source context (2026-11-23): full article text for the picked
+    // story, via the publisher-RSS helper (custom.articles). Google News
+    // RSS links cannot be resolved by plain HTTP clients in this sandbox
+    // (they land on a Google interstitial), so the helper fetches the
+    // publishers' own RSS feeds, matches articles to the topic, and
+    // extracts text with trafilatura. Free, no key. The helper runs under
+    // its own venv python (trafilatura is installed there, not in the
+    // system python). Best-effort: ArticleClient returns [] when either
+    // path is missing, and the pipeline continues on headlines + Wikipedia
+    // alone — a missing helper must never block a run, so Validate()
+    // deliberately does NOT require these paths.
+    public string ArticleHelperPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.articles/bin/article_fetch.py";
+    public string ArticleHelperPythonPath { get; init; } = "/home/hatch/workspace/custom-connectors/custom.articles/venv/bin/python";
 
     // Absolute path to the remotion-assembler sibling project (Deliverable 6,
     // tasks/todo.md) - VideoAssembler.AssembleWithRemotionAsync shells out to

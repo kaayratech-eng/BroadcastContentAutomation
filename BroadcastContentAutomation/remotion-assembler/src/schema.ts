@@ -72,20 +72,12 @@ export const assemblyPropsSchema = z.object({
   // renders no chips, so the legacy text-only card is unchanged.
   outroHandles: z.array(z.string()).default([]),
   // The channel handle shown big on the branded outro card (e.g.
-  // "@trendlinenow"). Only rendered when outroHandles is non-empty, so the
+  // "@spotlightnowofficial"). Only rendered when outroHandles is non-empty, so the
   // legacy card never shows the destination twice.
   outroHandle: z.string().optional(),
-  // Animated intro sting played before the first scene (Trendline Now): a
-  // brand moment built from the channel logo - see Assembly.tsx's Intro.
-  // 0 (default) renders no intro. introLogoPath is relative to the
-  // --public-dir root, like every other asset path in these props.
-  introSeconds: z.number().min(0).default(0),
-  introLogoPath: z.string().optional(),
-  // Curiosity brief (Rishi 2026-11-21, video #3 onward): teaser scenes that
-  // play BEFORE the intro sting, over the video's most dramatic images, to
-  // make viewers hold and watch the full video. Empty (default) renders no
-  // brief, so old props files still validate.
-  briefScenes: z.array(sceneAssetSchema).default([]),
+  // No intro sting, no brief (removed 2026-11-25, Rishi: videos open directly
+  // with the hook). Old props files that still carry introSeconds /
+  // introLogoPath / briefScenes validate fine — zod strips unknown keys.
   // Drives scene-transition style/duration - calm formats (retellingArc) get a slower
   // dissolve, brisk formats (topFive) get a quick one. See ContentFormatDef.IsCalm.
   isCalm: z.boolean().default(false),

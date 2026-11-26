@@ -1,0 +1,166 @@
+{
+  "_comment": "Usage governor budgets for the Spotlight Now pipeline (renamed from Trendline Now 2026-11-24) (2026-11-23). Free-tier limits, verified Nov 2026; the governor never lets a prep burn through them. Daily windows reset at midnight America/Toronto; monthly windows on the 1st (Toronto time); hourly windows on the hour. A provider with no numeric budget is still governed: a 429/limit response cools it (cooldown_after_429_seconds) instead of being retried in a tight loop. See hidden_files/governor.md. Daily cap is 2 max (Rishi 2026-11-24: quality over quantity); 1/day when top-quality image supply (FLUX) is short — the pool fails loudly on FLUX exhaustion rather than filling with weak legs. Do NOT put secrets in this file.",
+  "cooldown_defaults": {
+    "after_429_seconds": 600,
+    "after_timeout_seconds": 600
+  },
+  "daily_video_cap": 2,
+  "providers": {
+    "azure-tts": {
+      "budgets": {
+        "chars_per_month": 500000
+      },
+      "cooldown_after_429_seconds": 900,
+      "label": "Azure Speech F0 neural TTS (DavisNeural voice)",
+      "note": "500,000 neural-TTS chars/month. ~8,500 chars/video = ~55 videos/month. At 90% the TTS pool switches to the Google voice to preserve the last 10%; hard stop at 100%.",
+      "soft_cap_fraction": 0.9
+    },
+    "cloudflare": {
+      "budgets": {
+        "units_per_day": 10000
+      },
+      "cooldown_after_429_seconds": 600,
+      "label": "Cloudflare Workers AI Llama 3.3 70B (script)",
+      "note": "Units are Workers AI neurons (10,000/day free), SHARED by the script leg (~926 neurons/act) and FLUX images (~173/image, bake-off 2026-11-24). Script + image can never exceed 10k/day combined because there is only one ledger entry. A 4006 quota error cools until 00:00 UTC (the Cloudflare reset; the ledger day itself is midnight America/Toronto, so the ledger can over-allow across the 5h boundary \u2014 the live 4006 is the hard backstop). A 60-scene video needs ~10,380 neurons of FLUX alone, so FLUX can never cover a full video in one day; the chain falls through to Pexels + OVH for the tail by design.",
+      "units_per_call_estimate": 926,
+      "units_per_image_estimate": 173
+    },
+    "gemini": {
+      "budgets": {
+        "requests_per_day": 500
+      },
+      "cooldown_after_429_seconds": 600,
+      "label": "Gemini Flash-Lite (script, new project key)",
+      "note": "500 requests/day per the codebase (ScriptProviderFactory header). KEY-BLOCKED until Rishi adds the new-project key; the governor enforces the cap once the leg activates.",
+      "tokens_per_call_estimate": 7000
+    },
+    "google-tts": {
+      "budgets": {
+        "chars_per_month": 1000000
+      },
+      "cooldown_after_429_seconds": 900,
+      "label": "Google Cloud TTS (fallback voice)",
+      "note": "1,000,000 chars/month standard voices (conservative; GenConfig cites 4M standard / 1M WaveNet \u2014 the governor uses the lower figure so it never overshoots)."
+    },
+    "groq": {
+      "budgets": {
+        "requests_per_day": 1000,
+        "requests_per_minute": 30,
+        "tokens_per_day": 200000,
+        "tokens_per_minute": 8000
+      },
+      "cooldown_after_429_seconds": 600,
+      "label": "Groq gpt-oss-120b (script)",
+      "note": "200K tokens/day binds first (~8 scripts/day at ~25K tokens/script). TPM 8K is a per-minute trip the groq helper already retries internally; the governor keeps the daily cap honest.",
+      "tokens_per_call_estimate": 7000
+    },
+    "kilo": {
+      "budgets": {
+        "requests_per_hour": 200
+      },
+      "cooldown_after_429_seconds": 3600,
+      "label": "Kilo Gateway openrouter/free (script)",
+      "note": "200 requests/hour per IP, no published daily cap. Latency-bound, not count-bound (~9 min/script when Groq is down).",
+      "tokens_per_call_estimate": 7000
+    },
+    "leonardo-image": {
+      "budgets": {},
+      "cooldown_after_429_seconds": 600,
+      "label": "Leonardo (image)",
+      "note": "DORMANT: no custom.leonardo connection exists and no model id is configured (GenConfig.LeonardoModelId empty). Confirm the free daily allowance still applies before activating \u2014 Leonardo API generations spend API credits. No budget until tested live."
+    },
+    "openrouter": {
+      "budgets": {
+        "requests_per_day": 50
+      },
+      "cooldown_after_429_seconds": 600,
+      "label": "OpenRouter :free (script)",
+      "note": "50 requests/day unfunded. KEY-BLOCKED until Rishi adds the key.",
+      "tokens_per_call_estimate": 7000
+    },
+    "ovhcloud": {
+      "budgets": {},
+      "cooldown_after_429_seconds": 600,
+      "label": "OVHcloud gpt-oss-120b (script)",
+      "note": "Chat endpoint (kepler.ai.cloud.ovh.net). No published budget; governed by 429-cooldown only. Distinct from the OVHcloud image endpoint.",
+      "tokens_per_call_estimate": 7000
+    },
+    "ovhcloud-image": {
+      "budgets": {
+        "requests_per_minute": 2
+      },
+      "cooldown_after_429_seconds": 900,
+      "label": "OVHcloud SDXL (image)",
+      "note": "2 requests/min, anonymous shared bucket. A 429 means the bucket is empty \u2014 cool 15 min, do not retry in a tight loop. Filler only in the rebuilt pool (~10-15 scenes/video); SDXL retires 2027-02-10."
+    },
+    "pexels": {
+      "budgets": {
+        "requests_per_hour": 200,
+        "requests_per_month": 20000
+      },
+      "cooldown_after_429_seconds": 600,
+      "label": "Pexels stock photo (image, supplement only)",
+      "note": "Free tier: 200 requests/hour, 20,000/month. Real photos, not AI art \u2014 the #2 leg for news scenes (bake-off 2026-11-24), after Cloudflare FLUX. Query is topic/entity keywords; --seen-file dedupes photos per job."
+    },
+    "pollinations-keyed": {
+      "budgets": {},
+      "cooldown_after_429_seconds": 600,
+      "label": "Pollinations keyed FLUX (image)",
+      "note": "DORMANT until Pollen exists (balance 0, 2026-11-24): a $0 balance fails fast with HTTP 402 and the chain logs the leg dormant for the rest of the run. No budget \u2014 the keyed endpoint is not a free-tier bucket; activate only after a Pollen top-up, then add a budget here if one applies."
+    },
+    "pollinations-text": {
+      "budgets": {},
+      "cooldown_after_429_seconds": 600,
+      "label": "Pollinations text (script, last resort)",
+      "note": "No published budget; governed by 429-cooldown only. Scripts from this leg alone run short (54 scenes / 5,407 chars in the 2026-11-23 dry run).",
+      "tokens_per_call_estimate": 7000
+    },
+    "wikimedia": {
+      "budgets": {},
+      "cooldown_after_429_seconds": 600,
+      "label": "Wikimedia Commons real photos (image, star pre-leg)",
+      "note": "Freely licensed (CC BY / CC BY-SA / public domain) real photos of the actual person — tried BEFORE FLUX, only when a scene names a ranked star (StarRanking, Rishi 2026-11-24). No key, public API, no published budget; governed by 429-cooldown only. CC BY images need attribution in the video description — the Commons title + licence are printed on the artpool success line for the prep log."
+    },
+    "youtube": {
+      "budgets": {
+        "units_per_day": 10000
+      },
+      "cooldown_after_429_seconds": 600,
+      "label": "YouTube Data API v3 (topic pick)",
+      "note": "10,000 units/day; ~1,100 units per topic pick = ~9 picks/day. Budget tracked in the ledger; the topic-pick call site is NOT yet wired to the governor (follow-up).",
+      "units_per_call_estimate": 1100
+    },
+    "zai": {
+      "budgets": {},
+      "cooldown_after_429_seconds": 600,
+      "label": "Z.ai GLM-4.7-Flash (script)",
+      "note": "No published free-tier budget found; governed by 429-cooldown only. Key added 2026-11-24; activation test running.",
+      "tokens_per_call_estimate": 7000
+    }
+  },
+  "stages": {
+    "image": [
+      "wikimedia",
+      "cloudflare",
+      "pexels",
+      "ovhcloud-image",
+      "pollinations-keyed",
+      "leonardo-image"
+    ],
+    "script": [
+      "groq",
+      "gemini",
+      "zai",
+      "cloudflare",
+      "openrouter",
+      "kilo",
+      "ovhcloud",
+      "pollinations-text"
+    ],
+    "tts": [
+      "azure-tts",
+      "google-tts"
+    ]
+  },
+  "timezone": "America/Toronto"
+}

@@ -106,12 +106,10 @@ profile_of_job() { # $1 = job dir -> profile id from script.json (or dir parent)
   fi
 }
 prep_complete() { # $1 = job dir -> 0 if script.json + all scenes have mp3 + a visual
-  # A scene's visual is the file named by script.json's ImagePath (scenes
-  # share one art image per VisualGroup, so the file is named for the
-  # group's first scene, not for this scene) or LandscapeImagePath, or a
-  # stock file sceneNN-stock.mp4/.jpg discovered by filename. A per-scene
-  # "sceneNN-art.*" name check is WRONG: it misses shared group art and
-  # would call a fully prepped job incomplete.
+  # A scene's visual is the file named by script.json's ImagePath (one fresh
+  # visual per scene since fix sequence #2 ITEM 3, so the file is named for
+  # the scene itself) or LandscapeImagePath, or a stock file
+  # sceneNN-stock.mp4/.jpg discovered by filename.
   python3 - "$1" <<'PYEOF'
 import json, os, sys
 job = sys.argv[1]

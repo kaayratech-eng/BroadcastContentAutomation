@@ -76,12 +76,13 @@
   },
   "remotion_dir": "/home/hatch/workspace/BroadcastContentAutomation/BroadcastContentAutomation/remotion-assembler",
   "render": {
-    "_comment": "Scene-aligned chunks, 5 scenes each (~25-35 min). --concurrency=1: chunk C14 OOMed twice at concurrency 2 (2026-11-16).",
+    "_comment": "Scene-aligned chunks, 5 scenes each (~25-35 min). --concurrency=1: chunk C14 OOMed twice at concurrency 2 (2026-11-16). scenes_per_chunk_landscape was 3 during video #4 (2026-11-23, VM memory deaths at frame ~58 on 5-scene landscape chunks); reverted to 5 after video #4 finished, since renders now run on Rishi's laptop.",
     "chunk_log_silence_kill_minutes": 30,
     "concurrency": 1,
     "max_assemble_retries": 2,
     "max_chunk_retries": 3,
     "scenes_per_chunk": 5,
+    "scenes_per_chunk_landscape": 5,
     "verify_duration_tolerance_seconds": 3.0
   },
   "repo_root": "/home/hatch/workspace/BroadcastContentAutomation",

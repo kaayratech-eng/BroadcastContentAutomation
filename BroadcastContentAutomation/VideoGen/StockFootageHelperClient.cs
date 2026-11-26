@@ -15,12 +15,18 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
 {
     public async Task<string?> DownloadBestMatchAsync(string query, string outputPathWithoutExtension, ImageClient.Orientation orientation)
     {
-        var video = await TryDownloadVideoAsync(query, outputPathWithoutExtension + ".mp4", orientation);
+        var detailed = await DownloadBestMatchDetailedAsync(query, outputPathWithoutExtension, orientation);
+        return detailed?.Path;
+    }
+
+    public async Task<StockDownload?> DownloadBestMatchDetailedAsync(string query, string outputPathWithoutExtension, ImageClient.Orientation orientation, IReadOnlySet<long>? excludeVideoIds = null)
+    {
+        var video = await TryDownloadVideoAsync(query, outputPathWithoutExtension + ".mp4", orientation, excludeVideoIds);
         if (video is not null) return video;
         return await TryDownloadPhotoAsync(query, outputPathWithoutExtension + ".jpg", orientation);
     }
 
-    private async Task<string?> TryDownloadVideoAsync(string query, string outputPath, ImageClient.Orientation orientation)
+    private async Task<StockDownload?> TryDownloadVideoAsync(string query, string outputPath, ImageClient.Orientation orientation, IReadOnlySet<long>? excludeVideoIds = null)
     {
         var json = await SearchAsync("search-video", query, orientation, perPage: 5);
         using var doc = JsonDocument.Parse(json);
@@ -28,9 +34,18 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
             return null;
 
         string? bestLink = null;
+        long? bestVideoId = null;
+        string? bestPageUrl = null;
         long bestArea = 0;
         foreach (var clip in videos.EnumerateArray())
         {
+            var videoId = clip.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+                ? idEl.GetInt64()
+                : (long?)null;
+            // Rishi's reuse rule: never the same clip twice within < 4
+            // scenes — an excluded clip's files never enter the race.
+            if (videoId is not null && excludeVideoIds is not null && excludeVideoIds.Contains(videoId.Value))
+                continue;
             if (!clip.TryGetProperty("video_files", out var files)) continue;
             foreach (var file in files.EnumerateArray())
             {
@@ -46,27 +61,45 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
                 {
                     bestArea = area;
                     bestLink = file.GetProperty("link").GetString();
+                    bestVideoId = videoId;
+                    bestPageUrl = clip.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String
+                        ? urlEl.GetString()
+                        : null;
                 }
             }
         }
         if (bestLink is null) return null;
 
         await DownloadAsync(bestLink, outputPath);
-        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0 ? outputPath : null;
+        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0
+            ? new StockDownload(outputPath, "video", bestVideoId, null, bestPageUrl, null)
+            : null;
     }
 
-    private async Task<string?> TryDownloadPhotoAsync(string query, string outputPath, ImageClient.Orientation orientation)
+    private async Task<StockDownload?> TryDownloadPhotoAsync(string query, string outputPath, ImageClient.Orientation orientation)
     {
         var json = await SearchAsync("search-photo", query, orientation, perPage: 1);
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("photos", out var photos) || photos.GetArrayLength() == 0)
             return null;
 
-        var link = photos[0].GetProperty("src").GetProperty("large2x").GetString();
+        var photo = photos[0];
+        var link = photo.GetProperty("src").GetProperty("large2x").GetString();
         if (string.IsNullOrEmpty(link)) return null;
+        var photoId = photo.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+            ? idEl.GetInt64()
+            : (long?)null;
+        var pageUrl = photo.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String
+            ? urlEl.GetString()
+            : null;
+        var alt = photo.TryGetProperty("alt", out var altEl) && altEl.ValueKind == JsonValueKind.String
+            ? altEl.GetString()
+            : null;
 
         await DownloadAsync(link, outputPath);
-        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0 ? outputPath : null;
+        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0
+            ? new StockDownload(outputPath, "photo", null, photoId, pageUrl, alt)
+            : null;
     }
 
     private async Task<string> SearchAsync(string command, string query, ImageClient.Orientation orientation, int perPage)

@@ -33,6 +33,12 @@ public sealed class Publication
     public int Attempts { get; set; }
     public string? Error { get; set; }
 
+    // Most recent failure message, kept for history once Error is cleared on
+    // a later success (Program.cs). A published record must not carry a stale
+    // failure as its live Error — video #2's YouTube record still showed the
+    // "invalid_grant" error from its first attempt even though it published.
+    public string? LastError { get; set; }
+
     [JsonIgnore]
     public bool IsTerminal => Status is PublishStatus.Published or PublishStatus.Abandoned or PublishStatus.Skipped;
 }
@@ -84,6 +90,56 @@ public sealed class Sidecar
     public double? LoudnessLUFS { get; set; }
     public int? HookScore { get; set; }
     public int? SeoScore { get; set; }
+
+    // Resolved background-music track filename (e.g. "uplifting-tech-01.mp3"),
+    // written by VideoGen at assemble time. The uploader uses it to append the
+    // CC BY attribution line for the track (see Program.cs MusicCredits). Null
+    // on sidecars written before this field existed — in that case the uploader
+    // logs a warning instead of silently publishing without a credit.
+    public string? MusicTrack { get; set; }
+
+    // Rendered video duration in seconds, written by VideoGen. Used by the
+    // uploader for duration gates (e.g. the 60s Instagram Story cap). Null on
+    // older sidecars; the uploader falls back to probing the file with ffprobe.
+    public double? DurationSeconds { get; set; }
+
+    // Spotlight Now legal disclaimer (Rishi 2026-11-21). Kept here, not in
+    // Program.cs, so both the description append and CaptionFor's fallback can
+    // refer to the same text: a caption must never carry the disclaimer.
+    public const string TrendlineDisclaimer =
+        "Disclaimer: This video is for informational and entertainment purposes. " +
+        "We work from publicly reported facts, but some segments include commentary, " +
+        "opinion, and speculation — these are clearly labelled and are not presented " +
+        "as established fact. News develops quickly and details may change after " +
+        "publication. If you spot an error, tell us in the comments and we will correct it.";
+
+    // Spotlight Now description footer (Rishi 2026-11-22, review SEO #3;
+    // rebranded 2026-11-24; emoji overhaul 2026-11-25, Rishi: descriptions
+    // must ALWAYS be catchy and carry emojis wherever possible). Appended to
+    // every YouTube description after the disclaimer, so a caption (which
+    // CaptionFor truncates at the disclaimer) never carries it either. The
+    // subscribe line is the idempotency marker: the uploader skips the footer
+    // when it is already present, so a re-run never stacks a second copy —
+    // the marker text itself is VERBATIM and must never change, only the
+    // emoji/wording after it. The cross-link lines (Short -> long-form,
+    // long-form -> Short) are NOT part of this constant — they carry a video
+    // id that is only known after upload, so the uploader builds them at
+    // upload time (YouTubePublisher.FullVideoLinkLine / ShortVersionLinkLine).
+    // The footer ends with the video outro line (same wording as the outro
+    // card in TrendlineNowProfile) plus the channel hashtags.
+    public const string TrendlineFooterMarker = "Subscribe for a new star story every day:";
+    public const string TrendlineFooter =
+        "Subscribe for a new star story every day: 🔔 https://www.youtube.com/@spotlightnowofficial\n" +
+        "\n" +
+        "🌟 Follow Spotlight Now:\n" +
+        "📸 Instagram: https://www.instagram.com/spotlightnowofficial\n" +
+        "🎵 TikTok: https://www.tiktok.com/@spotlightnowofficial\n" +
+        "👍 Facebook: https://www.facebook.com/spotlightnowofficial\n" +
+        "🧵 Threads: https://www.threads.com/@spotlightnowofficial\n" +
+        "\n" +
+        "✨ The next big story is already brewing. Follow @spotlightnowofficial so you don't miss it.\n" +
+        "\n" +
+        "#SpotlightNow #Bollywood #Hollywood #CelebrityNews";
 
     [JsonIgnore] public bool IsVertical => Aspect.Equals("vertical", StringComparison.OrdinalIgnoreCase);
 
@@ -150,9 +206,37 @@ public sealed class Sidecar
 
     public string CaptionFor(string platform, int maxLength)
     {
-        var text = CaptionOverrides.TryGetValue(platform, out var custom) && !string.IsNullOrWhiteSpace(custom)
-            ? custom
-            : Description;
+        if (CaptionOverrides.TryGetValue(platform, out var custom) && !string.IsNullOrWhiteSpace(custom))
+            return Text.Fit(custom, maxLength);
+
+        // Fall back to the description BEFORE the disclaimer: ResolveSidecarAsync
+        // appends the Trendline disclaimer to Description in memory, and a saved
+        // sidecar already carries it — but a caption (notably the TikTok
+        // .tiktok-caption.txt, which is the only carrier in draft flow) must never
+        // paste the legal paragraph. Strip it here so a blank per-platform
+        // override can never leak the disclaimer into a caption.
+        var text = Description;
+        var idx = text.IndexOf(TrendlineDisclaimer, StringComparison.Ordinal);
+        if (idx >= 0)
+            text = text[..idx].TrimEnd();
+        // B18: the CC BY music credit is appended to the description BEFORE
+        // the disclaimer, so the truncation above leaves it in the caption.
+        // A credit line is its own paragraph starting with "Music: " and
+        // carrying a "CC BY" licence marker (see Uploader MusicCredits) —
+        // cut the caption there too, so a fallback caption never carries
+        // the attribution line. Only the first such line is cut; a
+        // description that merely mentions music in prose is untouched.
+        foreach (var line in text.Split('\n'))
+        {
+            if (line.StartsWith("Music: ", StringComparison.Ordinal)
+                && line.Contains("CC BY", StringComparison.Ordinal))
+            {
+                var creditIdx = text.IndexOf(line, StringComparison.Ordinal);
+                if (creditIdx >= 0)
+                    text = text[..creditIdx].TrimEnd();
+                break;
+            }
+        }
         return Text.Fit(text, maxLength);
     }
 }

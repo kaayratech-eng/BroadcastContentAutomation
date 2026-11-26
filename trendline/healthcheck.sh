@@ -1,8 +1,12 @@
 #!/bin/bash
-# trendline/healthcheck.sh — read-only health check for the Trendline Now loop.
-# Runs every driver tick (10 min) and on demand. NEVER mutates jobs, NEVER
-# launches or kills anything: it only reports. The driver (driver.sh) is
-# the only component that acts on the findings.
+# trendline/healthcheck.sh — health check for the Trendline Now loop.
+# Runs every driver tick (10 min) and on demand. NEVER launches or kills
+# anything, and never mutates jobs — with ONE exception: when it first sees
+# an Azure 429/throttle marker in the current step log, it records
+# .current.last_429_at in state.json so the driver's backoff can be
+# measured from then (previously last_429_at was never set anywhere, so
+# the backoff was dead code). The driver (driver.sh) is the only
+# component that acts on the findings.
 #
 # Checks:
 #   (a) Is a driver step currently running and making progress?
@@ -23,6 +27,11 @@ TRENDLINE=${TRENDLINE_DIR:-~/workspace/BroadcastContentAutomation/trendline}
 STATE="${TRENDLINE_STATE:-$TRENDLINE/state.json}"
 CONFIG="${TRENDLINE_CONFIG:-$TRENDLINE/config.json}"
 LOG=$(jq -r '.driver_log' "$CONFIG" 2>/dev/null || echo ~/workspace/goals/daily-trending-news-video-channel/hidden_files/trendline-driver.log)
+
+# Shared throttle-marker rule (review #2 B15): one pattern + whole-log
+# check, so this script and driver.sh cannot drift apart again.
+THROTTLE_SH="$TRENDLINE/throttle.sh"
+[ -f "$THROTTLE_SH" ] && . "$THROTTLE_SH"
 HEALTH="$TRENDLINE/health.json"
 NOW=$(date -Is)
 TS=$(date +%s)
@@ -75,14 +84,47 @@ LOGO=~/workspace/BroadcastContentAutomation/BroadcastContentAutomation/VideoGen/
 [ -f "$LOGO" ] || problem "intro logo missing: $LOGO (assemble would fail fast)"
 
 # --- (a) current step alive + log advancing ---------------------------------
+# Even when paused, check the recorded pid/log (monitor-only): a dead pid
+# while paused is a warning, never a problem — the driver is gated and will
+# not act, but Rishi should still see it. (Previously this whole block was
+# skipped when paused, so health.json read "ok" while phase render_assemble
+# had a long-dead pid.)
+MONITOR_ONLY=false
 if [ "$PAUSED" = "true" ]; then
-  note "driver is paused (gated) — no current step expected"
-elif [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHASE" != "done" ]; then
+  MONITOR_ONLY=true
+  note "driver is paused (gated) — step checks are monitor-only"
+fi
+# step_problem: a step problem is CRITICAL only when there is no recovery
+# path. A dead or stalled step the driver can resume/relaunch (every known
+# phase) is a WARNING — flagging routine VM-restart deaths CRITICAL trained
+# everyone to ignore health.json.
+step_problem() { # $1 = message
+  if [ "$MONITOR_ONLY" = "true" ]; then
+    warning "monitor-only (paused): $1"
+  else
+    case "$CURRENT_PHASE" in
+      prep|prep_done|render_assemble|render_chunks|finish|verify)
+        warning "$1 (recoverable — driver will resume/relaunch on the next tick)" ;;
+      *)
+        problem "$1 (phase $CURRENT_PHASE has no recovery path)" ;;
+    esac
+  fi
+}
+if [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHASE" != "done" ]; then
   if [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "null" ]; then
     if kill -0 "$CURRENT_PID" 2>/dev/null; then
-      note "current step alive: pid $CURRENT_PID ($CURRENT_PHASE, $CURRENT_JOB)"
+      # Also verify the cmdline: a recorded pid can be reused by an
+      # unrelated process after a VM restart (same markers as driver.sh
+      # pid_alive).
+      CMD=$(ps -o args= -p "$CURRENT_PID" 2>/dev/null || echo "")
+      case "$CMD" in
+        *VideoGen.dll*|*render-chunks.sh*|*finish-chunks.py*|*remotion*)
+          note "current step alive: pid $CURRENT_PID ($CURRENT_PHASE, $CURRENT_JOB)" ;;
+        *)
+          step_problem "current step pid $CURRENT_PID is not a pipeline step (pid reused?) — treating as dead (phase $CURRENT_PHASE, job $CURRENT_JOB)" ;;
+      esac
     else
-      problem "current step process $CURRENT_PID is DEAD (phase $CURRENT_PHASE, job $CURRENT_JOB) — driver should recover (resume/relaunch)"
+      step_problem "current step process $CURRENT_PID is DEAD (phase $CURRENT_PHASE, job $CURRENT_JOB) — driver should recover (resume/relaunch)"
     fi
   else
     note "current step has no pid recorded (phase $CURRENT_PHASE, job $CURRENT_JOB) — monitor-only or not yet launched"
@@ -92,7 +134,7 @@ elif [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHAS
     LOG_AGE_MIN=$(( (TS - LOG_MTIME) / 60 ))
     if [ "$LOG_AGE_MIN" -ge "$STALL_MIN" ]; then
       if [ "$DRIVER_OWNED" = "true" ]; then
-        problem "current step log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m stall threshold) — driver should kill + retry the step"
+        step_problem "current step log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m stall threshold) — driver should kill + retry the step"
       else
         warning "monitor-only step log silent ${LOG_AGE_MIN}m (job $CURRENT_JOB) — do NOT kill; it was not launched by the driver"
       fi
@@ -102,8 +144,27 @@ elif [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHAS
     # --- (b) 429 / crash markers in the log --------------------------------
     # Match a real throttle, NOT the Remotion frame counter: the render log
     # contains "Rendered 429/2633" as a frame count, which a bare "429"
-    # grep would mistake for an HTTP 429.
-    if tail -200 "$CURRENT_LOG" 2>/dev/null | grep -q "HTTP 429\|Too Many Requests\|Downstream Service Throttled\|prepayment credits are depleted"; then
+    # grep would mistake for an HTTP 429. The pattern and the whole-log
+    # check live in throttle.sh (B15) — a 429 more than 200 lines back
+    # used to be missed, and the two scripts disagreed on the pattern.
+    if log_has_throttle "$CURRENT_LOG"; then
+      if [ -z "$LAST_429" ] || [ "$LAST_429" = "null" ]; then
+        # First sighting of this throttle: record it (the one sanctioned
+        # write this check makes) so the driver's backoff can be measured
+        # from now. Previously last_429_at was never set anywhere, so the
+        # backoff was dead code.
+        NEW_429=$(date -Is)
+        # B16: per-call mktemp file, never the shared "$STATE.tmp" the
+        # driver also writes, and refresh the top-level .updated_at.
+        STATE_TMP=$(mktemp "$STATE.tmp.XXXXXX") || STATE_TMP=""
+        if [ -n "$STATE_TMP" ] && jq --arg ts "$NEW_429" '.current.last_429_at = $ts | .updated_at = $ts' "$STATE" > "$STATE_TMP" && mv "$STATE_TMP" "$STATE"; then
+          LAST_429="$NEW_429"
+          note "Azure 429 marker first seen — recorded last_429_at=$NEW_429 (backoff ${BACKOFF_MIN}m)"
+        else
+          [ -n "$STATE_TMP" ] && rm -f "$STATE_TMP"
+          warning "log mentions 429/throttle but could not record last_429_at — treat as backoff"
+        fi
+      fi
       if [ -n "$LAST_429" ] && [ "$LAST_429" != "null" ]; then
         BACKOFF_END=$(date -d "$LAST_429 + $BACKOFF_MIN minutes" +%s 2>/dev/null || echo 0)
         if [ "$TS" -lt "$BACKOFF_END" ]; then
@@ -112,12 +173,10 @@ elif [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHAS
         else
           warning "Azure 429 backoff expired — safe to --resume the prep"
         fi
-      else
-        warning "log mentions 429/throttle but no last_429_at in state — treat as backoff"
       fi
     fi
     if tail -5 "$CURRENT_LOG" 2>/dev/null | grep -q "FATAL\|Unhandled exception\|OutOfMemoryException" ; then
-      problem "log tail shows a fatal/crash marker — driver should recover from the last checkpoint"
+      step_problem "log tail shows a fatal/crash marker — driver should recover from the last checkpoint"
     fi
   else
     warning "current step log missing or unreadable: ${CURRENT_LOG:-none}"
@@ -142,16 +201,25 @@ if [ -f "$AZURE_HELPER" ]; then
 else
   warning "azure_tts.py not found — cannot probe Azure TTS"
 fi
-# Groq / Cloudflare / Pexels / YouTube API: endpoint reachability only (any
-# HTTP response, even 401, proves the endpoint is up). No quota is burned.
+# Groq / Cloudflare / Pexels / YouTube API: endpoint reachability only.
+# B22: only a genuine 2xx success counts as "reachable" — a 403 (dead key),
+# 429 (throttled) or 500 used to be reported as reachable, which hid the
+# two most likely prep killers until a prep died. The curl exit code is
+# checked separately: previously a failed curl printed "000" AND the
+# fallback echoed "000", producing the "HTTP 000000" artefact in the log.
+# Quota is NOT probed here: no YouTube/Cloudflare/Azure quota endpoint
+# reports remaining quota, and any authenticated probe would burn quota
+# and need a key plumbed into this shell script — the uploader's
+# per-run quota estimate (B31) is the quota signal instead.
 for svc in groq cloudflare pexels youtube_api; do
   url=$(jq -r ".services.$svc.ping_url" "$CONFIG")
-  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url" 2>/dev/null || echo "000")
-  if [ "$code" = "000" ]; then
-    warning "$svc endpoint unreachable (curl failed) — prep may fail; renders unaffected"
-  else
-    note "$svc endpoint reachable (HTTP $code)"
-  fi
+  code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url" 2>/dev/null)
+  if [ $? -ne 0 ] || [ -z "$code" ]; then code="000"; fi
+  case "$code" in
+    2*) note "$svc endpoint reachable (HTTP $code)" ;;
+    000) warning "$svc endpoint unreachable (curl failed) — prep may fail; renders unaffected" ;;
+    *) warning "$svc endpoint returned HTTP $code (not a success) — treating as unreachable; prep may fail; renders unaffected" ;;
+  esac
 done
 
 # --- write health.json -------------------------------------------------------

@@ -23,9 +23,10 @@
 // to the portrait asset with a blurred fill for the landscape render
 // (see VideoAssembler.cs line ~108), so a missing LandscapeImagePath
 // is not a failure - it is the intended derived-landscape path.
-// Long-form VisualGroup reuse (12-18 beats for 70-90 scenes) is kept
-// in Program.cs; this client is only called for a beat that has no
-// pre-placed art on disk, exactly like ManualArtClient was.
+// Long-form VisualGroup reuse is GONE (fix sequence #2 ITEM 3, 2026-11-22):
+// every scene gets its own group and its own visual now - one image per
+// scene, resolved in Program.cs; this client is only called for a scene
+// that has no pre-placed art on disk, exactly like ManualArtClient was.
 static class AutomatedArtClient
 {
     private static readonly HttpClient Http = new() { Timeout = TimeSpan.FromMinutes(5) };

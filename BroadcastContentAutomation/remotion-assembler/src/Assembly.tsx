@@ -160,24 +160,141 @@ const MotionVideo: React.FC<{ asset: SceneAsset; durationInFrames: number }> = (
   );
 };
 
-const Caption: React.FC<{ text: string }> = ({ text }) => (
-  <AbsoluteFill style={{ justifyContent: "flex-end", alignItems: "center", paddingBottom: "8%" }}>
-    <div
+const Caption: React.FC<{ text: string; durationInFrames: number; hook?: boolean }> = ({
+  text,
+  durationInFrames,
+  hook,
+}) => {
+  const frame = useCurrentFrame();
+  const { fps, width } = useVideoConfig();
+  // Hook title (first scene only): the script's hook-first rule puts the
+  // single most shocking true fact in the first sentence, so the big title
+  // shows exactly that sentence - never a truncation mid-clause. The full
+  // narration still plays in audio; the on-screen title is the hook line.
+  const displayText = hook ? text.match(/^[^.!?]+[.!?]/)?.[0] ?? text : text;
+  const words = displayText.split(/\s+/).filter(Boolean);
+  // Word-by-word reveal (2026-11-25, eye-catching overhaul): the caption is
+  // the narration, so it reveals word by word at the narration's average
+  // pace (~170 wpm) instead of appearing as a static block - the eye
+  // follows the words and the frame never sits still. True per-word timings
+  // don't exist in the props (CaptionText is the plain narration string),
+  // so words are spread evenly across the narration window: the voice ends
+  // 0.75s before the scene does (0.5s tail + 0.25s hold, see
+  // VideoAssembler), so the last word lands as the voice stops. Drift vs
+  // the real TTS is bounded - steady-pace TTS averages out - and each word
+  // pops in over 3 frames, so a small offset reads as karaoke, not lag.
+  // The hook title reveals faster (first ~2s) since it is the opening punch.
+  const revealStart = hook ? 6 : 4;
+  const revealEnd = hook
+    ? Math.min(66, durationInFrames - 6)
+    : Math.max(revealStart + 1, durationInFrames - Math.round(0.75 * fps));
+  const revealSpan = Math.max(1, revealEnd - revealStart);
+
+  // Whole-caption entrance (slide up + fade) and exit fade into the dissolve.
+  const enter = interpolate(frame, [0, 8], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const enterY = interpolate(frame, [0, 8], [14, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const exit = interpolate(frame, [durationInFrames - 10, durationInFrames], [1, 0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  const wordStyle = (i: number): React.CSSProperties => {
+    const at = revealStart + (i / Math.max(1, words.length)) * revealSpan;
+    const o = interpolate(frame, [at, at + 3], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    const y = interpolate(frame, [at, at + 3], [6, 0], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    return { display: "inline-block", opacity: o, transform: `translateY(${y}px)` };
+  };
+
+  const renderedWords = words.map((w, i) => (
+    <React.Fragment key={i}>
+      <span style={wordStyle(i)}>{w}</span>
+      {i < words.length - 1 ? " " : null}
+    </React.Fragment>
+  ));
+
+  if (hook) {
+    // Hook title card: large centred type with a red accent bar growing
+    // above it - the first 5 seconds read as a title, not a caption.
+    const barScaleX = interpolate(frame, [0, 25], [0, 1], {
+      extrapolateLeft: "clamp",
+      extrapolateRight: "clamp",
+    });
+    return (
+      <AbsoluteFill
+        style={{
+          justifyContent: "center",
+          alignItems: "center",
+          paddingBottom: "6%",
+          opacity: enter * exit,
+          transform: `translateY(${enterY}px)`,
+        }}
+      >
+        <div
+          style={{
+            width: Math.round(width * 0.18),
+            height: Math.max(6, Math.round(width * 0.008)),
+            backgroundColor: "#ef4444",
+            marginBottom: Math.round(width * 0.03),
+            transform: `scaleX(${barScaleX})`,
+          }}
+        />
+        <div
+          style={{
+            fontFamily: "sans-serif",
+            fontSize: Math.round(width * 0.042),
+            fontWeight: 800,
+            color: "white",
+            textAlign: "center",
+            textShadow: "0 2px 16px rgba(0,0,0,0.9)",
+            maxWidth: "88%",
+            lineHeight: 1.3,
+          }}
+        >
+          {renderedWords}
+        </div>
+      </AbsoluteFill>
+    );
+  }
+
+  return (
+    <AbsoluteFill
       style={{
-        fontFamily: "sans-serif",
-        fontSize: 44,
-        fontWeight: 700,
-        color: "white",
-        textAlign: "center",
-        textShadow: "0 2px 12px rgba(0,0,0,0.85)",
-        maxWidth: "85%",
-        lineHeight: 1.25,
+        justifyContent: "flex-end",
+        alignItems: "center",
+        paddingBottom: "8%",
+        opacity: enter * exit,
+        transform: `translateY(${enterY}px)`,
       }}
     >
-      {text}
-    </div>
-  </AbsoluteFill>
-);
+      <div
+        style={{
+          fontFamily: "sans-serif",
+          fontSize: 44,
+          fontWeight: 700,
+          color: "white",
+          textAlign: "center",
+          textShadow: "0 2px 12px rgba(0,0,0,0.85)",
+          maxWidth: "85%",
+          lineHeight: 1.25,
+        }}
+      >
+        {renderedWords}
+      </div>
+    </AbsoluteFill>
+  );
+};
 
 // Data visual for a "visual" scene (Trendline Now only): a graph, a table, or a
 // big on-screen text callout, drawn natively from asset.visualSpec - never an
@@ -235,15 +352,26 @@ const VisualScene: React.FC<{ asset: SceneAsset }> = ({ asset }) => {
 // Line chart (SVG polyline with dots + labels) or bar chart (flex bars). Values
 // are normalised against the series min/max (line) or max (bar) so any unit
 // renders; the unit string is shown next to the top value when given.
+// ANIMATED (2026-11-25, eye-catching overhaul): a static chart sitting
+// untouched for ~8s is dead air, so the visual builds itself in the first
+// ~1.5s - bars grow one by one with their values counting up, the line
+// draws itself left to right with its dots popping in along it, the headline
+// number counts up. All from the existing visualSpec props; nothing new is
+// passed per video.
 const ChartVisual: React.FC<{
   spec: NonNullable<SceneAsset["visualSpec"]>;
   accent: string;
   width: number;
   height: number;
 }> = ({ spec, accent, width, height }) => {
+  const frame = useCurrentFrame();
   const labels = spec.labels ?? [];
   const values = spec.values ?? [];
   if (labels.length === 0 || values.length === 0) return null;
+
+  // Count-up formatting: integers stay integers, decimals keep one place.
+  const countUp = (v: number, p: number) =>
+    Number.isInteger(v) ? `${Math.round(v * p)}` : `${(v * p).toFixed(1)}`;
 
   if (spec.kind === "bar") {
     const max = Math.max(...values, 1);
@@ -251,18 +379,30 @@ const ChartVisual: React.FC<{
     const valueSize = Math.round(width * 0.026);
     return (
       <div style={{ display: "flex", alignItems: "flex-end", gap: Math.round(width * 0.02), height, width: "100%" }}>
-        {values.map((v, i) => (
-          <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
-            <div style={{ fontSize: valueSize, fontWeight: 700, color: "white", marginBottom: 8 }}>
-              {v}
-              {spec.unit ? ` ${spec.unit}` : ""}
+        {values.map((v, i) => {
+          // Each bar grows over 30 frames, staggered 6 frames apart, so the
+          // chart builds left to right; its value counts up with the growth.
+          const p = interpolate(frame, [i * 6, i * 6 + 30], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          const labelOpacity = interpolate(frame, [i * 6 + 22, i * 6 + 32], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          return (
+            <div key={i} style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "flex-end", height: "100%" }}>
+              <div style={{ fontSize: valueSize, fontWeight: 700, color: "white", marginBottom: 8, opacity: labelOpacity }}>
+                {countUp(v, p)}
+                {spec.unit ? ` ${spec.unit}` : ""}
+              </div>
+              <div style={{ width: "70%", height: `${Math.max(0, (v / max) * 72 * p)}%`, backgroundColor: accent, borderRadius: 6 }} />
+              <div style={{ fontSize: labelSize, color: "rgba(255,255,255,0.75)", marginTop: 10, textAlign: "center", opacity: labelOpacity }}>
+                {labels[i]}
+              </div>
             </div>
-            <div style={{ width: "70%", height: `${Math.max(4, (v / max) * 72)}%`, backgroundColor: accent, borderRadius: 6 }} />
-            <div style={{ fontSize: labelSize, color: "rgba(255,255,255,0.75)", marginTop: 10, textAlign: "center" }}>
-              {labels[i]}
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     );
   }
@@ -280,18 +420,46 @@ const ChartVisual: React.FC<{
   const polyline = points.map((p) => `${p.x},${p.y}`).join(" ");
   const labelSize = Math.round(width * 0.022);
   const valueSize = Math.round(width * 0.026);
+  // The line draws itself over the first 42 frames (pathLength trick);
+  // each dot pops in as the line reaches
+  // it, and the headline number counts up to the latest value with it.
+  const lineProgress = interpolate(frame, [0, 42], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  const headOpacity = interpolate(frame, [0, 10], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
 
   return (
     <div style={{ width: "100%" }}>
-      <div style={{ fontSize: valueSize, fontWeight: 700, color: "white", marginBottom: 8 }}>
-        {values[values.length - 1]}
+      <div style={{ fontSize: valueSize, fontWeight: 700, color: "white", marginBottom: 8, opacity: headOpacity }}>
+        {countUp(values[values.length - 1], lineProgress)}
         {spec.unit ? ` ${spec.unit}` : ""}
       </div>
       <svg width={chartW} height={chartH} style={{ display: "block", overflow: "visible" }}>
-        <polyline points={polyline} fill="none" stroke={accent} strokeWidth={Math.max(3, width * 0.004)} strokeLinejoin="round" strokeLinecap="round" />
-        {points.map((p, i) => (
-          <circle key={i} cx={p.x} cy={p.y} r={Math.max(5, width * 0.006)} fill={accent} stroke="#0b1526" strokeWidth={2} />
-        ))}
+        <polyline
+          points={polyline}
+          fill="none"
+          stroke={accent}
+          strokeWidth={Math.max(3, width * 0.004)}
+          strokeLinejoin="round"
+          strokeLinecap="round"
+          pathLength={1}
+          strokeDasharray={1}
+          strokeDashoffset={1 - lineProgress}
+        />
+        {points.map((p, i) => {
+          const dotAt = points.length > 1 ? (i / (points.length - 1)) * 42 : 21;
+          const dotOpacity = interpolate(frame, [dotAt, dotAt + 6], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          return (
+            <circle key={i} cx={p.x} cy={p.y} r={Math.max(5, width * 0.006)} fill={accent} stroke="#0b1526" strokeWidth={2} opacity={dotOpacity} />
+          );
+        })}
       </svg>
       <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
         {labels.map((l, i) => (
@@ -308,223 +476,110 @@ const TableVisual: React.FC<{
   spec: NonNullable<SceneAsset["visualSpec"]>;
   accent: string;
   bodySize: number;
-}> = ({ spec, accent, bodySize }) => (
-  <table style={{ width: "100%", borderCollapse: "collapse", fontSize: bodySize, color: "white" }}>
-    <thead>
-      <tr>
-        {(spec.headers ?? []).map((h, i) => (
-          <th
-            key={i}
-            style={{
-              textAlign: "left",
-              padding: "14px 16px",
-              borderBottom: `3px solid ${accent}`,
-              fontWeight: 800,
-            }}
-          >
-            {h}
-          </th>
-        ))}
-      </tr>
-    </thead>
-    <tbody>
-      {(spec.rows ?? []).map((row, i) => (
-        <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "rgba(255,255,255,0.05)" : "transparent" }}>
-          {row.map((cell, j) => (
-            <td key={j} style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
-              {cell}
-            </td>
+}> = ({ spec, accent, bodySize }) => {
+  // ANIMATED (2026-11-25): rows fade in one by one, top to bottom, so the
+  // table reads as a reveal rather than a static block. Opacity only -
+  // transforms on <tr> are unreliable in Chromium, so no slide here.
+  const frame = useCurrentFrame();
+  const headOpacity = interpolate(frame, [0, 10], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+  return (
+    <table style={{ width: "100%", borderCollapse: "collapse", fontSize: bodySize, color: "white" }}>
+      <thead>
+        <tr style={{ opacity: headOpacity }}>
+          {(spec.headers ?? []).map((h, i) => (
+            <th
+              key={i}
+              style={{
+                textAlign: "left",
+                padding: "14px 16px",
+                borderBottom: `3px solid ${accent}`,
+                fontWeight: 800,
+              }}
+            >
+              {h}
+            </th>
           ))}
         </tr>
-      ))}
-    </tbody>
-  </table>
-);
+      </thead>
+      <tbody>
+        {(spec.rows ?? []).map((row, i) => {
+          const rowOpacity = interpolate(frame, [10 + i * 7, 22 + i * 7], [0, 1], {
+            extrapolateLeft: "clamp",
+            extrapolateRight: "clamp",
+          });
+          return (
+            <tr key={i} style={{ backgroundColor: i % 2 === 0 ? "rgba(255,255,255,0.05)" : "transparent", opacity: rowOpacity }}>
+              {row.map((cell, j) => (
+                <td key={j} style={{ padding: "14px 16px", borderBottom: "1px solid rgba(255,255,255,0.12)" }}>
+                  {cell}
+                </td>
+              ))}
+            </tr>
+          );
+        })}
+      </tbody>
+    </table>
+  );
+};
 
 const CalloutVisual: React.FC<{
   spec: NonNullable<SceneAsset["visualSpec"]>;
   accent: string;
   width: number;
-}> = ({ spec, accent, width }) => (
-  <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", flex: 1 }}>
-    <div style={{ width: 12, height: Math.round(width * 0.09), backgroundColor: accent, marginBottom: 28 }} />
-    <div style={{ fontSize: Math.round(width * 0.062), fontWeight: 800, color: "white", lineHeight: 1.2 }}>
-      {spec.text}
-    </div>
-    {spec.subtext ? (
-      <div style={{ fontSize: Math.round(width * 0.028), color: "rgba(255,255,255,0.75)", marginTop: 20, lineHeight: 1.4 }}>
-        {spec.subtext}
-      </div>
-    ) : null}
-  </div>
-);
-
-// Animated intro sting (Trendline Now, 2026-11-21) - the channel's brand
-// moment, played before scene 1 on every video. Art-forward by design: the
-// navy + red identity IS the frame, not a logo pasted on black. A red trend
-// line draws itself diagonally upward across the frame, the TN logo badge
-// springs in on top of it, "TRENDLINE NOW" slams in below, and the tagline
-// fades in last. All sizes scale with the frame width, so the same component
-// works for the 16:9 master and the 9:16 short. No narration - the sting is
-// purely visual, ~3.5s.
-const Intro: React.FC<{ logoPath: string }> = ({ logoPath }) => {
+}> = ({ spec, accent, width }) => {
+  // ANIMATED (2026-11-25): the accent bar grows down, the big number/text
+  // slides up into place, the subtext fades in last - the callout lands
+  // like a punchline instead of sitting there from frame 0.
   const frame = useCurrentFrame();
-  const { fps, width, height } = useVideoConfig();
-
-  // The trend line draws itself across the first ~1.6s (frames 5-50).
-  const lineProgress = interpolate(frame, [5, 50], [0, 1], {
+  const barScaleY = interpolate(frame, [0, 18], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  const arrowOpacity = interpolate(frame, [46, 52], [0, 1], {
+  const textOpacity = interpolate(frame, [6, 20], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  // Logo badge springs in over frames 10-40, with a slight overshoot settle.
-  const logoSpring = spring({ frame: frame - 10, fps, config: { damping: 11, stiffness: 110 } });
-  const logoScale = 0.45 + 0.55 * logoSpring;
-  const logoOpacity = interpolate(frame, [10, 22], [0, 1], {
+  const textY = interpolate(frame, [6, 20], [18, 0], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  // "TRENDLINE NOW" slams in over frames 45-60.
-  const titleSpring = spring({ frame: frame - 45, fps, config: { damping: 13, stiffness: 160 } });
-  const titleScale = 1.5 - 0.5 * titleSpring;
-  const titleOpacity = interpolate(frame, [45, 53], [0, 1], {
+  const subOpacity = interpolate(frame, [28, 42], [0, 1], {
     extrapolateLeft: "clamp",
     extrapolateRight: "clamp",
   });
-  // Tagline fades/slides up last, frames 60-80.
-  const tagOpacity = interpolate(frame, [60, 78], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  const tagTranslateY = interpolate(frame, [60, 78], [16, 0], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-  // Disclaimer line fades in last, frames 80-96, so it is legible before the
-  // ~3.5s sting ends. Intro only renders for Trendline Now.
-  const disclaimerOpacity = interpolate(frame, [80, 96], [0, 1], {
-    extrapolateLeft: "clamp",
-    extrapolateRight: "clamp",
-  });
-
-  const logoSize = Math.round(Math.min(width, height) * 0.42);
-  const titleSize = Math.round(width * 0.072);
-  const tagSize = Math.round(width * 0.026);
-  const lineW = Math.max(6, Math.round(width * 0.009));
-
-  // Zigzag rising trend line, bottom-left to top-right, as a fraction of the
-  // frame - the same rising-trend motif as the logo's red arrow. The logo
-  // badge covers the middle of the line when it springs in, so the line's
-  // ends stay visible on either side.
-  const pts: Array<[number, number]> = [
-    [0.06, 0.82],
-    [0.26, 0.66],
-    [0.38, 0.74],
-    [0.56, 0.52],
-    [0.68, 0.6],
-    [0.94, 0.3],
-  ];
-  const pathD = pts
-    .map(([x, y], i) => `${i === 0 ? "M" : "L"}${(x * width).toFixed(1)},${(y * height).toFixed(1)}`)
-    .join(" ");
-  // Arrowhead triangle at the end of the line, pointing along the last segment.
-  const ex = 0.94 * width;
-  const ey = 0.3 * height;
-  const px = 0.68 * width;
-  const py = 0.6 * height;
-  const dx = ex - px;
-  const dy = ey - py;
-  const len = Math.hypot(dx, dy) || 1;
-  const ux = dx / len;
-  const uy = dy / len;
-  const ah = Math.round(width * 0.045);
-  const aw = Math.round(width * 0.026);
-  const bx = ex - ux * ah;
-  const by = ey - uy * ah;
-  const arrowPoints = `${ex.toFixed(1)},${ey.toFixed(1)} ${(bx - uy * aw).toFixed(1)},${(by + ux * aw).toFixed(1)} ${(bx + uy * aw).toFixed(1)},${(by - ux * aw).toFixed(1)}`;
-
   return (
-    <AbsoluteFill
-      style={{
-        backgroundColor: "#0b1526",
-        backgroundImage: "radial-gradient(ellipse 90% 70% at 50% 42%, #16294d 0%, #0b1526 70%)",
-        justifyContent: "center",
-        alignItems: "center",
-        fontFamily: "sans-serif",
-        overflow: "hidden",
-      }}
-    >
-      <svg width={width} height={height} style={{ position: "absolute", inset: 0 }}>
-        <path
-          d={pathD}
-          fill="none"
-          stroke="#ef4444"
-          strokeWidth={lineW}
-          strokeLinejoin="round"
-          strokeLinecap="round"
-          pathLength={1}
-          strokeDasharray={1}
-          strokeDashoffset={1 - lineProgress}
-        />
-        <polygon points={arrowPoints} fill="#ef4444" opacity={arrowOpacity} />
-      </svg>
+    <div style={{ display: "flex", flexDirection: "column", justifyContent: "center", flex: 1 }}>
       <div
         style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          transform: `scale(${logoScale})`,
-          opacity: logoOpacity,
+          width: 12,
+          height: Math.round(width * 0.09),
+          backgroundColor: accent,
+          marginBottom: 28,
+          transform: `scaleY(${barScaleY})`,
+          transformOrigin: "top",
         }}
-      >
-        <Img src={staticFile(logoPath)} style={{ width: logoSize, height: logoSize }} />
-      </div>
+      />
       <div
         style={{
-          fontSize: titleSize,
+          fontSize: Math.round(width * 0.062),
           fontWeight: 800,
           color: "white",
-          letterSpacing: Math.round(width * 0.008),
-          marginTop: Math.round(height * 0.035),
-          transform: `scale(${titleScale})`,
-          opacity: titleOpacity,
-          textAlign: "center",
+          lineHeight: 1.2,
+          opacity: textOpacity,
+          transform: `translateY(${textY}px)`,
         }}
       >
-        TRENDLINE NOW
+        {spec.text}
       </div>
-      <div
-        style={{
-          fontSize: tagSize,
-          fontWeight: 700,
-          color: "#ef4444",
-          letterSpacing: Math.round(width * 0.006),
-          marginTop: Math.round(height * 0.018),
-          opacity: tagOpacity,
-          transform: `translateY(${tagTranslateY}px)`,
-          textAlign: "center",
-        }}
-      >
-        THE BIGGEST STORY OF THE DAY, EXPLAINED
-      </div>
-      <div
-        style={{
-          fontSize: Math.round(width * 0.016),
-          fontWeight: 500,
-          color: "rgba(255,255,255,0.6)",
-          letterSpacing: Math.round(width * 0.002),
-          marginTop: Math.round(height * 0.02),
-          opacity: disclaimerOpacity,
-          textAlign: "center",
-          maxWidth: "80%",
-        }}
-      >
-        Includes commentary and clearly-labelled speculation. Verify key facts from primary sources.
-      </div>
-    </AbsoluteFill>
+      {spec.subtext ? (
+        <div style={{ fontSize: Math.round(width * 0.028), color: "rgba(255,255,255,0.75)", marginTop: 20, lineHeight: 1.4, opacity: subOpacity }}>
+          {spec.subtext}
+        </div>
+      ) : null}
+    </div>
   );
 };
 
@@ -533,7 +588,8 @@ const Intro: React.FC<{ logoPath: string }> = ({ logoPath }) => {
 // Profiles without outroHandles get the same card with just their lines (the
 // legacy "LIKE, FOLLOW & SUBSCRIBE" card, restyled) - no handle, no chips,
 // so the destination is never shown twice. A third line (the vertical
-// short's "Watch the full video on YouTube") renders in the accent colour.
+// short's end-card line, e.g. "Want the full story? Watch it on YouTube —
+// @spotlightnowofficial") renders in the accent colour.
 // First line renders as the header; every line after it as a smaller sub-line.
 const Outro: React.FC<{
   lines: string[];
@@ -638,12 +694,20 @@ const Outro: React.FC<{
   );
 };
 
-const Scene: React.FC<{ asset: SceneAsset; durationInFrames: number }> = ({
+const Scene: React.FC<{ asset: SceneAsset; durationInFrames: number; isHook?: boolean }> = ({
   asset,
   durationInFrames,
+  isHook,
 }) => {
-  const { width } = useVideoConfig();
+  const { fps, width } = useVideoConfig();
+  const frame = useCurrentFrame();
   const badgeSize = Math.round(width * 0.02);
+  // SPECULATION badge pops in with a spring instead of appearing flat.
+  const badgeSpring = spring({ frame: frame - 4, fps, config: { damping: 12, stiffness: 200 } });
+  const badgeOpacity = interpolate(frame, [4, 12], [0, 1], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
   return (
     <AbsoluteFill style={{ backgroundColor: "black" }}>
       {asset.kind === "visual" ? (
@@ -654,14 +718,17 @@ const Scene: React.FC<{ asset: SceneAsset; durationInFrames: number }> = ({
         <KenBurnsImage asset={asset} durationInFrames={durationInFrames} />
       )}
       {asset.narrationAudioPath ? <Audio src={staticFile(asset.narrationAudioPath)} /> : null}
-      {asset.captionText ? <Caption text={asset.captionText} /> : null}
+      {asset.captionText ? (
+        <Caption text={asset.captionText} durationInFrames={durationInFrames} hook={isHook} />
+      ) : null}
       {asset.isSpeculative ? (
         <div
           style={{
             position: "absolute",
             top: "4%",
             left: "50%",
-            transform: "translateX(-50%)",
+            transform: `translateX(-50%) scale(${badgeSpring})`,
+            opacity: badgeOpacity,
             backgroundColor: "#ef4444",
             color: "white",
             fontFamily: "sans-serif",
@@ -688,10 +755,7 @@ export const Assembly: React.FC<AssemblyProps> = ({
   outroAudioPath,
   outroHandles,
   outroHandle,
-  introSeconds,
-  introLogoPath,
   isCalm,
-  briefScenes = [],
 }) => {
   const { fps } = useVideoConfig();
 
@@ -704,13 +768,10 @@ export const Assembly: React.FC<AssemblyProps> = ({
     durationInFrames: Math.round(fps * (isCalm ? 0.45 : 0.2)),
   });
 
-  // The intro sting leads (when the profile has one) and the outro card
-  // closes (when outroSeconds > 0); each gets a fade transition into the
-  // next sequence, exactly as Root.tsx's calculateMetadata counts them.
-  const hasIntro = introSeconds > 0 && introLogoPath !== undefined && introLogoPath !== "";
-  // Curiosity brief (Rishi 2026-11-21): teaser scenes play FIRST, before
-  // the intro sting, so the viewer is hooked before the brand moment.
-  const hasBrief = briefScenes.length > 0;
+  // The outro card closes (when outroSeconds > 0) with a fade transition
+  // into it, exactly as Root.tsx's calculateMetadata counts it. No intro
+  // sting, no brief (removed 2026-11-25, Rishi): the video opens directly
+  // with scene 0, the hook.
 
   return (
     <AbsoluteFill>
@@ -718,43 +779,12 @@ export const Assembly: React.FC<AssemblyProps> = ({
         <Audio src={staticFile(backgroundMusicPath)} volume={backgroundMusicVolume} loop />
       ) : null}
       <TransitionSeries>
-        {hasBrief
-          ? briefScenes.flatMap((asset, i) => {
-              const durationInFrames = Math.round(asset.durationInSeconds * fps);
-              const elements = [
-                <TransitionSeries.Sequence key={`brief-${i}`} durationInFrames={durationInFrames}>
-                  <Scene asset={asset} durationInFrames={durationInFrames} />
-                </TransitionSeries.Sequence>,
-              ];
-              // A transition follows every brief scene (into the next brief
-              // scene, or into the intro / first scene).
-              elements.push(
-                <TransitionSeries.Transition
-                  key={`transition-brief-${i}`}
-                  presentation={fade()}
-                  timing={transitionTiming}
-                />
-              );
-              return elements;
-            })
-          : null}
-        {hasIntro ? (
-          <>
-            <TransitionSeries.Sequence durationInFrames={Math.round(introSeconds * fps)}>
-              <Intro logoPath={introLogoPath} />
-            </TransitionSeries.Sequence>
-            <TransitionSeries.Transition
-              key="transition-intro"
-              presentation={fade()}
-              timing={transitionTiming}
-            />
-          </>
-        ) : null}
         {scenes.flatMap((asset, i) => {
           const durationInFrames = Math.round(asset.durationInSeconds * fps);
           const elements = [
             <TransitionSeries.Sequence key={`scene-${i}`} durationInFrames={durationInFrames}>
-              <Scene asset={asset} durationInFrames={durationInFrames} />
+              {/* Scene 0 is the hook: its first sentence renders as the big animated title card. */}
+              <Scene asset={asset} durationInFrames={durationInFrames} isHook={i === 0} />
             </TransitionSeries.Sequence>,
           ];
           if (i < scenes.length - 1 || outroSeconds > 0) {

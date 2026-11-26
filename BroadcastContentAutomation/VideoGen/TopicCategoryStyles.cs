@@ -1,5 +1,5 @@
-// Topic-aware styling for Trendline Now (2026-11-21, Rishi): the video's style
-// depends on the topic. A gaming story gets a completely different look, tone and
+// Topic-aware styling for Spotlight Now (2026-11-21, Rishi; pivoted to
+// entertainment 2026-11-24): the video's style depends on the topic. A gaming story gets a completely different look, tone and
 // pace from a finance story, and politics gets yet another. The style lives in this
 // data table — not hardcoded per video — so a new category is one table entry, not
 // a code change. TrendlineNowProfile wires CategoryStyles = TopicCategoryStyles.All;
@@ -54,7 +54,7 @@ static class TopicCategoryStyles
                     "character silhouettes, glowing UI-like elements, cinematic game-trailer " +
                     "framing. Prefer striking visuals over charts - a graph only earns a " +
                     "scene if the story has a real number (sales, player count, review score).",
-                PacingRate: "-5%",
+                PacingRate: "+10%",
                 PacingPitch: "+2%",
                 VisualEmphasis: "Visuals first: bold on-screen text callouts and big numbers. " +
                     "Charts only for real figures the news actually reports (sales, player " +
@@ -75,7 +75,7 @@ static class TopicCategoryStyles
                 ArtStyleGuidance: "clean editorial business visuals: trading floors, city " +
                     "skylines, charts on screens, money and market imagery. Charts and " +
                     "tables are the stars here, not decoration.",
-                PacingRate: "-10%",
+                PacingRate: "+10%",
                 PacingPitch: "-2%",
                 VisualEmphasis: "Charts and tables FIRST: price/index trend lines, earnings " +
                     "figures, comparison tables. Every claim with a number gets a visual " +
@@ -85,9 +85,17 @@ static class TopicCategoryStyles
             ["politics"] = new(
                 Id: "politics",
                 Label: "Politics",
+                // Global topic strategy (2026-11-22): the politics demotion
+                // depends on Classify returning "politics", and headlines
+                // say "Democrats"/"Republicans" (plural) far more than the
+                // singular. Classify matches whole words, so the singular
+                // never matches the plural — the dropped Democrats story
+                // classified as "general" and escaped demotion. The plurals
+                // are unambiguous politics words; adding them is safe.
                 Keywords: ["election", "president", "prime minister", "parliament", "congress",
                     "senate", "minister", "vote", "campaign", "policy", "summit", "treaty",
-                    "government", "law", "court", "supreme", "democrat", "republican",
+                    "government", "law", "court", "supreme", "democrat", "democrats",
+                    "republican", "republicans",
                     "biden", "trump", "modi", "putin", "war", "ceasefire", "sanctions",
                     "white house", "army", "military"],
                 ToneGuidance: "Serious, measured, newsroom - a trusted anchor, not a pundit. " +
@@ -98,7 +106,7 @@ static class TopicCategoryStyles
                 ArtStyleGuidance: "newsroom documentary visuals: government buildings, " +
                     "capitals, press conferences, crowds, maps. Timelines and quoted lines " +
                     "as on-screen callouts.",
-                PacingRate: "-10%",
+                PacingRate: "+10%",
                 PacingPitch: "-4%",
                 VisualEmphasis: "Timelines and maps first: a timeline of how events unfolded, " +
                     "a map when geography matters, and direct quotes as big text callouts. " +
@@ -118,7 +126,7 @@ static class TopicCategoryStyles
                 ArtStyleGuidance: "dynamic sports visuals: action shots, stadiums under " +
                     "lights, athletes in motion, roaring crowds. Score and stat tables " +
                     "as clean overlays.",
-                PacingRate: "-5%",
+                PacingRate: "+10%",
                 PacingPitch: "+2%",
                 VisualEmphasis: "Score tables and stat callouts: the scoreline, the key stats, " +
                     "the record broken - shown as bold on-screen numbers. A line chart " +
@@ -139,7 +147,7 @@ static class TopicCategoryStyles
                 ArtStyleGuidance: "sleek product visuals: devices, labs, clean futuristic " +
                     "spaces, glowing interfaces. Spec tables and clean diagrams as " +
                     "on-screen visuals.",
-                PacingRate: "-8%",
+                PacingRate: "+10%",
                 PacingPitch: "0%",
                 VisualEmphasis: "Spec tables and clean comparison visuals: what changed, " +
                     "what it costs, how it stacks up - shown as a tidy table. A chart " +
@@ -150,21 +158,72 @@ static class TopicCategoryStyles
                 Label: "Entertainment",
                 Keywords: ["movie", "film", "celebrity", "actor", "actress", "music", "album",
                     "concert", "netflix", "trailer", "awards", "oscar", "grammy", "bollywood",
-                    "k-pop", "show", "series", "singer", "rapper", "comedian", "box office",
-                    "streaming", "taylor swift", "marvel"],
-                ToneGuidance: "Vibrant and fun, like talking about the show everyone is " +
-                    "watching - warm, a little playful, full of the " +
-                    "'did-you-see-that' energy. Never gossipy or mean about real people.",
+                    "hollywood", "k-pop", "show", "series", "singer", "rapper", "comedian", "box office",
+                    "streaming", "taylor swift", "marvel", "premiere", "red carpet", "blockbuster",
+                    "comeback", "debut", "ott", "web series", "filmfare", "cannes", "met gala",
+                    "reality show", "star", "superstar", "fame", "famous"],
+                ToneGuidance: "Warm, admiring fan energy - like a fan telling a friend why " +
+                    "this star is amazing. Celebrate the journey, the hard work, the " +
+                    "breakthrough. 'Did-you-see-that' excitement, genuine and upbeat. " +
+                    "Never gossipy or mean about real people - praise, don't tear down.",
                 ColourPalette: "vibrant and warm - rich purples, hot pinks and golds on a " +
                     "dark base, red-carpet energy",
                 ArtStyleGuidance: "vibrant entertainment visuals: premieres, stages, " +
                     "concert lights, film-set drama. Bold text callouts for the big " +
                     "reveal (a release date, a record, a casting).",
-                PacingRate: "-5%",
+                PacingRate: "+10%",
                 PacingPitch: "+2%",
                 VisualEmphasis: "Bold text callouts for the big beats: the date, the record, " +
                     "the number everyone is talking about. Tables only for a real list " +
                     "(chart positions, box-office figures)."),
+
+            // SPOTLIGHT NOW pivot (2026-11-24): singers are a core beat, not a
+            // sub-keyword of entertainment - their own style (stage, tour,
+            // album, the voice) earns its own entry.
+            ["music"] = new(
+                Id: "music",
+                Label: "Music",
+                Keywords: ["song", "single", "tour", "billboard", "spotify", "playback",
+                    "vocalist", "band", "lyrics", "music video", "chart-topper",
+                    "chart topper", "grammy winner", "album launch", "world tour",
+                    "concert tour", "hit song", "new song"],
+                ToneGuidance: "Celebrate the artist and the song - the voice, the grind " +
+                    "behind the hit, the crowd singing along. Warm, musical, a little " +
+                    "awestruck. The song is the hero; the numbers (streams, charts) " +
+                    "prove it. Never mean about real people.",
+                ColourPalette: "stage-light energy - deep purple and gold on a dark base, " +
+                    "concert glow, warm and vivid",
+                ArtStyleGuidance: "concert and studio visuals: stages under lights, " +
+                    "microphones, crowds with hands up, recording studios. Bold " +
+                    "callouts for chart positions and stream counts.",
+                PacingRate: "+10%",
+                PacingPitch: "+2%",
+                VisualEmphasis: "Bold text callouts for the big beats: the chart position, " +
+                    "the stream count, the record. Tables only for a real list " +
+                    "(chart positions, tour dates)."),
+
+            // SPOTLIGHT NOW pivot (2026-11-24): fashion is a core beat - red
+            // carpet looks, fashion week, the designer behind the moment.
+            ["fashion"] = new(
+                Id: "fashion",
+                Label: "Fashion",
+                Keywords: ["fashion", "style", "gown", "outfit", "look", "fashion week",
+                    "runway", "designer", "vogue", "elle", "glamour", "couture",
+                    "red carpet look", "best dressed", "stylist"],
+                ToneGuidance: "Glamorous and admiring - like a front-row friend describing " +
+                    "the look that stopped the room. Celebrate the design, the " +
+                    "confidence, the moment. Warm and vivid, never snarky about " +
+                    "real people.",
+                ColourPalette: "runway glamour - black and gold on a dark base, rich " +
+                    "and elegant, high contrast",
+                ArtStyleGuidance: "fashion visuals: runways, red carpets, close-ups of " +
+                    "the outfit, designers at work. Bold callouts for the designer " +
+                    "and the moment.",
+                PacingRate: "+10%",
+                PacingPitch: "+2%",
+                VisualEmphasis: "Bold text callouts for the big beats: the designer, the " +
+                    "event, the look everyone is talking about. No charts - fashion " +
+                    "is visual, not numeric."),
 
             ["general"] = new(
                 Id: "general",
@@ -178,7 +237,7 @@ static class TopicCategoryStyles
                 ArtStyleGuidance: "bold editorial news visuals: the real place, the real " +
                     "people, the real moment - cinematic and human, never generic stock " +
                     "cliché.",
-                PacingRate: "-10%",
+                PacingRate: "+10%",
                 PacingPitch: "-4%",
                 VisualEmphasis: "A balanced mix: a chart when the story has a real trend, a " +
                     "table for key figures, a timeline when the sequence matters, and a " +

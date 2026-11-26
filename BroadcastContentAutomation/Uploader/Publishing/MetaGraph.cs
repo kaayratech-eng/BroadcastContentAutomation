@@ -103,7 +103,13 @@ static class MetaGraph
 
         // 4 / 17 / 32 / 613 are rate limits; 1 and 2 are transient platform faults.
         // 190 (bad token) and 100 (bad parameter) will never succeed on retry.
-        var transient = code is 1 or 2 or 4 or 17 or 32 or 341 or 613;
+        //
+        // Code -1 is Meta's catch-all ("Create media fail, please try to re-create
+        // media", subcodes 2207001/2207032 for container creation). It is NOT a
+        // permanent rejection: Meta's own guidance for it is to create a new
+        // container and retry, and the message says so itself. Treating it as
+        // permanent abandoned video #2's Instagram Story after a single attempt.
+        var transient = code is -1 or 1 or 2 or 4 or 17 or 32 or 341 or 613;
         return new GraphError(code, sub, message, Permanent: !transient);
     }
 
@@ -184,8 +190,53 @@ static class MetaGraph
             }
         }
 
+        // A server that accepted 0 bytes across all 5 attempts points at the
+        // transport/auth path, not the file: the rupload endpoint, the token, or
+        // the egress proxy — the file itself never reached Meta. Say so plainly
+        // (with the endpoint host, never the token) instead of letting the next
+        // reader chase a codec problem. Video #2's Instagram Reel died exactly
+        // this way ("server holds 0 B of 26.66 MB").
+        var zeroBytesNote = offset == 0
+            ? $" The server accepted 0 bytes — this points at the transport/auth path " +
+              $"(rupload endpoint {UploadHost(uploadUrl)}, token, egress proxy), not the file itself."
+            : "";
         throw new MetaGraphException(new GraphError(0, 0,
-            $"Upload did not complete after 5 attempts (server holds {Text.Bytes(offset)} of {Text.Bytes(total)}).", Permanent: false));
+            $"Upload did not complete after 5 attempts (server holds {Text.Bytes(offset)} of {Text.Bytes(total)}).{zeroBytesNote}", Permanent: false));
+    }
+
+    private static string UploadHost(string uploadUrl) =>
+        Uri.TryCreate(uploadUrl, UriKind.Absolute, out var uri) ? uri.Host : uploadUrl;
+
+    // A previous run recorded this media id (media_publish succeeded) but died
+    // before the sidecar was saved. A GET that returns the media means the post
+    // is live — reuse it instead of publishing a duplicate. Mirrors
+    // YouTubePublisher's tri-state lookup: Found = reuse it, NotFound = it was
+    // deleted (publish fresh), Unknown = the check itself failed (retry later,
+    // never publish blind — a second live Reel is worse than a delayed one).
+    // Only a Graph "object does not exist" (error 100) or a bare HTTP 404
+    // counts as NotFound; a transient 500, rate limit, bad token, or transport
+    // failure is Unknown. The old bool version collapsed all failures to
+    // "not found", so a transient 500 on the verification GET caused a
+    // duplicate publish.
+    public static async Task<MediaLookup> MediaExistsAsync(
+        HttpClient http, string baseUrl, string mediaId, string accessToken, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await GetAsync(http,
+                $"{baseUrl}/{Uri.EscapeDataString(mediaId)}?fields=id&access_token={Uri.EscapeDataString(accessToken)}", ct);
+            return doc.RootElement.TryGetProperty("id", out var id) && id.GetString() is { Length: > 0 }
+                ? MediaLookup.Found
+                : MediaLookup.NotFound;
+        }
+        catch (MetaGraphException ex) when (ex.Error.Code is 100 or 404)
+        {
+            return MediaLookup.NotFound;
+        }
+        catch
+        {
+            return MediaLookup.Unknown;
+        }
     }
 
     // Ask the rupload endpoint how much of the file it already holds: a POST
@@ -244,7 +295,14 @@ static class MetaGraph
             lastDetail = detail;
 
             if (done) return detail;
-            if (failed) throw new MetaGraphException(new GraphError(0, 0, $"Processing failed: {detail}", Permanent: true));
+            // Processing failures (transcode ERROR/EXPIRED) are retryable, consistent
+            // with ReadAsync above, which deliberately treats an HTTP 400 carrying
+            // ProcessingFailedError as retryable because Meta's self-reported
+            // retriable:false is empirically wrong. The same underlying transcode
+            // blip must not be retried or abandoned depending on which call
+            // happens to surface it — a fresh attempt creates a fresh container,
+            // which is exactly what Meta prescribes for these failures.
+            if (failed) throw new MetaGraphException(new GraphError(0, 0, $"Processing failed: {detail}", Permanent: false));
 
             log.Info($"  [{tag}] processing… {detail}");
         }
@@ -258,3 +316,9 @@ sealed class MetaGraphException(MetaGraph.GraphError error) : Exception(error.Me
 {
     public MetaGraph.GraphError Error { get; } = error;
 }
+
+// Tri-state result of a prior-media lookup (mirrors YouTubePublisher's
+// VideoLookup): Found = the recorded post is live, reuse it; NotFound = it
+// was deleted, a fresh publish is safe; Unknown = the check itself failed,
+// retry later and never publish blind.
+public enum MediaLookup { Found, NotFound, Unknown }

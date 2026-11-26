@@ -23,7 +23,7 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
 
     private string Base => $"https://graph.facebook.com/{cfg.GraphVersion}";
 
-    public bool Accepts(Sidecar sidecar, out string? reason)
+    public bool Accepts(Sidecar sidecar, string videoPath, out string? reason)
     {
         reason = null;
         return true;
@@ -38,6 +38,16 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
 
         try
         {
+            // Idempotency: a previous run may have uploaded the video and died
+            // before the sidecar was saved. If the recorded video is live,
+            // reuse it — do not post a second video to the Page.
+            if (!string.IsNullOrWhiteSpace(request.ExistingId))
+            {
+                var prior = await CheckPriorVideoAsync(http, request.ExistingId, ct);
+                if (prior is not null) return prior;
+                // null = the prior video is gone/failed — fall through to a fresh upload.
+            }
+
             var caption = request.Sidecar.CaptionFor(Platforms.Facebook, CaptionLimit);
 
             log.Info($"  [facebook] uploading {Text.Bytes(request.SizeBytes)} to Page video post");
@@ -55,6 +65,11 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
 
             using var upload = await MetaGraph.PostMultipartAsync(http, $"{Base}/{cfg.PageId}/videos", form, ct);
             var videoId = MetaGraph.RequireString(upload.RootElement, "id");
+
+            // The video is uploaded NOW. Record the id before the processing
+            // poll, so a VM restart while waiting cannot post a second video.
+            if (request.OnPlatformIdAsync is not null)
+                await request.OnPlatformIdAsync(videoId);
 
             log.Info($"  [facebook] video {videoId} uploaded, waiting for processing");
 
@@ -81,6 +96,58 @@ sealed class FacebookPublisher(FacebookConfig cfg, Logger log) : IPublisher
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return PublishResult.Retry($"Facebook transport error: {ex.Message}");
+        }
+    }
+
+    // Ask Facebook what happened to a video id recorded by a previous run that
+    // died before the sidecar was saved. Ready -> reuse it; failed processing
+    // -> fresh upload; still processing -> wait (Retry, burns an attempt);
+    // empty/missing status -> Defer (wait WITHOUT burning an attempt — no
+    // state was reported at all, so the video may be fine and the attempt
+    // budget must not be spent on a lookup that said nothing); not found
+    // -> fresh upload; lookup failure -> Retry (never publish blind).
+    private async Task<PublishResult?> CheckPriorVideoAsync(HttpClient http, string videoId, CancellationToken ct)
+    {
+        try
+        {
+            using var doc = await MetaGraph.GetAsync(http,
+                $"{Base}/{Uri.EscapeDataString(videoId)}?fields=status&access_token={Uri.EscapeDataString(cfg.AccessToken)}", ct);
+            var phase = doc.RootElement.TryGetProperty("status", out var st) && st.TryGetProperty("video_status", out var vs)
+                ? vs.GetString() ?? ""
+                : "";
+            if (phase == "ready")
+                return PublishResult.Ok(videoId, $"https://www.facebook.com/{cfg.PageId}/videos/{videoId}");
+            if (phase is "error" or "failed")
+            {
+                log.Info($"  [facebook] previously recorded video {videoId} failed processing ({phase}); uploading fresh.");
+                return null;
+            }
+            if (string.IsNullOrWhiteSpace(phase))
+            {
+                // B19: an empty/missing status means Facebook reported no
+                // state at all — not "processing", not "failed", nothing.
+                // Returning Retry here burned one of the 3 attempts on every
+                // run and landed a healthy video Abandoned. Defer instead:
+                // the next run re-checks, and the attempt budget is untouched.
+                log.Info($"  [facebook] previously recorded video {videoId} returned no processing status; deferring without burning an attempt.");
+                return PublishResult.Defer($"Facebook video {videoId} from a previous run returned no processing status; waiting before retrying without burning an attempt.");
+            }
+            return PublishResult.Retry($"Facebook video {videoId} from a previous run is still processing (status: {phase}); waiting before retrying.");
+        }
+        catch (MetaGraphException ex) when (ex.Error.Code is 100 or 404)
+        {
+            // Graph error 100 / HTTP 404 = the video is gone (deleted), so a
+            // fresh upload is safe.
+            log.Info($"  [facebook] previously recorded video {videoId} is gone ({ex.Message}); uploading fresh.");
+            return null;
+        }
+        catch (Exception ex)
+        {
+            // The lookup itself failed (transient 500, timeout, transport) —
+            // the prior video may still be live, so retry instead of risking
+            // a duplicate post to the Page.
+            log.Info($"  [facebook] could not verify prior video {videoId} ({ex.Message}); waiting before retrying.");
+            return PublishResult.Retry($"Could not verify previously recorded Facebook video {videoId}; not re-uploading blind to avoid a duplicate.");
         }
     }
 }

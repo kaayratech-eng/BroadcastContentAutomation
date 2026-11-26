@@ -1,1 +1,99 @@
-{"_comment":"Trendline Now continuous daily driver configuration. Read by trendline/driver.sh and trendline/healthcheck.sh. Tunables only — no secrets here.","dotnet_root":"/home/hatch/.dotnet","driver_log":"/home/hatch/workspace/goals/daily-trending-news-video-channel/hidden_files/trendline-driver.log","goal_dir":"/home/hatch/workspace/goals/daily-trending-news-video-channel","health":{"disk_critical_gb":10,"disk_warn_gb":20,"driver_stale_minutes":30,"max_consecutive_failures_before_escalation":3,"prep_log_silence_warn_minutes":20,"render_log_silence_warn_minutes":10},"prep_env":{"GIGGLE_SceneArtProvider":"cloudflare","GIGGLE_ScriptProvider":"groq-helper","_comment":"Env overrides REQUIRED for every trendlinenow prep/resume. Defaults are wrong for this channel: ScriptProvider defaults to hybrid-helper (routes acts 3+ to Gemini, whose credits are depleted) and SceneArtProvider defaults to pollinations (paid). groq-helper + cloudflare keep the pipeline free."},"production_dir":"/home/hatch/workspace/BroadcastContentAutomation/production","profile":"trendlinenow","profiles":{"trendlinenow":{"landscape_targets":["youtube"],"long_form":true,"made_for_kids":false,"prep_args":["--long"],"vertical_targets":["youtube","instagram","facebook","tiktok","instagram_story","facebook_story"]}},"protected_job":"job-20261121-085638","protected_job_note":"Video #1, owned by the build subagent (intro/outro + TTS + art + assemble). The driver must NEVER touch this job directory. The loop is gated (state.json .paused=true) until video #1 finishes and Rishi reviews it.","queue_policy":{"_comment":"One video at a time, continuously. A completed video is recorded in state.json .completed and the next video starts on the next tick. NOTHING uploads automatically — sidecars are Approved:false and the uploader only touches approved videos. Rishi reviews each video before it is approved for upload.","fps":30,"post_narration_hold_seconds":1.5,"vertical_max_seconds":85},"render":{"_comment":"Scene-aligned chunks, 5 scenes each (~25-35 min). --concurrency=1: chunk renders OOM at concurrency 2 (2026-11-13 lesson). The landscape render (~20960 frames, ~6h at ~1fps) ALWAYS exceeds the 180-min Remotion timeout and the ~2-4h VM lifetime, so chunk recovery is the normal path for landscape, not an exception.","chunk_log_silence_kill_minutes":30,"concurrency":1,"max_assemble_retries":2,"max_chunk_retries":3,"scenes_per_chunk":5,"verify_duration_tolerance_seconds":3.0},"repo_root":"/home/hatch/workspace/BroadcastContentAutomation","scene_art_provider_env":"cloudflare","script_provider_env":"groq-helper","services":{"_comment":"Reachability probes only (any HTTP response, even 401, proves the endpoint is up). No quota is burned. These do NOT check quota — a Cloudflare neurons-exhausted error or an Azure 429 only shows up in a prep log.","azure_tts":{"ping_url":"https://eastus.api.cognitive.microsoft.com/sts/v1.0/issueToken"},"cloudflare":{"ping_url":"https://api.cloudflare.com/client/v4/accounts"},"groq":{"ping_url":"https://api.groq.com/openai/v1/models"},"pexels":{"ping_url":"https://api.pexels.com/v1/search?query=test&per_page=1"},"youtube_api":{"ping_url":"https://www.googleapis.com/youtube/v3/search?part=snippet&q=test"}},"tmpdir":"/home/hatch/workspace/tmp","trendline_dir":"/home/hatch/workspace/BroadcastContentAutomation/trendline","tts":{"_comment":"Azure Free F0 throttles (HTTP 429) after ~20-35 rapid TTS calls. The pipeline paces calls 2s apart and the provider retries internally, but a hard throttle still kills the prep. The driver backs off then --resumes (each resume skips scenes already on disk).","max_prep_resumes":6,"throttle_backoff_minutes":45},"videogen_dir":"/home/hatch/workspace/BroadcastContentAutomation/BroadcastContentAutomation/VideoGen","videogen_dll":"bin/Release/net8.0/VideoGen.dll","videos_dir":"/home/hatch/workspace/BroadcastContentAutomation/videos","work_dir":"/home/hatch/workspace/BroadcastContentAutomation/work"}
+{
+  "_comment": "Spotlight Now continuous daily driver configuration (renamed from Trendline Now 2026-11-24). Read by trendline/driver.sh and trendline/healthcheck.sh. Tunables only — no secrets here.",
+  "dotnet_root": "/home/hatch/.dotnet",
+  "driver_log": "/home/hatch/workspace/goals/daily-trending-news-video-channel/hidden_files/trendline-driver.log",
+  "goal_dir": "/home/hatch/workspace/goals/daily-trending-news-video-channel",
+  "health": {
+    "disk_critical_gb": 10,
+    "disk_warn_gb": 20,
+    "driver_stale_minutes": 30,
+    "max_consecutive_failures_before_escalation": 3,
+    "prep_log_silence_warn_minutes": 20,
+    "render_log_silence_warn_minutes": 10
+  },
+  "laptop": {
+    "_comment": "Automatic laptop renders (2026-11-23): Rishi's Windows laptop (Hawkeye) is the ONLY renderer — the VM does code + orchestration only, never a render. enabled=false until the first live link test passes (Tailscale join approved + OpenSSH Server + VM public key in authorized_keys, then trendline/laptop-render.sh test). vm_render_fallback_enabled=false keeps the old VM render path OFF even while laptop mode is off, so the driver never silently renders on the VM while the link is being set up.",
+    "enabled": true,
+    "host": "hawkeye",
+    "identity": "/home/hatch/.ssh/id_ed25519_trendline",
+    "root": "C:/trendline-render",
+    "user": "rishi",
+    "vm_render_fallback_enabled": false
+  },
+  "production_dir": "/home/hatch/workspace/BroadcastContentAutomation/production",
+  "profile": "trendlinenow",
+  "profiles": {
+    "trendlinenow": {
+      "landscape_targets": [
+        "youtube"
+      ],
+      "long_form": true,
+      "made_for_kids": false,
+      "prep_args": [
+        "--long"
+      ],
+      "vertical_targets": [
+        "youtube",
+        "instagram",
+        "facebook",
+        "tiktok",
+        "instagram_story",
+        "facebook_story"
+      ]
+    }
+  },
+  "protected_job": "job-20261121-085638",
+  "protected_job_note": "Video #1, owned by the build subagent (intro/outro + TTS + art + assemble). The driver must NEVER touch this job directory. The loop is gated (state.json .paused=true) until video #1 finishes and Rishi reviews it.",
+  "queue_policy": {
+    "_comment": "One video at a time, continuously. A completed video is recorded in state.json .completed and the next video starts on the next tick. NOTHING uploads automatically — sidecars are Approved:false and the uploader only touches approved videos. Rishi reviews each video before it is approved for upload.",
+    "fps": 30,
+    "post_narration_hold_seconds": 1.5,
+    "vertical_max_seconds": 85
+  },
+  "render": {
+    "_comment": "Scene-aligned chunks, 5 scenes each (~25-35 min). --concurrency=1: chunk renders OOM at concurrency 2 (2026-11-13 lesson). The landscape render (~20960 frames, ~6h at ~1fps) ALWAYS exceeds the 180-min Remotion timeout and the ~2-4h VM lifetime, so chunk recovery is the normal path for landscape, not an exception.",
+    "chunk_log_silence_kill_minutes": 30,
+    "concurrency": 1,
+    "max_assemble_retries": 2,
+    "max_chunk_retries": 3,
+    "memory_gate_comment": "Rishi 2026-11-23: block a render launch when free RAM is low or the machine has been up too long (driver.sh memory_gate_ok). Disabled until he switches it on. Thresholds from observed evidence: launches at ~150-250MB free died at frame ~58-96; vertical chunks that completed launched at ~782MB free, ~40-55 min after a restart; free decays to ~125MB within ~30 min of boot (seen 18:05 restart).",
+    "memory_gate_enabled": false,
+    "memory_gate_max_uptime_minutes": 60,
+    "memory_gate_min_free_mb": 400,
+    "scenes_per_chunk": 5,
+    "verify_duration_tolerance_seconds": 3.0
+  },
+  "repo_root": "/home/hatch/workspace/BroadcastContentAutomation",
+  "scene_art_provider_env": "cloudflare",
+  "script_provider_env": "pool-helper",
+  "services": {
+    "_comment": "Reachability probes (healthcheck.sh requires a 2xx success — a 403/429/500 is reported as unreachable, not reachable). No quota is burned and no quota is checked: no quota endpoint reports remaining quota (see B31 note in the uploader).",
+    "azure_tts": {
+      "ping_url": "https://eastus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
+    },
+    "cloudflare": {
+      "ping_url": "https://api.cloudflare.com/client/v4/accounts"
+    },
+    "groq": {
+      "ping_url": "https://api.groq.com/openai/v1/models"
+    },
+    "pexels": {
+      "ping_url": "https://api.pexels.com/v1/search?query=test&per_page=1"
+    },
+    "youtube_api": {
+      "ping_url": "https://www.googleapis.com/youtube/v3/search?part=snippet&q=test"
+    }
+  },
+  "tmpdir": "/home/hatch/workspace/tmp",
+  "trendline_dir": "/home/hatch/workspace/BroadcastContentAutomation/trendline",
+  "tts": {
+    "_comment": "Azure Free F0 throttles (HTTP 429) after ~20-35 rapid TTS calls. The pipeline paces calls 2s apart and the provider retries internally, but a hard throttle still kills the prep. The driver backs off then --resumes (each resume skips scenes already on disk).",
+    "max_prep_resumes": 6,
+    "throttle_backoff_minutes": 45
+  },
+  "videogen_dir": "/home/hatch/workspace/BroadcastContentAutomation/BroadcastContentAutomation/VideoGen",
+  "videogen_dll": "bin/Release/net8.0/VideoGen.dll",
+  "videos_dir": "/home/hatch/workspace/BroadcastContentAutomation/videos",
+  "work_dir": "/home/hatch/workspace/BroadcastContentAutomation/work",
+  "_deprecated": "prep_env was removed 2026-11-22 (fix sequence #2 ITEM 6, B10): driver.sh never read it, so editing it had zero effect. The live overrides are the GIGGLE_ScriptProvider / GIGGLE_SceneArtProvider exports in trendline/driver.sh. script_provider_env and scene_art_provider_env below are likewise documentation-only — no script reads them; keep them in sync with the driver.sh export by hand."
+}

@@ -1,47 +1,110 @@
-// Free image-generation pool client (first step, added 2026-11-22).
+// Free image-generation pool client (added 2026-11-22, rebuilt 2026-11-24).
 using GiggleGarden.Shared;
 //
-// The three keyed scene-art providers all failed at once on 2026-11-21
-// (Cloudflare FLUX daily quota exhausted, Pollinations $0 Quest balance,
-// Cloudflare SDXL model deprecated 2026-11-20), blocking video #2's prep.
-// This client shells out to the art_pool.py helper, which tries free
-// providers in order until one returns a real image:
-//   1. OVHcloud AI Endpoints SDXL (anonymous, 1024x1024 PNG, no logo)
-//   2. Pollinations anonymous (768x768 Sana JPEG, logo cropped, upscaled)
-//   3. AI Horde (anonymous, 512x512 WEBP, upscaled)
-//   4. Pexels stock photo (real photo, not AI-generated; last resort)
-// The helper normalizes whatever it gets to exactly 1024x1024 JPEG and
-// exits 0 only when a valid image is written, printing which provider
+// The pool is the fallback after Cloudflare FLUX in the rebuilt chain
+// (see ImagePool.ChainOrder + hidden_files/image-pool.md):
+//   1. Cloudflare FLUX (primary, in Program.cs GenerateSquareArtAsync)
+//   2. Pexels stock photo — this client with only: "pexels", a
+//      topic/entity --query (built by ImagePool.BuildPexelsQuery from
+//      the script title + tags + scene narration) and --seen-file
+//      <job>/pexels-used.json so no photo repeats in one job
+//   3. OVHcloud SDXL — this client with only: "ovh" (filler only)
+//   4-6. Pollinations keyed / Z.ai CogView / Leonardo (dormant legs,
+//      attempted by Program.cs directly, not through this client)
+//
+// art_pool.py itself now contains only OVHcloud + Pexels (Pollinations
+// anonymous + AI Horde were discarded in the 2026-11-24 bake-off and
+// deleted from the helper), governs its own ovh/pexels calls, and
+// normalizes whatever it gets to exactly 1024x1024 JPEG, exiting 0
+// only when a valid image is written and printing which provider
 // succeeded. No key is handled here — every pool provider is anonymous
 // except Pexels, which goes through its own vault-backed helper.
 //
-// The pool is tried FIRST in Program.cs GenerateSquareArtAsync; the keyed
-// providers (Pollinations keyed, Cloudflare FLUX/SDXL) remain as backup
-// for when the pool is exhausted (e.g. OVHcloud + Pollinations both
-// rate-limited in the same minute).
+// The pool is tried AFTER FLUX in Program.cs GenerateSquareArtAsync;
+// CharacterSource calls this client directly (its funnel never goes
+// through that wrapper) with no --only, so the helper tries OVH then
+// Pexels in its default order.
 static class ArtPoolClient
 {
+    // Maps the art_pool.py provider name printed on success
+    // ("artpool: <name> -> <out>") to the ArtSource value recorded on the
+    // scene (B11): the pool's Pexels leg is a real photo, not AI art,
+    // and a reviewer must be able to tell. Returns null when the output
+    // carries no provider line (older helper output). "ovh", "pexels"
+    // and "wikimedia" are mapped now: the helper only ever returns
+    // those three, and the discarded-leg mappings (pollinations/horde)
+    // were dropped with the legs — an unexpected name passes through
+    // raw, so the quality gate rejects it as an unknown source instead
+    // of silently relabelling it.
+    internal static string? ParseProviderName(string stdout)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            stdout ?? "", @"artpool:\s*(\w+)\s*->");
+        if (!m.Success) return null;
+        return m.Groups[1].Value switch
+        {
+            "ovh" => "ovhcloud",
+            "pexels" => "pexels-stock",
+            "wikimedia" => "wikimedia-commons",
+            var other => other,
+        };
+    }
+
     // Generates one 1024x1024 square source image via the pool helper.
     // The helper writes the normalized JPEG directly to outputPath.
     public static async Task<string> GenerateSquareAsync(
         GenConfig cfg, string prompt, string outputPath, int maxAttempts = 2)
     {
+        var (path, _) = await GenerateSquareWithSourceAsync(cfg, prompt, outputPath, maxAttempts);
+        return path;
+    }
+
+    // Same as GenerateSquareAsync, but also returns which pool provider
+    // produced the image (B11), parsed from the helper's stdout line.
+    // Already-on-disk returns (path, null): the source is unknown from
+    // the file alone, and the caller keeps the scene's saved ArtSource.
+    // `only` forces a single pool leg ("ovh" or "pexels"); `query` is
+    // passed to Pexels verbatim (omit it and the helper derives one
+    // from the prompt); `seenFile` is the per-job JSON list of Pexels
+    // photo ids already used, so no photo repeats in one job.
+    public static async Task<(string Path, string? Source)> GenerateSquareWithSourceAsync(
+        GenConfig cfg, string prompt, string outputPath, int maxAttempts = 2)
+        => await GenerateSquareWithSourceAsync(cfg, prompt, outputPath, null, null, null, maxAttempts);
+
+    public static async Task<(string Path, string? Source)> GenerateSquareWithSourceAsync(
+        GenConfig cfg, string prompt, string outputPath,
+        string? only, string? query, string? seenFile, int maxAttempts = 2)
+    {
+        // Quality gate (video #4): never ask the model to draw text —
+        // free models cannot spell. Sanitize here as well as in
+        // Program.GenerateSquareArtAsync, because CharacterSource calls
+        // this funnel directly (it never goes through that wrapper).
+        // Sanitize is idempotent, so a prompt already cleaned upstream
+        // passes through unchanged — and the suffix is appended exactly
+        // once (the guard is the full NoTextSuffix, not just "wide
+        // shot"; see QualityGate.SanitizeImagePrompt).
+        prompt = QualityGate.SanitizeImagePrompt(prompt).Prompt;
+
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-        if (ProcessHelper.AlreadyOnDisk(outputPath)) return outputPath;
+        if (ProcessHelper.AlreadyOnDisk(outputPath)) return (outputPath, null);
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
             {
-                var result = await ProcessHelper.RunAsync("python3",
-                [
+                var args = new List<string>
+                {
                     cfg.ArtPoolHelperPath,
                     "--prompt", prompt,
                     "--out", outputPath,
                     "--width", "1024",
                     "--height", "1024",
-                ], timeoutMinutes: 15);
+                };
+                if (!string.IsNullOrWhiteSpace(only)) { args.Add("--only"); args.Add(only); }
+                if (!string.IsNullOrWhiteSpace(query)) { args.Add("--query"); args.Add(query); }
+                if (!string.IsNullOrWhiteSpace(seenFile)) { args.Add("--seen-file"); args.Add(seenFile); }
+                var result = await ProcessHelper.RunAsync("python3", args, timeoutMinutes: 15);
                 if (result.ExitCode != 0)
                     throw new Exception(
                         $"art pool helper exit {result.ExitCode}: " +
@@ -52,8 +115,9 @@ static class ArtPoolClient
                     throw new Exception(
                         $"art pool returned {w}x{h}, expected 1024x1024");
                 var bytes = new FileInfo(outputPath).Length;
+                var source = ParseProviderName(result.Stdout);
                 Console.WriteLine($"  Art pool square art: {Path.GetFileName(outputPath)} ({bytes / 1024} KB, {Text.Tail(result.Stdout, 120).Trim()})");
-                return outputPath;
+                return (outputPath, source);
             }
             catch (Exception ex) when (attempt < maxAttempts)
             {

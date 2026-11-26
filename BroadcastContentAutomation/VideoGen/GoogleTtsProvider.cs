@@ -41,7 +41,16 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         // Standard voices have no equivalent to Azure's express-as "cheerful" style tag,
         // so that dimension is simply absent here rather than approximated - styleOverride
         // (a scene's mood tag, see ITtsProvider) is intentionally unused.
-        var ssml = $"<speak><prosody rate='{rate}' pitch='{pitch}'>{escaped}</prosody></speak>";
+        //
+        // Rate handling (verified 2026-11-12 in gcp_tts.py): the API IGNORES
+        // the SSML <prosody rate> on this path - the same text at +50% and
+        // -50% came back byte-identical. audioConfig.speakingRate DOES work,
+        // so the rate percentage is translated to a multiplier here (mirroring
+        // the helper's _rate_to_speaking_rate) and left OUT of the SSML so the
+        // two mechanisms can never double-apply. Pitch stays in the SSML.
+        // Without this, a switch to this provider silently shipped slow
+        // narration at the default rate.
+        var ssml = $"<speak><prosody pitch='{pitch}'>{escaped}</prosody></speak>";
 
         using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [google-tts] {m}")))
         {
@@ -52,7 +61,7 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         {
             input = new { ssml },
             voice = new { languageCode = voice.LanguageCode, name = voice.VoiceName },
-            audioConfig = new { audioEncoding = "MP3" },
+            audioConfig = new { audioEncoding = "MP3", speakingRate = RateToSpeakingRate(rate) },
         });
 
         var url = $"https://texttospeech.googleapis.com/v1/text:synthesize?key={cfg.GoogleCloudTtsApiKey}";
@@ -67,5 +76,27 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         if (bytes.Length == 0) throw new Exception("Google TTS returned an empty audio stream.");
 
         await File.WriteAllBytesAsync(outputPath, bytes);
+    }
+
+    // Translates an SSML-style rate percentage ("-10%", "+4%", "0%") or a
+    // plain multiplier ("1.0") to an audioConfig speakingRate multiplier,
+    // clamped to the API's 0.25-4.0 range. Mirrors gcp_tts.py's
+    // _rate_to_speaking_rate exactly, so the direct provider and the helper
+    // provider agree.
+    private static double RateToSpeakingRate(string rate)
+    {
+        double multiplier;
+        try
+        {
+            var value = rate.Trim();
+            multiplier = value.EndsWith('%')
+                ? 1.0 + double.Parse(value[..^1], System.Globalization.CultureInfo.InvariantCulture) / 100.0
+                : double.Parse(value, System.Globalization.CultureInfo.InvariantCulture);
+        }
+        catch
+        {
+            multiplier = 1.0;
+        }
+        return Math.Clamp(multiplier, 0.25, 4.0);
     }
 }

@@ -17,7 +17,12 @@ static partial class VideoAssembler
     // 2026-11-21 (Rishi): video #1 was too slow - hold 1.5 -> 0.75s, and TTS
     // rate -10% -> 0% (TrendlineNowProfile.BuildFormat). Applies from video #3
     // onward; video #2 was already rendered at the old pace.
-    public const double PostNarrationHoldSeconds = 0.75;
+    // 2026-11-22 (Rishi): the pause between scenes is still too long - the
+    // total was 1.25s (0.5s breathing room + 0.75s hold), never 0.75s, so
+    // try 0.75s TOTAL first: hold 0.25s + 0.5s breathing room. Rishi has not
+    // seen a 0.75s pause yet and wants to judge it before going to 0.5s.
+    // Applies from video #4 onward.
+    public const double PostNarrationHoldSeconds = 0.25;
 
     // Clip-based assembly: each scene is a Vidu-generated animated clip rather than a
     // still with a camera move over it. Same crossfade/subtitle/music treatment as the
@@ -86,13 +91,29 @@ static partial class VideoAssembler
     // captions all move into the sibling remotion-assembler project instead. Reuses the
     // same music-resolution + per-orientation-call shape as AssembleFromClipsAsync so the
     // two pipelines stay easy to compare.
-    public static async Task AssembleWithRemotionAsync(
+    //
+    // Returns the background-music track filename actually used (e.g.
+    // "uplifting-tech-01.mp3"), or null when the video rendered with no music.
+    // The caller records it on the script and sidecar (MusicTrack) so the
+    // Uploader can append the matching CC BY credit line to the description.
+    // Props-only half of AssembleWithRemotionAsync, split out 2026-11-23 for
+    // the landscape-props chicken-and-egg: the landscape chunk render needs
+    // remotion-props-1920x1080.json, but --assemble only wrote it after the
+    // vertical render finished — and the vertical render keeps dying from
+    // memory at frame ~50-96, so the props were never written and the driver
+    // looped prep_done → assemble → render_chunks → prep_done forever.
+    // RunAssembleAsync now calls this for the landscape orientation up front,
+    // before any rendering starts, so the driver can chunk-render the
+    // landscape even when the vertical assemble dies. Deterministic: the
+    // music pick is by job-folder hash and every input is on disk from
+    // --prep, so calling this twice (up front, then at render time) writes
+    // byte-identical props; the atomic write keeps a kill mid-write safe.
+    public static async Task<(string PropsPath, string? MusicFileName)> BuildAndWritePropsAsync(
         ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes,
-        string workDir, string outputPath, int w, int h, string? musicMood = null,
+        string workDir, int w, int h, string? musicMood = null,
         IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null,
-        bool isCalm = false, string? introLogoPath = null, double introSeconds = 0,
-        IReadOnlyList<string>? outroHandles = null,
-        IReadOnlyList<Scene>? briefScenes = null)
+        bool isCalm = false,
+        IReadOnlyList<string>? outroHandles = null)
     {
         if (scenes.Count == 0) throw new ArgumentException("No scenes to assemble.", nameof(scenes));
 
@@ -111,7 +132,12 @@ static partial class VideoAssembler
 
         // One scene -> one Remotion asset (shared by the main scenes and the
         // curiosity brief, which reuses the same image/video resolution).
-        async Task<RemotionSceneAsset> BuildAssetAsync(Scene s)
+        // previousAsset is the asset built for the scene before this one
+        // (or null for the first scene) — the last-resort fallback for a
+        // flagged scene whose visual is missing entirely (B12): it is
+        // passed in because the `assets` list itself is declared after
+        // this local function and cannot be captured from inside it.
+        async Task<RemotionSceneAsset> BuildAssetAsync(Scene s, RemotionSceneAsset? previousAsset)
         {
             // A "visual" scene has no image or clip - its data visual is drawn
             // natively by Remotion's VisualScene component from the spec, so it
@@ -130,7 +156,8 @@ static partial class VideoAssembler
                     MotionIntensity: "subtle",
                     VideoDurationInSeconds: null,
                     VisualSpec: s.VisualSpec,
-                    IsSpeculative: s.IsSpeculative);
+                    IsSpeculative: s.IsSpeculative,
+                    ArtSource: s.ArtSource);
             }
 
             // Dual-orientation: a landscape render (w > h, the YouTube master)
@@ -141,8 +168,32 @@ static partial class VideoAssembler
             var clipPath = isLandscapeRender && s.LandscapeClipPath is { } lc && File.Exists(lc) ? lc : s.ClipPath;
             var imagePath = isLandscapeRender && s.LandscapeImagePath is { } li && File.Exists(li) ? li : s.ImagePath;
             var isVideo = clipPath is { } clip && File.Exists(clip);
-            var path = isVideo ? clipPath! : imagePath
-                ?? throw new InvalidOperationException(
+            string? path = isVideo ? clipPath : imagePath;
+            var kind = isVideo ? "video" : "image";
+            // A fallback asset's Path is already public-dir relative (it
+            // came out of a previous RemotionSceneAsset), so it must NOT
+            // go through ToPublicDirRelative again.
+            var pathIsAlreadyRelative = false;
+            double? fallbackVideoDuration = null;
+            if (path is null && s.VisualMissing && previousAsset is not null)
+            {
+                // Last resort for a flagged scene whose prep-time placeholder
+                // itself failed (B12, fix sequence #2 ITEM 4): reuse the
+                // previous scene's rendered asset so the render does not
+                // crash. The picture repeats for one scene, but the scene
+                // is flagged in script.json + visual-failures.txt for
+                // review, and its narration/captions are still its own.
+                // A flagged FIRST scene has no previous asset to reuse and
+                // still throws below — there is nothing to fall back to.
+                kind = previousAsset.Kind;
+                path = previousAsset.Path;
+                pathIsAlreadyRelative = true;
+                fallbackVideoDuration = previousAsset.VideoDurationInSeconds;
+                Console.WriteLine(
+                    $"  [visual-missing] scene has no visual - reusing previous scene's asset for the render (flagged in script.json).");
+            }
+            if (path is null)
+                throw new InvalidOperationException(
                     "A scene has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
 
             // A Pexels clip is whatever length Pexels had, and a scene lasts its
@@ -153,11 +204,12 @@ static partial class VideoAssembler
             // clip). Pass the clip's real length through so Assembly.tsx can
             // trim the video a couple of frames short of its end instead.
             double? videoDuration = null;
-            if (isVideo) videoDuration = await GetVideoDurationAsync(cfg, clipPath!);
+            if (isVideo && !pathIsAlreadyRelative) videoDuration = await GetVideoDurationAsync(cfg, clipPath!);
+            else if (pathIsAlreadyRelative) videoDuration = fallbackVideoDuration;
 
             return new RemotionSceneAsset(
-                Kind: isVideo ? "video" : "image",
-                Path: ToPublicDirRelative(path),
+                Kind: kind,
+                Path: pathIsAlreadyRelative ? path : ToPublicDirRelative(path),
                 DurationInSeconds: s.DurationSeconds + 0.5 + PostNarrationHoldSeconds,   // breathing room + post-narration hold (2026-11-12 pacing)
                 NarrationAudioPath: s.AudioPath is { } a ? ToPublicDirRelative(a) : null,
                 CaptionText: s.Narration,
@@ -165,20 +217,16 @@ static partial class VideoAssembler
                 // used for a character moment - see remotion-assembler/src/Assembly.tsx.
                 MotionIntensity: s.SceneKind == "context" ? "subtle" : "normal",
                 VideoDurationInSeconds: videoDuration,
-                IsSpeculative: s.IsSpeculative);
+                IsSpeculative: s.IsSpeculative,
+                // B11: which source produced this scene's visual travels into
+                // the props, so a reviewer can tell stock from generated art
+                // without opening script.json.
+                ArtSource: s.ArtSource);
         }
 
         var assets = new List<RemotionSceneAsset>();
         foreach (var s in scenes)
-            assets.Add(await BuildAssetAsync(s));
-
-        // Curiosity brief (Rishi 2026-11-21, video #3 onward): the teaser
-        // scenes play BEFORE the intro sting (Assembly.tsx renders them
-        // first). Empty for scripts written before this feature.
-        var briefAssets = new List<RemotionSceneAsset>();
-        if (briefScenes is { Count: > 0 })
-            foreach (var s in briefScenes)
-                briefAssets.Add(await BuildAssetAsync(s));
+            assets.Add(await BuildAssetAsync(s, assets.Count > 0 ? assets[^1] : null));
 
         // The one asset that does NOT already live under workDir - copied in rather than
         // pointed at directly, so it lands under the same --public-dir root as everything
@@ -202,6 +250,16 @@ static partial class VideoAssembler
         if (music is not null)
         {
             var gainDb = profile.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, music);
+            // Peak-headroom trim (Rishi 2026-11-23 ~23:37): the gain
+            // above is computed from integrated loudness only, so it
+            // says nothing about the bed's true peak. Cap it so the
+            // bed can never peak above -3 dBFS in the mix (see
+            // QualityGate.ComputePeakTrimDb). The trim only ever
+            // lowers the volume, so the final-mix loudness check
+            // (-14 ±1 LUFS, narration-dominated) is unaffected — for
+            // today's pool the trim is 0 dB (peaks land near -17 dBFS
+            // after the -34 LUFS re-gain).
+            gainDb += ApplyPeakHeadroomTrim(music, gainDb);
             musicVolume = Math.Clamp(Math.Pow(10, gainDb / 20), 0.0, 1.0);
         }
 
@@ -225,21 +283,6 @@ static partial class VideoAssembler
             }
         }
 
-        // The intro sting's logo - same copy-in-then-relativize treatment as
-        // the music track and outro voiceover above: the brand logo lives in
-        // the assets folder, outside workDir, so it needs to land under
-        // --public-dir before staticFile() can reach it. The sting itself is
-        // drawn by Remotion's Intro component (Assembly.tsx) from this path
-        // plus IntroSeconds; a 0 duration or a null path renders no intro.
-        string? introLogoRelative = null;
-        if (introLogoPath is not null && introSeconds > 0)
-        {
-            var introLogoDest = Path.Combine(workDir, Path.GetFileName(introLogoPath));
-            if (!string.Equals(Path.GetFullPath(introLogoPath), Path.GetFullPath(introLogoDest), StringComparison.OrdinalIgnoreCase))
-                File.Copy(introLogoPath, introLogoDest, overwrite: true);
-            introLogoRelative = ToPublicDirRelative(introLogoDest);
-        }
-
         var props = new RemotionAssemblyProps(
             Scenes: assets, WidthPx: w, HeightPx: h, Fps: 30,
             BackgroundMusicPath: musicRelative,
@@ -249,21 +292,34 @@ static partial class VideoAssembler
             OutroAudioPath: outroAudioRelative,
             OutroHandles: outroHandles?.ToList() ?? [],
             OutroHandle: profile.OutroDestinationText,
-            // Only a real intro when the logo actually landed in the public
-            // dir - passing the raw seconds with a null logo would make
-            // Root.tsx's duration math count a transition that Assembly.tsx
-            // never renders.
-            IntroSeconds: introLogoRelative is not null ? introSeconds : 0,
-            IntroLogoPath: introLogoRelative,
-            IsCalm: isCalm,
-            // Curiosity brief (Rishi 2026-11-21): teaser scenes rendered
-            // before the intro sting. Empty list renders no brief.
-            BriefScenes: briefAssets);
+            IsCalm: isCalm);
 
         var propsPath = Path.Combine(workDir, $"remotion-props-{w}x{h}.json");
-        await File.WriteAllTextAsync(propsPath, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
+        // B23: atomic write (temp + rename) — a kill mid-write used to
+        // leave truncated props JSON, which render-chunks.sh then had to
+        // guard against. Same pattern as Sidecar.SaveAsync.
+        var propsTemp = propsPath + ".tmp";
+        await File.WriteAllTextAsync(propsTemp, JsonSerializer.Serialize(props, RemotionPropsJsonOptions));
+        File.Move(propsTemp, propsPath, overwrite: true);
+
+        return (propsPath, music is null ? null : Path.GetFileName(music));
+    }
+
+    public static async Task<string?> AssembleWithRemotionAsync(
+        ContentProfile profile, GenConfig cfg, IReadOnlyList<Scene> scenes,
+        string workDir, string outputPath, int w, int h, string? musicMood = null,
+        IReadOnlyList<string>? outroLines = null, string? outroAudioPath = null,
+        bool isCalm = false,
+        IReadOnlyList<string>? outroHandles = null)
+    {
+        var (propsPath, musicFileName) = await BuildAndWritePropsAsync(profile, cfg, scenes, workDir, w, h, musicMood,
+            outroLines, outroAudioPath, isCalm, outroHandles);
 
         await RunNpxRemotionRenderAsync(cfg, workDir, propsPath, outputPath);
+
+        // The track filename is the contract the Uploader's CC BY credit
+        // depends on - report it, don't make the caller re-derive it.
+        return musicFileName;
     }
 
     // camelCase to match remotion-assembler/src/schema.ts's zod field names exactly -
@@ -279,14 +335,13 @@ static partial class VideoAssembler
         string Kind, string Path, double DurationInSeconds,
         string? NarrationAudioPath, string? CaptionText, string MotionIntensity,
         double? VideoDurationInSeconds, VisualSpec? VisualSpec = null,
-        bool IsSpeculative = false);
+        bool IsSpeculative = false, string? ArtSource = null);
 
     private sealed record RemotionAssemblyProps(
         List<RemotionSceneAsset> Scenes, int WidthPx, int HeightPx, int Fps,
         string? BackgroundMusicPath, double BackgroundMusicVolume, double OutroSeconds,
         List<string> OutroLines, string? OutroAudioPath, List<string> OutroHandles,
-        string OutroHandle, double IntroSeconds, string? IntroLogoPath, bool IsCalm,
-        List<RemotionSceneAsset> BriefScenes);
+        string OutroHandle, bool IsCalm);
 
     // Shells out the same way RunFfmpegAsync below shells out to ffmpeg. On Windows
     // it is routed through cmd.exe: npx resolves to npx.cmd on Windows, and
@@ -388,39 +443,121 @@ static partial class VideoAssembler
     // 16:9 and 9:16 cuts are rendered by two separate calls and have to land on the same
     // track, and re-running --assemble days later has to reproduce the earlier render.
     //
-    // mood (script.MusicMood, e.g. "soft piano lullaby") is tried as a subfolder of
+    // mood (script.MusicMood, e.g. "driving epic") is tried as a subfolder of
     // BackgroundMusicPath first - {BackgroundMusicPath}/{slugified-mood}/ - so a channel
     // that eventually sources separate calm/energetic pools gets format-appropriate music
-    // for free. Until that subfolder exists (or while it's empty), this falls straight
-    // through to today's flat-folder behaviour unchanged - no mood pools exist yet, so
-    // this is currently a no-op in practice.
+    // for free. With a flat pool (no mood subfolders, as in music-trendline), the mood
+    // is matched against the track filenames instead (PickTrackForMood) - so a
+    // "driving epic" story gets an uplifting/epic bed and a "tense atmospheric" one
+    // gets a tense bed. Only when nothing matches does it fall back to hash rotation
+    // over the whole pool. (Rishi, 2026-11-22: video #3 "driving epic" got a tense
+    // bed because the mood was ignored and the pick was pure hash rotation.)
     private static string? ResolveBackgroundMusic(ContentProfile profile, string workDir, string? mood = null)
     {
         if (string.IsNullOrWhiteSpace(profile.BackgroundMusicPath)) return null;
-        if (File.Exists(profile.BackgroundMusicPath)) return profile.BackgroundMusicPath;
 
-        if (!Directory.Exists(profile.BackgroundMusicPath))
-            throw new Exception(
-                $"BackgroundMusicPath points at \"{profile.BackgroundMusicPath}\", which does not exist. " +
-                "Point it at a track, or at a folder of tracks, or clear it to render without music.");
-
-        var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
-
-        if (!string.IsNullOrWhiteSpace(mood))
+        // Single exit: every resolution path funnels through the quality
+        // gate below, so no caller can pick a track the gate never saw.
+        string? track;
+        if (File.Exists(profile.BackgroundMusicPath))
         {
-            var moodDir = Path.Combine(profile.BackgroundMusicPath, Slugify(mood));
-            if (Directory.Exists(moodDir))
+            track = profile.BackgroundMusicPath;
+        }
+        else
+        {
+            if (!Directory.Exists(profile.BackgroundMusicPath))
+                throw new Exception(
+                    $"BackgroundMusicPath points at \"{profile.BackgroundMusicPath}\", which does not exist. " +
+                    "Point it at a track, or at a folder of tracks, or clear it to render without music.");
+
+            var key = Path.GetFileName(workDir.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar));
+
+            track = null;
+            if (!string.IsNullOrWhiteSpace(mood))
             {
-                var moodTrack = PickTrack(moodDir, key);
-                if (moodTrack is not null) return moodTrack;
+                var moodDir = Path.Combine(profile.BackgroundMusicPath, Slugify(mood));
+                if (Directory.Exists(moodDir))
+                    track = PickTrack(moodDir, key);
+
+                if (track is null)
+                {
+                    // Flat pool: match the story's mood against the track filenames.
+                    track = PickTrackForMood(profile.BackgroundMusicPath, mood, key);
+                }
+
+                if (track is null)
+                {
+                    // The mood matched nothing - not a subfolder, not a filename
+                    // keyword - so the pick below is whole-pool hash rotation, which
+                    // is exactly the silent degradation the mood feature exists to
+                    // prevent. Say so loudly: a bad mood value should be fixed at
+                    // the script, not papered over here.
+                    Console.WriteLine(
+                        $"  Warning: music mood \"{mood}\" matched no track in \"{profile.BackgroundMusicPath}\" - " +
+                        "falling back to whole-pool hash rotation. Check the script's MusicMood against the profile's MusicMenu.");
+                }
             }
+
+            if (track is null)
+                track = PickTrack(profile.BackgroundMusicPath, key);
+            if (track is null)
+                Console.WriteLine(
+                    $"  Music: none - \"{profile.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
+                    $"Drop instrumentals in ({string.Join(", ", MusicExtensions)}) to get a bed.");
         }
 
-        var track = PickTrack(profile.BackgroundMusicPath, key);
-        if (track is null)
-            Console.WriteLine(
-                $"  Music: none - \"{profile.BackgroundMusicPath}\" has no tracks in it, rendering narration only. " +
-                $"Drop instrumentals in ({string.Join(", ", MusicExtensions)}) to get a bed.");
+        // Quality gate (video #4 / Rishi 2026-11-23): the claimed bed
+        // (alex-morgan-tense-suspense-rising-dread-573934.mp3, video #1's
+        // Short blocked worldwide) must never be selected again — the
+        // blocklist applies to every profile. A Trendline Now video may
+        // only render under one of the 5 approved FMA tracks, with a mood
+        // that matches the story; other profiles keep their own music
+        // libraries and are not pool-checked. The CC BY credit is NOT
+        // checked here (no shipped description exists yet at selection
+        // time) — it is verified at finish time against the sidecar
+        // description, and the Uploader appends it at upload time.
+        if (track is not null)
+        {
+            var fileName = Path.GetFileName(track);
+            if (QualityGate.BlockedTracks.Contains(fileName))
+                throw new InvalidOperationException(
+                    $"Quality gate FAILED [music]: track \"{fileName}\" is BLOCKED (copyright-claimed bed — video #1's Short was blocked worldwide by an Elite Alliance Music claim). It must never be selected.");
+            if (profile.Id.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+            {
+                // Safer-track fallback (Rishi 2026-11-23 ~23:37): when
+                // the picked bed clips at the source (4 of the 5 pool
+                // tracks peak at -0.7..-0.0 dB), prefer a clean
+                // same-mood track when one exists in the pool. When
+                // none exists — the usual outcome today — the pick
+                // stands and the peak-headroom trim in the two mix
+                // paths caps its peak in the mix instead.
+                if (!string.IsNullOrWhiteSpace(mood) && Directory.Exists(profile.BackgroundMusicPath))
+                {
+                    var (_, pickedPeak) = QualityGate.MeasureTrackLevel(track);
+                    if (pickedPeak is not null && pickedPeak > -1.0)
+                    {
+                        var clean = QualityGate.FindCleanSameMoodTrack(profile.BackgroundMusicPath, mood, fileName);
+                        if (clean is not null)
+                        {
+                            Console.WriteLine($"  Music: picked \"{fileName}\" clips at the source (peak {pickedPeak:0.#} dB) — falling back to clean same-mood track \"{Path.GetFileName(clean)}\".");
+                            track = clean;
+                            fileName = Path.GetFileName(track);
+                        }
+                        else
+                        {
+                            Console.WriteLine($"  Music: picked \"{fileName}\" clips at the source (peak {pickedPeak:0.#} dB) and no clean same-mood track exists — the mix will apply a peak-headroom trim.");
+                        }
+                    }
+                }
+                var musicFindings = QualityGate.CheckMusicTrack(track, mood, videoSeconds: 0, description: null, checkCredit: false);
+                foreach (var mf in musicFindings)
+                    Console.WriteLine($"  [quality:music] {(mf.Severity == QualitySeverity.Error ? "ERROR" : "warn")} [{mf.Check}] {mf.Message}");
+                var musicErrors = musicFindings.Where(f => f.Severity == QualitySeverity.Error).ToList();
+                if (musicErrors.Count > 0)
+                    throw new InvalidOperationException(
+                        $"Quality gate FAILED [music] ({musicErrors.Count} error(s)): {string.Join("; ", musicErrors.Select(e => $"[{e.Check}] {e.Message}"))}");
+            }
+        }
         return track;
     }
 
@@ -442,6 +579,47 @@ static partial class VideoAssembler
 
         var digest = SHA256.HashData(Encoding.UTF8.GetBytes(stableKey));
         return tracks[(int)(BitConverter.ToUInt32(digest, 0) % (uint)tracks.Count)];
+    }
+
+    // Mood-based selection for a flat pool: the story's MusicMood (e.g. "driving
+    // epic", "tense atmospheric") is matched against the track filenames' mood
+    // keywords, and one fitting track is picked by hash so videos sharing a mood
+    // still vary instead of always using the same bed. Returns null when nothing
+    // matches, so the caller falls back to hash rotation over the whole pool.
+    // The Trendline Now menu is "tense atmospheric", "curious ambient",
+    // "driving epic", "mysterious tense" (TrendlineNowProfile.MusicMenu).
+    private static string? PickTrackForMood(string folder, string mood, string stableKey)
+    {
+        var tracks = Directory.EnumerateFiles(folder)
+            .Where(f => MusicExtensions.Contains(Path.GetExtension(f), StringComparer.OrdinalIgnoreCase))
+            .OrderBy(f => f, StringComparer.OrdinalIgnoreCase)
+            .ToList();
+
+        if (tracks.Count == 0) return null;
+
+        var m = mood.Trim().ToLowerInvariant();
+
+        // Each mood maps to the filename keywords of the tracks that fit it.
+        // First match wins; "mysterious tense" is caught by the "tense" branch.
+        string[] keywords = m.Contains("tense") ? ["tense"]
+            : m.Contains("epic") || m.Contains("driving") ? ["uplifting", "cinematic-epic"]
+            : m.Contains("uplift") || m.Contains("energetic") || m.Contains("upbeat") ? ["uplifting"]
+            : m.Contains("cinematic") ? ["cinematic-epic"]
+            : m.Contains("curious") || m.Contains("ambient") || m.Contains("calm") || m.Contains("neutral") ? ["calm"]
+            : [];
+
+        if (keywords.Length == 0) return null;
+
+        var fitting = tracks
+            .Where(f => keywords.Any(k => Path.GetFileNameWithoutExtension(f).Contains(k, StringComparison.OrdinalIgnoreCase)))
+            .ToList();
+
+        if (fitting.Count == 0) return null;
+
+        var digest = SHA256.HashData(Encoding.UTF8.GetBytes(stableKey));
+        var picked = fitting[(int)(BitConverter.ToUInt32(digest, 0) % (uint)fitting.Count)];
+        Console.WriteLine($"  Music: mood \"{mood}\" -> {Path.GetFileName(picked)}");
+        return picked;
     }
 
     // Measured once per track per process: both orientations of a video mix the same
@@ -471,6 +649,24 @@ static partial class VideoAssembler
         return LoudnessCache[path] = lufs;
     }
 
+    // Peak-headroom trim, shared by both mix paths (Remotion props
+    // volume + ffmpeg mix). Measures the bed's sample peak once and
+    // returns the extra attenuation (≤ 0 dB) QualityGate computes so
+    // the bed can never peak above -3 dBFS in the mix. When the peak
+    // cannot be measured, no trim is applied (the -34 LUFS re-gain
+    // alone already pulls today's pool ~15-18 dB down).
+    private static double ApplyPeakHeadroomTrim(string musicPath, double gainDb)
+    {
+        var (_, peakDb) = QualityGate.MeasureTrackLevel(musicPath);
+        if (peakDb is null) return 0;
+        var trimDb = QualityGate.ComputePeakTrimDb(peakDb.Value, gainDb);
+        // Log the post-gain peak per video (music-subagent
+        // recommendation 2026-11-24): the invariant the trim enforces,
+        // visible in the log even when the trim is 0 dB.
+        Console.WriteLine($"  Music: {Path.GetFileName(musicPath)} peak {peakDb:0.#} dB, post-gain peak in mix {peakDb.Value + gainDb:0.#} dBFS (ceiling {QualityGate.MusicPeakCeilingDb:0.#} dBFS){(trimDb < 0 ? $", trim {trimDb:0.#} dB applied" : "")}.");
+        return trimDb;
+    }
+
     [GeneratedRegex(@"I:\s*(-?\d+(?:\.\d+)?)\s*LUFS")]
     private static partial Regex IntegratedLoudness();
 
@@ -494,6 +690,7 @@ static partial class VideoAssembler
         }
 
         var gainDb = profile.BackgroundMusicLufs - await MeasureLoudnessAsync(cfg, musicPath);
+        gainDb += ApplyPeakHeadroomTrim(musicPath, gainDb);
         var fadeOutAt = Math.Max(0, totalSeconds - MusicFadeSeconds);
 
         Console.WriteLine($"  Music: {Path.GetFileName(musicPath)} at {profile.BackgroundMusicLufs:0.#} LUFS ({gainDb:+0.#;-0.#} dB)");
@@ -605,26 +802,97 @@ static partial class VideoAssembler
             $"-frames:v 1 -q:v 2 \"{outputPath}\"");
     }
 
+    // Shared crossfade length between consecutive segments in the Remotion
+    // composition (Root.tsx transitionFrames: 0.2s brisk, 0.45s calm).
+    public const double TransitionSeconds = 0.2;
+    public const double CalmTransitionSeconds = 0.45;
+
+    // ONE shared render timeline, mirroring Root.tsx calculateMetadata +
+    // Assembly.tsx's TransitionSeries exactly. Render order: the main scenes,
+    // scene 0 first — no brief, no intro sting (both removed 2026-11-25,
+    // Rishi: videos open directly with the hook). Each scene renders for its
+    // narration + 0.5s breathing room + PostNarrationHoldSeconds, and
+    // consecutive segments share one transition, so segment j starts at the
+    // sum of all previous segments' rendered durations minus j transitions.
+    // Returns the start time (seconds) of every segment in render order.
+    // SRT cues and chapters both derive from this, so they can never
+    // disagree with each other or with the rendered video again.
+    // The brief/intro parameters stay for old scripts (videos #1–#4, COP31
+    // carry brief scenes + a sting in their saved props): passing them still
+    // computes the old timeline exactly, so an old job's SRT/chapters can
+    // still be regenerated. New videos always pass empty/0, so segment 0
+    // starts at 0:00.
+    public static List<double> ComputeSegmentStarts(
+        IReadOnlyList<Scene> briefScenes, double introSeconds,
+        IReadOnlyList<Scene> scenes, double transitionSeconds = TransitionSeconds)
+    {
+        var rendered = new List<double>();
+        foreach (var b in briefScenes) rendered.Add(b.DurationSeconds + 0.5 + PostNarrationHoldSeconds);
+        if (introSeconds > 0) rendered.Add(introSeconds);
+        foreach (var s in scenes) rendered.Add(s.DurationSeconds + 0.5 + PostNarrationHoldSeconds);
+
+        var starts = new List<double>(rendered.Count);
+        var acc = 0.0;
+        for (var j = 0; j < rendered.Count; j++)
+        {
+            starts.Add(Math.Max(0, acc - j * transitionSeconds));
+            acc += rendered[j];
+        }
+        return starts;
+    }
+
     // Real caption file (SRT) alongside the burned-in subtitles: gives platforms and
     // accessibility tools indexable/toggleable caption text, which drawtext (burned into
-    // the pixels) cannot provide. Uses the same per-scene duration math as the clips
-    // above (DurationSeconds + 0.5s breathing room + post-narration hold) so cue timing matches the video.
-    public static async Task WriteSrtAsync(IReadOnlyList<Scene> scenes, string outputPath, double offsetSeconds = 0)
+    // the pixels) cannot provide. Cues derive from ComputeSegmentStarts, so they match
+    // the rendered video: the brief scenes get cues 1-2, the intro offset is counted,
+    // and each cue ends where the next begins (the 0.2s shared transition).
+    public static async Task WriteSrtAsync(
+        IReadOnlyList<Scene> scenes, string outputPath, double offsetSeconds = 0,
+        IReadOnlyList<Scene>? briefScenes = null, double transitionSeconds = TransitionSeconds)
     {
-        var sb = new StringBuilder();
-        var cursor = TimeSpan.FromSeconds(offsetSeconds);
+        // offsetSeconds is the intro sting length (the only pre-scene segment
+        // the old call sites knew about). Brief scenes, when given, play
+        // before the intro and shift every cue by their rendered length.
+        var brief = briefScenes ?? [];
+        var starts = ComputeSegmentStarts(brief, offsetSeconds, scenes, transitionSeconds);
 
-        for (var i = 0; i < scenes.Count; i++)
+        // Rendered duration of each segment, in the same order as starts.
+        var rendered = new List<double>();
+        foreach (var b in brief) rendered.Add(b.DurationSeconds + 0.5 + PostNarrationHoldSeconds);
+        if (offsetSeconds > 0) rendered.Add(offsetSeconds);
+        foreach (var s in scenes) rendered.Add(s.DurationSeconds + 0.5 + PostNarrationHoldSeconds);
+
+        // All segments in render order: brief scenes, then main scenes. The
+        // intro has no caption, so it contributes a start entry but no cue.
+        var cueScenes = new List<Scene>(brief);
+        cueScenes.AddRange(scenes);
+        var cueStarts = new List<double>();
+        var introOffset = brief.Count + (offsetSeconds > 0 ? 1 : 0);
+        for (var i = 0; i < brief.Count; i++) cueStarts.Add(starts[i]);
+        for (var i = 0; i < scenes.Count; i++) cueStarts.Add(starts[introOffset + i]);
+
+        var sb = new StringBuilder();
+        for (var i = 0; i < cueScenes.Count; i++)
         {
-            var duration = TimeSpan.FromSeconds(scenes[i].DurationSeconds + 0.5 + PostNarrationHoldSeconds);
-            var end = cursor + duration;
+            var start = TimeSpan.FromSeconds(cueStarts[i]);
+            // A cue ends where the next begins (shared transition); the last
+            // cue runs to the end of its own rendered segment.
+            double endSeconds;
+            if (i + 1 < cueScenes.Count)
+            {
+                endSeconds = cueStarts[i + 1];
+            }
+            else
+            {
+                var renderedIndex = i < brief.Count ? i : introOffset + (i - brief.Count);
+                endSeconds = cueStarts[i] + rendered[renderedIndex];
+            }
+            var end = TimeSpan.FromSeconds(endSeconds);
 
             sb.AppendLine((i + 1).ToString(CultureInfo.InvariantCulture));
-            sb.AppendLine($"{FormatSrtTime(cursor)} --> {FormatSrtTime(end)}");
-            sb.AppendLine(scenes[i].Narration);
+            sb.AppendLine($"{FormatSrtTime(start)} --> {FormatSrtTime(end)}");
+            sb.AppendLine(cueScenes[i].Narration);
             sb.AppendLine();
-
-            cursor = end;
         }
 
         await File.WriteAllTextAsync(outputPath, sb.ToString(), new UTF8Encoding(false));
@@ -751,6 +1019,30 @@ static partial class VideoAssembler
             "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
 
         await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+    }
+
+    // Plain placeholder frame for a scene whose visual could not be
+    // resolved (B12, fix sequence #2 ITEM 4): a solid dark-navy 1080x1920
+    // still, the channel's brand background, rendered with ffmpeg's lavfi
+    // color source — no network, no provider, no font needed. The scene
+    // is flagged (Scene.VisualMissing + visual-failures.txt) so the
+    // placeholder is visible at review time; it exists so the assemble
+    // path and prep_complete() still have a real visual file and the prep
+    // is not killed by one bad stockQuery or dead art provider. Returns
+    // the output path. Same temp+move pattern as CropScaleToExactAsync so
+    // a failed ffmpeg run never leaves a partial file a resume would
+    // mistake for a finished image.
+    public static async Task<string> CreatePlaceholderImageAsync(GenConfig cfg, string outputPath)
+    {
+        if (ProcessHelper.AlreadyOnDisk(outputPath)) return outputPath;
+        var dir = Path.GetDirectoryName(outputPath) ?? ".";
+        Directory.CreateDirectory(dir);
+        var temp = Path.Combine(dir,
+            Path.GetFileNameWithoutExtension(outputPath) + ".tmp" + Path.GetExtension(outputPath));
+        await RunFfmpegAsync(cfg,
+            $"-y -f lavfi -i \"color=c=0x0b1e3a:s=1080x1920\" -frames:v 1 \"{temp}\"");
+        File.Move(temp, outputPath, overwrite: true);
+        return outputPath;
     }
 
     // Scales an image to cover the target frame exactly, cropping the

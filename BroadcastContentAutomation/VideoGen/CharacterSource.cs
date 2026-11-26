@@ -179,9 +179,12 @@ static class CharacterSource
         cfg.SceneArtProvider.Equals("cloudflare", StringComparison.OrdinalIgnoreCase);
 
     // One square source image with the provider chain: primary per SceneArtProvider,
-    // then the other automated provider's square, then Cloudflare SDXL square.
-    // Twin of Program.cs's GenerateSquareArtAsync (top-level local functions can't
-    // be shared) - keep the attempt order identical.
+    // then the other automated provider's square. Twin of Program.cs's
+    // GenerateSquareArtAsync (top-level local functions can't be shared) —
+    // keep the attempt order identical where the funnels overlap. The
+    // twin has no pool step (character portraits need the reference-
+    // matching keyed path, not the pool) and no SDXL step: Cloudflare
+    // SDXL is gone entirely (deprecated 2026-11-20, removed 2026-11-24).
     private static async Task<string> GenerateSquareArtAsync(GenConfig cfg, string prompt, string squareBase)
     {
         var existing = ManualArtClient.ImageExtensions
@@ -198,7 +201,6 @@ static class CharacterSource
             () => primaryIsPollinations
                 ? CloudflareArtClient.GenerateFluxSquareAsync(cfg, prompt, squareBase + ".jpg")
                 : PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg"),
-            () => CloudflareArtClient.GenerateAsync(cfg, prompt, squareBase + ".png", 1024, 1024),
         };
         Exception? lastError = null;
         foreach (var attempt in attempts)

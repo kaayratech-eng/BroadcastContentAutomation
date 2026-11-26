@@ -14,9 +14,12 @@
 #   * Single profile (trendlinenow), no alternation, no pre-prepped queue
 #     (the queue field exists for a future manual job, FIFO).
 #   * Prep is `--prep --long --profile trendlinenow` with the env overrides
-#     GIGGLE_ScriptProvider=groq-helper and GIGGLE_SceneArtProvider=cloudflare.
+#     GIGGLE_ScriptProvider=pool-helper and GIGGLE_SceneArtProvider=cloudflare.
 #     The config defaults are wrong for this channel (hybrid-helper routes
-#     acts 3+ to depleted Gemini; pollinations is paid).
+#     acts 3+ to depleted Gemini; pollinations is paid). Env beats
+#     appsettings.Local.json, so this export is the single source of truth
+#     for the script provider: pool-helper tries Groq, then Cloudflare
+#     Workers AI, then Pollinations, per act.
 #   * The landscape render (~20960 frames, ~6h at ~1fps) ALWAYS exceeds the
 #     180-min Remotion timeout and the ~2-4h VM lifetime, so chunk recovery
 #     is the NORMAL path for landscape, not an exception. --assemble is
@@ -38,6 +41,14 @@
 #     paused. It starts paused until video #1 finishes and Rishi reviews it.
 #   * A protected-job guard: job-20261121-085638 (video #1, owned by the
 #     build subagent) is never touched by this driver.
+#   * Laptop renders (2026-11-23, Rishi: the VM does code + orchestration
+#     only, all heavy lifting on his laptop): when config .laptop.enabled
+#     is true, prep_done writes props with --write-props (no render) and
+#     render_chunks drives trendline/laptop-render.sh (ship / trigger /
+#     poll / pull over Tailscale + SSH). The VM render path stays OFF
+#     unless config .laptop.vm_render_fallback_enabled is true, so the
+#     driver never silently renders on the VM while the laptop link is
+#     being set up.
 #
 # Phases (state.json .current.phase):
 #   idle            — nothing current; pick the next job (queued first,
@@ -50,14 +61,18 @@
 #                     (reuses the saved scenes verbatim).
 #   prep_done       — script.json + all scene audio/art present; ready to
 #                     render. (Detected from the job dir, not just the log.)
+#                     Laptop mode: --write-props here, then render_chunks.
 #   render_assemble — a driver-launched --assemble is running (vertical
 #                     first, then landscape). If it dies after writing the
 #                     vertical props (or the landscape props), the driver
 #                     switches to chunk recovery. If its log is silent for
 #                     30 min and the driver owns the process, the driver
-#                     kills it and switches to chunk recovery.
+#                     kills it and switches to chunk recovery. Never
+#                     entered in laptop mode (guarded to render_chunks).
 #   render_chunks   — a driver-launched chunk render (render-chunks.sh) is
 #                     running. If it dies, re-run it: it skips valid chunks.
+#                     Laptop mode: one laptop-render.sh step per orientation
+#                     per tick instead (ship/trigger/poll/pull).
 #   finish          — a driver-launched finish-chunks.py run (concat +
 #                     loudnorm + SRT + sidecar) is running detached. When it
 #                     exits, the driver re-checks that orientation.
@@ -74,11 +89,29 @@
 #   * Only processes the driver launched (tracked by pid in state.json,
 #     driver_owned=true) are ever killed. A monitor-only job (e.g. the
 #     video #1 build, launched by the build subagent) is NEVER touched.
+#   * Backpressure (B8): idle never starts new work while a completed video
+#     waits for review (sidecar Approved:false in the watch dir).
+#   * Collision guards (B25): every launch site also pgrep-checks for a
+#     manual pipeline step for the same job — the recorded pid is not enough.
+#   * Silent deaths (B6): memory context is logged before every --assemble
+#     and again when one dies, with the last render frame and a FATAL line.
+#   * Retention (B26): the 5 most recent job dirs are always kept; older
+#     ones are pruned only when completed/abandoned and over 7 days old.
+#   * state.json writes use per-call mktemp files and always refresh the
+#     top-level .updated_at (B16); throttle markers use the single shared
+#     whole-log rule in throttle.sh (B15).
 #   * Never re-render a finished output: chunk renders skip valid chunks,
 #     and finish only runs when the final file is missing or invalid.
 #   * Never upload anything. Sidecars are written Approved=false.
-#   * A job that fails verification 3 times is escalated (state.json
-#     failures>=3) and the driver stops touching it.
+#   * Failure limit (Rishi 2026-11-23): a job that hits failures>=3 is
+#     AUTO-RESET, not parked — the driver clears the failure/retry
+#     counters, kills orphaned pipeline processes for the job, and
+#     restarts the current step from its checkpoint. At most 2
+#     consecutive auto-resets with no progress (same progress marker);
+#     the third no-progress hit escalates and the driver stops, as
+#     before. A manual failures reset should also clear
+#     .current.auto_resets (the driver self-heals a stale streak when it
+#     next sees progress, but do not rely on that).
 #   * Azure 429: back off 45 min before any --resume (never hammer F0).
 #   * The driver never touches job-20261121-085638 (video #1).
 set -u
@@ -93,24 +126,45 @@ CONFIG="${TRENDLINE_CONFIG:-$TRENDLINE/config.json}"
 export DOTNET_ROOT=~/.dotnet
 export PATH="$HOME/.dotnet:$PATH"
 export TMPDIR=~/workspace/tmp
-export GIGGLE_ScriptProvider=groq-helper
+export GIGGLE_ScriptProvider=pool-helper
 export GIGGLE_SceneArtProvider=cloudflare
+
+# Shared throttle-marker rule (review #2 B15): one pattern + whole-log
+# check, sourced from throttle.sh so driver.sh and healthcheck.sh cannot
+# drift apart again.
+THROTTLE_SH="$TRENDLINE/throttle.sh"
+[ -f "$THROTTLE_SH" ] && . "$THROTTLE_SH"
 
 mkdir -p "$(dirname "$LOG")" 2>/dev/null || true
 log() { echo "$(date -Is) [trendline-driver] $*" | tee -a "$LOG"; }
 
-# Launch a long step detached (setsid, log to a file). Sets LAUNCH_PID.
-# When TRENDLINE_DRY_RUN=1, nothing is launched — the command is only
-# logged, and LAUNCH_PID is 0. Used by the dry-run tests (and by hand to
-# see what the driver would do without starting any real work).
+# Launch a long step detached (setsid, log to a file). Sets LAUNCH_PID and
+# LAUNCH_PGID. When TRENDLINE_DRY_RUN=1, nothing is launched — the command
+# is only logged, and LAUNCH_PID is 0. Used by the dry-run tests (and by
+# hand to see what the driver would do without starting any real work).
+# setsid makes the child its own session and process-group leader, so the
+# PGID equals the PID. Both are recorded in state.json (.current.pid /
+# .current.pgid) so a stall-kill can take the whole group (kill -- -$PGID)
+# instead of orphaning the real dotnet/remotion child.
 launch() { # $1 = command string (run via setsid bash -c)
   if [ "${TRENDLINE_DRY_RUN:-0}" = "1" ]; then
     log "DRY-RUN: would launch: $1"
     LAUNCH_PID=0
+    LAUNCH_PGID=0
     return 0
   fi
-  setsid bash -c "$1" &
+  # Close the driver lock fd (9) in the child: a detached step otherwise
+  # inherits it and holds the flock for hours, so every later tick exits
+  # "another driver tick is running" while the step is alive (seen
+  # 2026-11-23 13:04/13:14, when the running prep held the lock). flock is
+  # released by the kernel when a process dies, so a dead process can
+  # never hold a stale lock — the live-child inheritance is the real
+  # stale-lock case, and closing the fd here removes it. (The auto-reset
+  # also kills the job's orphaned processes, which releases any lock fd
+  # an orphan inherited before this fix.)
+  setsid bash -c "$1" 9>&- &
   LAUNCH_PID=$!
+  LAUNCH_PGID=$LAUNCH_PID
 }
 
 # --- single-instance guard ---------------------------------------------------
@@ -121,14 +175,78 @@ if ! flock -n 9; then
 fi
 
 # --- helpers -----------------------------------------------------------------
+# B16: save_state writes via a per-call mktemp file (never the shared
+# "$STATE.tmp" — healthcheck.sh used to write the same path with no lock,
+# so a concurrent write could tear state.json) and always refreshes the
+# top-level .updated_at, which used to sit stuck at 2026-11-21T19:45:53
+# while .current.updated_at moved. Callers that set .current.updated_at
+# themselves keep doing so; this is the file-level stamp.
 save_state() { # $1 = jq filter (applied to state.json, atomic via tmp file)
-  jq "$1" "$STATE" > "$STATE.tmp" && mv "$STATE.tmp" "$STATE"
+  local tmp
+  tmp=$(mktemp "$STATE.tmp.XXXXXX") || return 1
+  jq "$1 | .updated_at = \"$(date -Is)\"" "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+  local rc=$?
+  [ $rc -ne 0 ] && rm -f "$tmp"
+  return $rc
 }
 set_phase() { # $1 = phase, $2 = pid (or null), $3 = log path (or null)
-  save_state ".current.phase = \"$1\" | .current.pid = $2 | .current.log = $3 | .current.updated_at = \"$(date -Is)\""
+  # The pid is a setsid group leader, so it is also the PGID (see launch()).
+  local pgid="null"
+  [ "$2" != "null" ] && pgid="$2"
+  save_state ".current.phase = \"$1\" | .current.pid = $2 | .current.pgid = $pgid | .current.log = $3 | .current.updated_at = \"$(date -Is)\""
 }
 bump_failure() {
   save_state ".current.failures = (.current.failures // 0) + 1 | .current.updated_at = \"$(date -Is)\""
+}
+# progress_marker: a cheap fingerprint of how far the current job has got,
+# used by the failure-limit auto-reset guard. A chunk file only appears
+# after its chunk finished: render-chunks.sh renders ranges sequentially
+# (--concurrency=1), so chunk N+1 only starts once chunk N is valid, and
+# a half-written chunk reuses the same filename — the counts move only
+# when a chunk actually completes. Prep progress is the non-empty scene
+# mp3 count + script.json presence; a phase change also moves the marker.
+# Caveat: a partially-written chunk file counts once, the same as a
+# finished one for that chunk — the marker can only move when a NEW chunk
+# file appears (or a phase/mp3 count changes), never from a chunk merely
+# growing, so this cannot mask a stuck chunk. $1 = job dir (may be empty
+# / missing for a prep that never created one).
+progress_marker() { # $1 = job dir
+  local dir="$1" m="phase=$PHASE"
+  if [ -n "$dir" ] && [ -d "$dir" ]; then
+    local script="no" mp3s=0 vch=0 lch=0
+    [ -f "$dir/script.json" ] && script="yes"
+    mp3s=$(find "$dir" -maxdepth 1 -name 'scene[0-9]*.mp3' -size +0c 2>/dev/null | wc -l)
+    mp3s=${mp3s// /}
+    [ -d "$dir/chunks-vertical" ] && vch=$(find "$dir/chunks-vertical" -maxdepth 1 -name 'vertical-C[0-9]*.mp4' -size +0c 2>/dev/null | wc -l)
+    vch=${vch// /}
+    [ -d "$dir/chunks-landscape" ] && lch=$(find "$dir/chunks-landscape" -maxdepth 1 -name 'landscape-C[0-9]*.mp4' -size +0c 2>/dev/null | wc -l)
+    lch=${lch// /}
+    m="$m script=$script mp3s=$mp3s vchunks=$vch lchunks=$lch"
+  else
+    m="$m nojobdir"
+  fi
+  echo "$m"
+}
+# abandon_current: move the current job to .abandoned with a reason, then
+# reset .current to idle. Never silently discards a job's history (the old
+# code reset to idle and lost the job, its phase, and its failure count).
+# Shape matches the existing abandoned entries: {job, reason, abandoned_at,
+# failures}.
+abandon_current() { # $1 = reason
+  local reason="$1"
+  local now
+  now=$(date -Is)
+  if [ -n "$JOB_ID" ]; then
+    local tmp
+    tmp=$(mktemp "$STATE.tmp.XXXXXX") || return 1
+    jq --arg job "$JOB_ID" --arg reason "$reason" --arg now "$now" \
+      '.abandoned = ((.abandoned // []) + [{job: $job, reason: $reason, abandoned_at: $now, failures: (.current.failures // 0)}]) | .current = {job: null, profile: null, phase: "idle", pid: null, pgid: null, log: null, driver_owned: false, failures: 0, assemble_retries: 0, chunk_retries: 0, updated_at: $now} | .updated_at = $now' \
+      "$STATE" > "$tmp" && mv "$tmp" "$STATE"
+    log "abandoned job $JOB_ID: $reason"
+  else
+    save_state ".current = {job: null, profile: null, phase: \"idle\", pid: null, pgid: null, log: null, driver_owned: false, failures: 0, assemble_retries: 0, chunk_retries: 0, updated_at: \"$now\"}"
+    log "reset to idle (no current job): $reason"
+  fi
 }
 job_dir() { # $1 = job id (profile is always trendlinenow)
   echo "$REPO/work/trendlinenow/$1"
@@ -138,24 +256,37 @@ job_dir() { # $1 = job id (profile is always trendlinenow)
 # VisualSpec at assemble time — nothing on disk — so it counts as complete
 # when the spec is present. Every other scene needs sceneNN.mp3 plus a
 # visual file (ImagePath/LandscapeImagePath from script.json, or a
-# sceneNN-stock.mp4/.jpg). A per-scene "sceneNN-art.*" name check is WRONG:
-# scenes share one art image per VisualGroup, so the file is named for the
-# group's first scene, not for this scene.
+# sceneNN-stock.mp4/.jpg). One fresh visual per scene (fix sequence #2
+# ITEM 3): every scene has its own VisualGroup now, so the visual file is
+# named for the scene itself, not shared across a group.
+# Audio checks require the file to be non-empty: a truncated zero-byte mp3
+# left by a kill mid-synthesis used to pass the existence-only check and
+# ship as clipped narration. Brief audio is required whenever the script
+# has brief scenes, or the landscape renders a silent brief.
 prep_complete() { # $1 = job dir
   python3 - "$1" <<'PYEOF'
-import json, os, sys
+import glob, json, os, sys
 job = sys.argv[1]
 try:
     script = json.load(open(os.path.join(job, "script.json")))
 except Exception:
     sys.exit(1)
+def audio_ok(path):
+    # Existence-only checks pass zero-byte (truncated) files; require bytes.
+    return os.path.exists(path) and os.path.getsize(path) > 0
 for i, sc in enumerate(script["Scenes"]):
-    if not os.path.exists(os.path.join(job, f"scene{i:02d}.mp3")):
+    if not audio_ok(os.path.join(job, f"scene{i:02d}.mp3")):
         sys.exit(1)
     if sc.get("SceneKind") == "visual":
         if sc.get("VisualSpec"):
             continue
         sys.exit(1)
+    if sc.get("VisualMissing"):
+        # B12 (ITEM 4): a flagged scene has no visual by design — its
+        # audio is still required (checked above), but the visual check is
+        # waived so the prep can advance to prep_done for review instead
+        # of stalling forever on a scene that will never get art.
+        continue
     visual = False
     for key in ("ImagePath", "LandscapeImagePath", "ClipPath"):
         p = sc.get(key)
@@ -169,11 +300,97 @@ for i, sc in enumerate(script["Scenes"]):
                 break
     if not visual:
         sys.exit(1)
+# Brief audio: a job with brief scenes needs its briefNN.mp3 files, or the
+# landscape renders a silent brief (assemble voices the brief in TTS, so a
+# missing/empty brief mp3 means the prep never finished it).
+for i, b in enumerate(script.get("BriefScenes") or []):
+    if not audio_ok(os.path.join(job, f"brief{i:02d}.mp3")):
+        sys.exit(1)
+# Outro audio: a shared cache (work/outro/trendlinenow-*.mp3) generated at
+# assemble time, NOT by prep — so a missing cache file is fine (assemble
+# synthesises it on demand) and must NOT fail prep (that would deadlock:
+# prep never completes, assemble never runs, cache never created). But a
+# zero-byte cache file IS a failure: assemble trusts File.Exists and would
+# ship a silent outro. Fail only on a corrupt (empty) cache file.
+outro_dir = os.path.join(os.path.dirname(os.path.dirname(job)), "outro")
+for p in glob.glob(os.path.join(outro_dir, "trendlinenow-*.mp3")):
+    if os.path.getsize(p) == 0:
+        sys.exit(1)
 sys.exit(0)
 PYEOF
 }
-pid_alive() { # $1 = pid -> 0 if alive
-  [ -n "$1" ] && [ "$1" != "null" ] && kill -0 "$1" 2>/dev/null
+pid_alive() { # $1 = pid -> 0 if alive AND its cmdline is a pipeline step
+  # A recorded pid can be reused by an unrelated process after a VM
+  # restart, so kill -0 alone is not enough: require the cmdline to look
+  # like a driver-launched step (a setsid bash whose command mentions a
+  # pipeline entry point). All driver launches go through launch(), so
+  # every legitimate recorded pid matches one of these markers.
+  local pid="$1"
+  [ -n "$pid" ] && [ "$pid" != "null" ] && [ "$pid" != "0" ] || return 1
+  kill -0 "$pid" 2>/dev/null || return 1
+  local cmd
+  cmd=$(ps -o args= -p "$pid" 2>/dev/null || echo "")
+  case "$cmd" in
+    *VideoGen.dll*|*render-chunks.sh*|*finish-chunks.py*|*remotion*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+# kill_step_group: kill a whole step process group, not just the wrapper.
+# launch() uses setsid, so the recorded pid IS the process-group leader
+# (PGID == PID, also recorded as .current.pgid); killing the group takes
+# the dotnet/remotion children with it instead of orphaning them (the old
+# kill only took the bash wrapper, and the orphan kept rendering). Falls
+# back to a single-pid kill if the pid is not a group leader.
+kill_step_group() { # $1 = pid (group leader)
+  local pid="$1"
+  [ -n "$pid" ] && [ "$pid" != "null" ] && [ "$pid" != "0" ] || return 0
+  local pgid
+  pgid=$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' ')
+  if [ -n "$pgid" ] && [ "$pgid" = "$pid" ]; then
+    kill -- "-$pid" 2>/dev/null || true
+    sleep 2
+    kill -9 -- "-$pid" 2>/dev/null || true
+  else
+    kill "$pid" 2>/dev/null || true
+    sleep 2
+    kill -9 "$pid" 2>/dev/null || true
+  fi
+}
+# kill_job_orphans: kill leftover pipeline processes for this job whose
+# wrapper is gone (e.g. a remotion render child that survived its
+# --assemble / chunk-render wrapper dying — the known orphan case from
+# the kill_step_group comment). Only ever runs for a driver-owned step
+# (DRIVER_OWNED=true); a manual step's processes are never touched.
+# Scoped to the job id, so other jobs' steps are safe. $1 = job id.
+kill_job_orphans() { # $1 = job id
+  local job="$1"
+  [ -n "$job" ] || return 0
+  if [ "$DRIVER_OWNED" != "true" ]; then
+    log "auto-reset: current step is not driver-owned — leaving any orphaned processes for $job alone"
+    return 0
+  fi
+  local pat
+  for pat in "VideoGen.dll --assemble.*$job" "VideoGen.dll --prep.*$job" "VideoGen.dll --resume.*$job" "remotion render.*$job" "render-chunks.sh.*$job" "finish-chunks.py.*$job"; do
+    pkill -f "$pat" 2>/dev/null || true
+  done
+  sleep 2
+  for pat in "VideoGen.dll --assemble.*$job" "VideoGen.dll --prep.*$job" "VideoGen.dll --resume.*$job" "remotion render.*$job" "render-chunks.sh.*$job" "finish-chunks.py.*$job"; do
+    pkill -9 -f "$pat" 2>/dev/null || true
+  done
+  log "auto-reset: killed orphaned pipeline processes for $job (if any were alive)"
+}
+# step_log_age_min: minutes since the current step log was last written.
+step_log_age_min() { # uses $STEP_LOG
+  [ -n "$STEP_LOG" ] && [ -f "$STEP_LOG" ] || { echo 0; return 0; }
+  local mtime
+  mtime=$(stat -c %Y "$STEP_LOG" 2>/dev/null || echo 0)
+  echo $(( ($(date +%s) - mtime) / 60 ))
+}
+# step_stalled: 0 if the current step log has been silent >= $1 minutes.
+step_stalled() { # $1 = minutes
+  local threshold="$1"
+  [ -n "$STEP_LOG" ] && [ -f "$STEP_LOG" ] || return 1
+  [ "$(step_log_age_min)" -ge "$threshold" ]
 }
 log_tail_has() { # $1 = log, $2 = pattern -> 0 if found in the last 200 lines
   [ -f "$1" ] && tail -200 "$1" 2>/dev/null | grep -q "$2"
@@ -182,6 +399,151 @@ extract_job_from_log() { # $1 = log -> prints "<job>" or nothing
   # --prep prints: Workspace: .../work/trendlinenow/<job-YYYYMMDD-HHMMSS>
   grep -m1 -o "work/trendlinenow/job-[0-9-]*" "$1" 2>/dev/null | \
     sed 's|^work/trendlinenow/\(job-[0-9-]*\)$|\1|'
+}
+# B6: memory/OOM context for the next silent --assemble death. The
+# driver-launched --assemble that died at frame 129/2430 left no FATAL or
+# SIGTERM line (SIGKILL/OOM cannot be caught in-process), so the driver
+# itself records the memory picture before launching a render and again
+# when one dies: free RAM, cgroup limits/usage and the OOM-killer count,
+# plus any kernel OOM line. Call sites: prep_done launch, render_assemble
+# death.
+log_memory_context() { # $1 = tag
+  local tag="$1"
+  local mem_line
+  mem_line=$(free -m 2>/dev/null | awk '/^Mem:/{print "mem total="$2"MB used="$3"MB free="$4"MB avail="$7"MB"}' || echo "mem unavailable")
+  local cg=""
+  if [ -f /sys/fs/cgroup/memory.max ]; then
+    cg="cgroup max=$(cat /sys/fs/cgroup/memory.max 2>/dev/null) current=$(cat /sys/fs/cgroup/memory.current 2>/dev/null)"
+    local oom
+    oom=$(grep -o "oom_kill [0-9]*" /sys/fs/cgroup/memory.events 2>/dev/null || echo "oom_kill ?")
+    cg="$cg $oom"
+  fi
+  log "memory[$tag]: $mem_line $cg"
+  # Kernel OOM-killer evidence (best-effort: dmesg may be unreadable here).
+  local oom_line
+  oom_line=$(dmesg 2>/dev/null | grep -i "out of memory" | tail -1 || true)
+  [ -n "$oom_line" ] && log "memory[$tag]: kernel OOM evidence: $oom_line"
+  return 0 # the && above exits 1 when there is no OOM line; the caller must not read that as a failure
+}
+# --- memory gate ---------------------------------------------------------------
+# Rishi 2026-11-23: renders die from memory pressure when launched while
+# free RAM is low. Evidence: launches at ~150-250 MB free died at frame
+# ~58-96 (16:54 + 17:04 chunk renders; 13:34-16:34 assembles); the vertical
+# chunks that completed launched at ~782 MB free, ~40-55 min after the
+# ~13:51 VM restart; and free decays to ~125 MB within ~30 min of boot
+# (seen after the 18:05 restart). The gate blocks a RENDER launch
+# (--assemble or a chunk render) when free RAM is below the threshold or
+# the machine has been up too long — the tick becomes a no-op wait instead
+# of another death, and the VM's own restart (every ~2-4h) re-opens the
+# window. It never counts a failure, never touches state, and never kills
+# a running step: it only guards launches. Prep launches are NOT gated
+# (dotnet + API calls, no Chromium; prep deaths were provider/silent, not
+# memory). Disabled by default (config .render.memory_gate_enabled) until
+# Rishi switches it on. Thresholds are reasoned from the observed death
+# point (~150-250 MB) vs success point (~782 MB) — unproven until a real
+# gated launch succeeds. $1/$2 = free-MB / uptime-min overrides (harness
+# only; a live call passes neither).
+memory_gate_ok() {
+  local enabled min_free max_uptime free_mb uptime_min
+  enabled=$(jq -r '.render.memory_gate_enabled // false' "$CONFIG")
+  [ "$enabled" = "true" ] || return 0
+  min_free=$(jq -r '.render.memory_gate_min_free_mb // 400' "$CONFIG")
+  max_uptime=$(jq -r '.render.memory_gate_max_uptime_minutes // 60' "$CONFIG")
+  # $1/$2 override the live readings (harness only). An unreadable live
+  # reading fails CLOSED: free_mb/uptime_min end up empty and the case
+  # checks below block the launch, instead of silently defaulting to 0.
+  if [ $# -ge 1 ]; then free_mb="$1"; else free_mb=$(free -m 2>/dev/null | awk '/^Mem:/{print $4}'); fi
+  if [ $# -ge 2 ]; then
+    uptime_min="$2"
+  else
+    local uptime_sec
+    uptime_sec=$(awk '{print int($1)}' /proc/uptime 2>/dev/null) || uptime_sec=""
+    if [ -z "$uptime_sec" ]; then uptime_min=""; else uptime_min=$((uptime_sec / 60)); fi
+  fi
+  case "$free_mb" in ''|*[!0-9]*) log "memory gate: cannot read free RAM — waiting (fail closed)"; return 1;; esac
+  case "$uptime_min" in ''|*[!0-9]*) log "memory gate: cannot read uptime — waiting (fail closed)"; return 1;; esac
+  if [ "$free_mb" -lt "$min_free" ]; then
+    log "memory gate: free ${free_mb}MB < ${min_free}MB — not launching a render this tick (waiting for the VM restart to free memory)"
+    return 1
+  fi
+  if [ "$uptime_min" -gt "$max_uptime" ]; then
+    log "memory gate: uptime ${uptime_min}m > ${max_uptime}m (free ${free_mb}MB) — not launching a render this tick (memory decays with uptime; waiting for the VM restart)"
+    return 1
+  fi
+  log "memory gate: pass (free ${free_mb}MB >= ${min_free}MB, uptime ${uptime_min}m <= ${max_uptime}m)"
+  return 0
+}
+# Last Remotion frame counter in a step log ("129/2430") or "none".
+last_render_frame() { # $1 = log
+  local frame=""
+  [ -n "$1" ] && [ -f "$1" ] && frame=$(grep -oE "Rendered [0-9]+/[0-9]+" "$1" 2>/dev/null | tail -1 | sed 's/Rendered //')
+  echo "${frame:-none}"
+}
+# B8: how many completed videos are waiting for review — a final mp4 in
+# the watch dir whose sidecar exists and is not Approved:true. A completed
+# video only leaves the watch dir once Rishi approves it and the uploader
+# publishes it (then it moves to done/), so this is exactly the unapproved
+# backlog the driver must not grow. $1 overrides the videos dir (tests).
+unapproved_completed_count() {
+  local dir="${1:-$(jq -r '.videos_dir' "$CONFIG" 2>/dev/null)}"
+  local n=0
+  [ -n "$dir" ] && [ -d "$dir/trendlinenow" ] || { echo 0; return 0; }
+  local f side approved
+  for f in "$dir"/trendlinenow/*.mp4; do
+    [ -e "$f" ] || continue
+    side="${f%.mp4}.json"
+    [ -f "$side" ] || continue
+    approved=$(jq -r '.Approved // false' "$side" 2>/dev/null || echo false)
+    [ "$approved" != "true" ] && n=$((n + 1))
+  done
+  echo "$n"
+}
+# B25: a manual render/prep/assemble is invisible to the recorded pid
+# (exactly the manual-takeover pattern used for videos #2/#3), so every
+# launch site also checks the process table for a live pipeline step for
+# this job. The render_chunks phase already had its own pgrep guard; this
+# is the same guard for the prep / prep_done / render_assemble launches.
+pipeline_step_running() { # $1 = job id -> 0 if any pipeline step is live for it
+  local job="$1"
+  [ -n "$job" ] || return 1
+  pgrep -f "VideoGen.dll --assemble.*$job" >/dev/null 2>&1 && return 0
+  pgrep -f "VideoGen.dll --prep.*$job" >/dev/null 2>&1 && return 0
+  pgrep -f "VideoGen.dll --resume.*$job" >/dev/null 2>&1 && return 0
+  pgrep -f "remotion render.*$job" >/dev/null 2>&1 && return 0
+  pgrep -f "render-chunks.sh.*$job" >/dev/null 2>&1 && return 0
+  return 1
+}
+# B26 retention policy: keep the PRUNE_KEEP_JOBS most recent job dirs (by
+# mtime) plus the protected job and the current job, always. Older dirs are
+# pruned ONLY when the job is recorded completed/abandoned in state.json
+# AND the dir is older than PRUNE_MIN_AGE_DAYS — a completed-but-unreviewed
+# video gets a week before its source dir is pruned (the finals + sidecars
+# in videos/ are the durable artifacts; the job dir is regenerable
+# source). Jobs state.json does not know are never pruned. Stale driver
+# logs in the tmp dir are pruned on the same age rule.
+PRUNE_KEEP_JOBS=5
+PRUNE_MIN_AGE_DAYS=7
+prune_old_jobs() {
+  local work="${REPO}/work/trendlinenow"
+  [ -d "$work" ] || return 0
+  local now_ts min_age_s kept dir job known mtime
+  now_ts=$(date +%s)
+  min_age_s=$((PRUNE_MIN_AGE_DAYS * 86400))
+  kept=0
+  while IFS= read -r dir; do
+    job=$(basename "$dir")
+    if [ "$job" = "$PROTECTED_JOB" ]; then log "prune: keeping protected job $job"; continue; fi
+    if [ -n "${JOB_ID:-}" ] && [ "$job" = "$JOB_ID" ]; then log "prune: keeping current job $job"; continue; fi
+    kept=$((kept + 1))
+    if [ "$kept" -le "$PRUNE_KEEP_JOBS" ]; then continue; fi
+    known=$(jq -r --arg j "$job" '((.completed // []) | map(.job) | index($j) != null) or ((.abandoned // []) | map(.job) | index($j) != null)' "$STATE" 2>/dev/null || echo false)
+    if [ "$known" != "true" ]; then log "prune: keeping $job (not completed/abandoned in state.json)"; continue; fi
+    mtime=$(stat -c %Y "$dir" 2>/dev/null || echo 0)
+    if [ $((now_ts - mtime)) -lt $min_age_s ]; then log "prune: keeping $job (completed/abandoned but only $(( (now_ts - mtime) / 86400 ))d old, grace ${PRUNE_MIN_AGE_DAYS}d)"; continue; fi
+    log "prune: deleting old job dir $dir (job $job, completed/abandoned, older than ${PRUNE_MIN_AGE_DAYS}d, outside the $PRUNE_KEEP_JOBS most recent)"
+    rm -rf "$dir"
+  done < <(ls -dt "$work"/job-* 2>/dev/null)
+  find "${TMPDIR:-/tmp}" -maxdepth 1 -name "trendline-*.log" -mtime +$PRUNE_MIN_AGE_DAYS -delete 2>/dev/null || true
 }
 # preflight: returns 0 if the pipeline is ready to run a step, 1 if not.
 # Checks the VideoGen DLL exists, the intro logo exists, disk space, and
@@ -196,13 +558,18 @@ preflight() {
     log "preflight: VideoGen.dll MISSING — attempting a locked rebuild"
     exec 8>"$TRENDLINE/build.lock"
     if flock -n 8; then
-      if (cd "$REPO/BroadcastContentAutomation/VideoGen" && timeout 600 dotnet build -c Release >> "$LOG" 2>&1); then
+      BUILD_OK=0
+      (cd "$REPO/BroadcastContentAutomation/VideoGen" && timeout 600 dotnet build -c Release >> "$LOG" 2>&1) || BUILD_OK=1
+      exec 8>&-  # release the build lock now — the rebuild decision is made;
+                 # holding it for the whole tick would block manual builds.
+      if [ "$BUILD_OK" = "0" ]; then
         log "preflight: rebuild succeeded"
       else
         log "preflight: rebuild FAILED — escalating (not starting new work)"
         return 1
       fi
     else
+      exec 8>&-
       log "preflight: a build is already running; skipping rebuild this tick"
       return 1
     fi
@@ -214,8 +581,11 @@ preflight() {
     log "preflight: intro logo MISSING ($logo) — --assemble would fail fast; escalating"
     return 1
   fi
-  if find "$REPO" -type d -name '*\\*' 2>/dev/null | grep -q .; then
-    log "preflight: a directory with backslashes in its name exists under the repo — dotnet build would fail (MSB3552); escalating"
+  # Scoped to VideoGen/ (the .NET project MSB3552 actually breaks): the old
+  # scan walked the whole repo, including work/ with hundreds of job dirs,
+  # on every tick.
+  if find "$REPO/BroadcastContentAutomation/VideoGen" -type d -name '*\\*' 2>/dev/null | grep -q .; then
+    log "preflight: a directory with backslashes in its name exists under VideoGen/ — dotnet build would fail (MSB3552); escalating"
     return 1
   fi
   local disk_free
@@ -253,11 +623,35 @@ PROTECTED_JOB=$(jq -r '.protected_job // "job-20261121-085638"' "$CONFIG")
 MAX_FAILURES=$(jq -r '.health.max_consecutive_failures_before_escalation' "$CONFIG")
 BACKOFF_MIN=$(jq -r '.tts.throttle_backoff_minutes' "$CONFIG")
 STALL_MIN=$(jq -r '.render.chunk_log_silence_kill_minutes' "$CONFIG")
+# Per-phase retry caps (config .render.* — previously declared but never
+# read, so a crashing assemble / chunk render retried forever). Enforced
+# via .current.assemble_retries / .current.chunk_retries (job-scoped,
+# reset on job start/completion).
+MAX_ASSEMBLE_RETRIES=$(jq -r '.render.max_assemble_retries // 2' "$CONFIG")
+MAX_CHUNK_RETRIES=$(jq -r '.render.max_chunk_retries // 3' "$CONFIG")
+# Failure-limit auto-reset cap (Rishi 2026-11-23): at most this many
+# consecutive auto-resets with NO progress before the driver escalates and
+# stops. A shell constant, not config — the failure limit itself lives in
+# config (.health.max_consecutive_failures_before_escalation); the cap is
+# part of the reset policy.
+MAX_AUTO_RESETS=2
+
+# Laptop render mode (2026-11-23): Rishi's Windows laptop (Hawkeye) is the
+# ONLY renderer. enabled=false until the first live link test passes.
+# vm_render_fallback_enabled=false keeps the VM render path OFF even while
+# laptop mode is off — the driver must never silently render on the VM
+# while the link is being set up. The helper reads the same config block
+# for host/user/root/identity (env overrides win).
+LAPTOP_ENABLED=$(jq -r '.laptop.enabled // false' "$CONFIG")
+LAPTOP_VM_FALLBACK=$(jq -r '.laptop.vm_render_fallback_enabled // false' "$CONFIG")
+LAPTOP_HELPER="$TRENDLINE/laptop-render.sh"
+laptop_mode() { [ "$LAPTOP_ENABLED" = "true" ]; }
+vm_render_allowed() { [ "$LAPTOP_VM_FALLBACK" = "true" ]; }
 
 # The protected job (video #1) is owned by the build subagent. Never touch it.
 if [ -n "$JOB_ID" ] && [ "$JOB_ID" = "$PROTECTED_JOB" ]; then
   log "GUARD: current job is the protected video #1 ($PROTECTED_JOB) — refusing to act; resetting to idle"
-  save_state '.current = {job: null, profile: null, phase: "idle", pid: null, log: null, driver_owned: false, failures: 0, updated_at: "'$(date -Is)'"}'
+  save_state '.current = {job: null, profile: null, phase: "idle", pid: null, pgid: null, log: null, driver_owned: false, failures: 0, assemble_retries: 0, chunk_retries: 0, updated_at: "'$(date -Is)'"}'
   exit 0
 fi
 
@@ -269,20 +663,96 @@ if [ -z "$JOB_ID" ] && [ "$PHASE" = "prep" ] && [ -n "$STEP_LOG" ] && [ -f "$STE
     log "prep job id discovered from log: $EXTRACTED_JOB"
     JOB_ID="$EXTRACTED_JOB"
     save_state ".current.job = \"$EXTRACTED_JOB\" | .current.profile = \"trendlinenow\""
+    # Usage governor: count this video against the daily cap (idempotent).
+    "$TRENDLINE/governor-check.sh" video-started --job "$EXTRACTED_JOB" || log "governor: video-started recording failed for $EXTRACTED_JOB (continuing)"
   fi
 fi
 
+# Failure limit (Rishi 2026-11-23 ~14:40 EST): hitting the limit no longer
+# parks the job for a human decision — the driver resets the whole system
+# and restarts the job from its checkpoint automatically. Guard: at most
+# MAX_AUTO_RESETS consecutive auto-resets with NO progress (the progress
+# marker below is unchanged since the last auto-reset); the next
+# no-progress hit escalates and stops, as before, so a job that can never
+# advance does not loop forever. The reset only clears counters and kills
+# orphans — the actual restart is the normal phase dispatch below, which
+# relaunches the current step from its checkpoint (chunk renders skip
+# valid chunks; prep resumes via --resume / --prep --job from the saved
+# partial). This block deliberately does NOT exit on the reset path: it
+# falls through to the phase dispatch.
 if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
-  log "ESCALATED: current job has $FAILURES failures (>= $MAX_FAILURES) — driver is paused for this job; Rishi to decide"
-  exit 0
+  # A live step is still doing work — never kill it. Wait for it to finish
+  # or die; the reset (if still needed) happens on a later tick.
+  if [ -n "$PID" ] && [ "$PID" != "null" ] && pid_alive "$PID"; then
+    log "at failure limit ($FAILURES >= $MAX_FAILURES) but a step is still running (pid $PID) — waiting for it; auto-reset will run on a later tick if it dies"
+    exit 0
+  fi
+  RESET_JOB_DIR=""
+  [ -n "$JOB_ID" ] && RESET_JOB_DIR=$(job_dir "$JOB_ID")
+  MARKER=$(progress_marker "$RESET_JOB_DIR")
+  PREV_MARKER=$(jq -r '.current.auto_reset_progress // empty' "$STATE")
+  AUTO_RESETS=$(jq -r '.current.auto_resets // 0' "$STATE")
+  if [ -n "$PREV_MARKER" ] && [ "$MARKER" = "$PREV_MARKER" ]; then
+    AUTO_RESETS=$((AUTO_RESETS + 1))
+  else
+    # Progress since the last auto-reset (or the first one): fresh streak.
+    AUTO_RESETS=1
+  fi
+  if [ "$AUTO_RESETS" -gt "$MAX_AUTO_RESETS" ]; then
+    log "ESCALATED: job $JOB_ID hit the failure limit ($FAILURES >= $MAX_FAILURES) after $AUTO_RESETS auto-resets with no progress (marker unchanged: $MARKER) — driver is stopping for this job; Rishi to decide"
+    save_state ".current.auto_resets = $AUTO_RESETS | .current.auto_reset_progress = \"$MARKER\""
+    exit 0
+  fi
+  # Full reset: kill orphaned pipeline processes for this job, record the
+  # memory picture, clear all failure/retry counters, clear the stale
+  # step record (pid/pgid — the recorded step is dead, and clearing it
+  # stops the next tick double-counting the same death as a fresh retry),
+  # and store the reset count + progress marker. The last step log is
+  # KEPT: the prep phase reads it for the Azure 429 throttle check.
+  kill_job_orphans "$JOB_ID"
+  log_memory_context "auto-reset $JOB_ID"
+  save_state ".current.failures = 0 | .current.chunk_retries = 0 | .current.assemble_retries = 0 | .current.auto_resets = $AUTO_RESETS | .current.auto_reset_progress = \"$MARKER\" | .current.pid = null | .current.pgid = null"
+  log "AUTO-RESET #$AUTO_RESETS: job $JOB_ID hit the failure limit ($FAILURES >= $MAX_FAILURES) — cleared failure counters, killed orphans, restarting from checkpoint (progress marker: $MARKER)"
+  # fall through to the phase dispatch below (no exit here)
 fi
 
 # Resolve the current job dir (if any).
 JOB_DIR=""
 [ -n "$JOB_ID" ] && JOB_DIR=$(job_dir "$JOB_ID")
 
+# Auto-reset streak self-heal: if the job has progressed since the last
+# auto-reset (marker changed), the no-progress streak is over — clear it
+# so a later failure episode gets its full MAX_AUTO_RESETS. This also
+# heals a stale streak left by a manual failures reset (which should
+# still clear .current.auto_resets itself, but the driver no longer
+# depends on that). Runs only while failures are below the limit and a
+# streak exists, so a normal tick costs nothing.
+if [ "$FAILURES" -lt "$MAX_FAILURES" ] && [ -n "$JOB_DIR" ] && [ -d "$JOB_DIR" ]; then
+  STORED_RESETS=$(jq -r '.current.auto_resets // 0' "$STATE")
+  if [ "$STORED_RESETS" -gt 0 ]; then
+    STORED_MARKER=$(jq -r '.current.auto_reset_progress // empty' "$STATE")
+    NOW_MARKER=$(progress_marker "$JOB_DIR")
+    if [ -n "$STORED_MARKER" ] && [ "$NOW_MARKER" != "$STORED_MARKER" ]; then
+      save_state ".current.auto_resets = 0 | .current.auto_reset_progress = \"$NOW_MARKER\""
+      log "auto-reset streak cleared: job $JOB_ID progressed since the last auto-reset (marker changed)"
+    fi
+  fi
+fi
+
 # --- phase: idle --------------------------------------------------------------
 if [ "$PHASE" = "idle" ]; then
+  # Retention (B26): prune old finished job dirs once per idle tick.
+  prune_old_jobs
+  # Backpressure (B8): never start new work while a completed video waits
+  # for review — the approval gate is Rishi, and .completed would otherwise
+  # grow unboundedly while unapproved videos pile up. A video leaves the
+  # watch dir only once it is approved and published, so the unapproved
+  # count is the backlog. One waiting video is enough to hold the line.
+  UNAPPROVED=$(unapproved_completed_count)
+  if [ "$UNAPPROVED" -ge 1 ]; then
+    log "backpressure: $UNAPPROVED completed video(s) awaiting review (sidecar Approved:false) — not starting new work until one is approved/published"
+    exit 0
+  fi
   # Prefer a pre-prepped job from the queue (FIFO).
   QUEUED=$(jq -r '.queue[0] // empty' "$STATE")
   if [ -n "$QUEUED" ]; then
@@ -295,11 +765,14 @@ if [ "$PHASE" = "idle" ]; then
     fi
     if prep_complete "$Q_DIR"; then
       log "idle: picking pre-prepped queued job $Q_JOB"
-      save_state "del(.queue[0]) | .current = {job: \"$Q_JOB\", profile: \"trendlinenow\", phase: \"prep_done\", pid: null, log: null, driver_owned: true, failures: 0, started_at: \"$(date -Is)\", updated_at: \"$(date -Is)\"}"
+      # A forced next_topic belongs to the video it was set for, not to
+      # this queued job (whose topic is already baked in) — clear it, or
+      # it would also force the NEXT video after this one.
+      save_state "del(.queue[0]) | .next_topic = null | .current = {job: \"$Q_JOB\", profile: \"trendlinenow\", phase: \"prep_done\", pid: null, pgid: null, log: null, driver_owned: true, failures: 0, assemble_retries: 0, chunk_retries: 0, started_at: \"$(date -Is)\", updated_at: \"$(date -Is)\"}"
       exit 0
     else
       log "idle: queued job $Q_JOB is NOT fully prepped (missing audio/art) — will resume its prep"
-      save_state "del(.queue[0]) | .current = {job: \"$Q_JOB\", profile: \"trendlinenow\", phase: \"prep\", pid: null, log: null, driver_owned: true, failures: 0, started_at: \"$(date -Is)\", updated_at: \"$(date -Is)\"}"
+      save_state "del(.queue[0]) | .next_topic = null | .current = {job: \"$Q_JOB\", profile: \"trendlinenow\", phase: \"prep\", pid: null, pgid: null, log: null, driver_owned: true, failures: 0, assemble_retries: 0, chunk_retries: 0, started_at: \"$(date -Is)\", updated_at: \"$(date -Is)\"}"
       exit 0
     fi
   fi
@@ -308,11 +781,31 @@ if [ "$PHASE" = "idle" ]; then
     log "idle: preflight failed — not starting a new prep this tick"
     exit 0
   fi
-  log "idle: starting a new prep --prep --long --profile trendlinenow (trending topic auto-picked)"
+  # Usage governor (2026-11-23): daily video cap (3/day) + cooled providers.
+  # Refuses a new prep when the cap is hit or all legs are cooled — not a
+  # failure, the driver just waits for the next window. Fail-open: a broken
+  # governor exits 0 and never halts the channel.
+  if ! "$TRENDLINE/governor-check.sh" may-start; then
+    log "governor: daily cap hit or all legs cooled — not starting a new prep this tick"
+    exit 0
+  fi
+  # Forced next topic (Rishi 2026-11-21): state.json .next_topic, when set,
+  # is passed as --topic to this prep. It is NOT cleared here - it is cleared
+  # only when the prep completes (prep_done), so a died prep keeps the forced
+  # topic across retries instead of the relaunch auto-picking the top story
+  # (seen 2026-11-22: GTA 6 retries generated Trump/FBI-hack duplicates).
+  NEXT_TOPIC=$(jq -r '.next_topic // empty' "$STATE" 2>/dev/null || true)
+  if [ -n "$NEXT_TOPIC" ]; then
+    log "idle: starting a new prep --prep --long --profile trendlinenow --topic \"$NEXT_TOPIC\" (forced next topic)"
+    PREP_ARGS="--prep --long --profile trendlinenow --topic \"$NEXT_TOPIC\""
+  else
+    log "idle: starting a new prep --prep --long --profile trendlinenow (trending topic auto-picked)"
+    PREP_ARGS="--prep --long --profile trendlinenow"
+  fi
   NEW_LOG="$TMPDIR/trendline-prep-driver-$(date +%Y%m%d-%H%M%S).log"
-  launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow >> '$NEW_LOG' 2>&1"
+  launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll $PREP_ARGS >> '$NEW_LOG' 2>&1"
   NEWPID=$LAUNCH_PID
-  save_state ".current = {job: null, profile: \"trendlinenow\", phase: \"prep\", pid: $NEWPID, log: \"$NEW_LOG\", driver_owned: true, failures: 0, started_at: \"$(date -Is)\", updated_at: \"$(date -Is)\"}"
+  save_state ".current = {job: null, profile: \"trendlinenow\", phase: \"prep\", pid: $NEWPID, pgid: $LAUNCH_PGID, log: \"$NEW_LOG\", driver_owned: true, failures: 0, assemble_retries: 0, chunk_retries: 0, started_at: \"$(date -Is)\", updated_at: \"$(date -Is)\"}"
   log "prep launched: pid $NEWPID log $NEW_LOG (job id unknown until --prep prints it; the next tick reads it from the log)"
   exit 0
 fi
@@ -326,64 +819,123 @@ if [ -z "$JOB_ID" ] || [ ! -d "$JOB_DIR" ]; then
       exit 0
     fi
     log "prep died before creating a job dir — relaunching a fresh --prep"
+    # A forced next_topic must survive the relaunch (same as the prep-phase
+    # relaunch below), or it auto-picks the top story and duplicates the
+    # previous video (seen 2026-11-22).
+    RELAUNCH_TOPIC=$(jq -r '.next_topic // empty' "$STATE" 2>/dev/null || true)
+    RELAUNCH_TOPIC_ARG=""
+    [ -n "$RELAUNCH_TOPIC" ] && RELAUNCH_TOPIC_ARG="--topic \"$RELAUNCH_TOPIC\""
+    # Recovery after a death: count it toward the escalation gate.
+    bump_failure
     NEW_LOG="$TMPDIR/trendline-prep-driver-$(date +%Y%m%d-%H%M%S).log"
-    launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow >> '$NEW_LOG' 2>&1"
+    launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow $RELAUNCH_TOPIC_ARG >> '$NEW_LOG' 2>&1"
     NEWPID=$LAUNCH_PID
-    save_state ".current.pid = $NEWPID | .current.log = \"$NEW_LOG\" | .current.updated_at = \"$(date -Is)\""
+    save_state ".current.pid = $NEWPID | .current.pgid = $LAUNCH_PGID | .current.log = \"$NEW_LOG\" | .current.updated_at = \"$(date -Is)\""
     log "prep relaunched: pid $NEWPID log $NEW_LOG"
     exit 0
   fi
-  log "phase=$PHASE but no current job dir ($JOB_ID / $JOB_DIR) — resetting to idle"
-  save_state '.current = {job: null, profile: null, phase: "idle", pid: null, log: null, driver_owned: false, failures: 0, updated_at: "'$(date -Is)'"}'
+  # No job dir for a non-prep phase: the job is gone (deleted/moved), not
+  # merely unfinished — record it as abandoned instead of silently
+  # discarding its history.
+  abandon_current "phase=$PHASE but no current job dir ($JOB_ID / $JOB_DIR)"
   exit 0
 fi
 
 # --- phase: prep --------------------------------------------------------------
 if [ "$PHASE" = "prep" ]; then
   if pid_alive "$PID"; then
+    # Stall check: a prep whose log has been silent for the threshold is
+    # hung (a Groq call, TTS, or art step that never returns) — kill the
+    # whole process group; the next tick resumes from the checkpoint and
+    # counts the failure when it relaunches.
+    if [ "$DRIVER_OWNED" = "true" ] && step_stalled "$STALL_MIN"; then
+      log "prep pid $PID log silent $(step_log_age_min)m (>= ${STALL_MIN}m) — killing the whole process group"
+      kill_step_group "$PID"
+      exit 0
+    fi
     log "prep still running (pid $PID, $JOB_ID)"
     exit 0
   fi
-  # The prep process is dead (or never had a pid). Decide the recovery.
-  if [ -f "$JOB_DIR/script.json" ]; then
-    # Script exists: is the prep actually complete (audio + art)?
-    if prep_complete "$JOB_DIR"; then
-      log "prep complete for $JOB_ID (script + audio + art all present)"
-      set_phase "prep_done" "null" "null"
+  # The prep process is dead (or never had a pid). Is the prep actually
+  # complete (script + audio + art)? Check first, so a finished prep is
+  # not delayed by a stale 429 marker in its log.
+  if [ -f "$JOB_DIR/script.json" ] && prep_complete "$JOB_DIR"; then
+    log "prep complete for $JOB_ID (script + audio + art all present)"
+    set_phase "prep_done" "null" "null"
+    # Forced topic consumed only now that the prep is complete, so a died
+    # prep keeps it across retries (see the idle-branch note above).
+    save_state ".next_topic = null"
+    exit 0
+  fi
+  # Incomplete prep. Was the death a 429 throttle? Check before ANY resume
+  # — including the --resume path (script.json exists but audio/art are
+  # incomplete, e.g. a 429 during TTS). Previously the backoff only ran
+  # when script.json did not exist, so a TTS 429 went straight to --resume
+  # with no backoff and hammered the F0 tier.
+  if log_has_throttle "$STEP_LOG"; then
+    LAST_429=$(jq -r '.current.last_429_at // empty' "$STATE")
+    if [ -z "$LAST_429" ] || [ "$LAST_429" = "null" ]; then
+      # First sighting of this throttle: record it so the backoff is
+      # measured from now (previously last_429_at was never set anywhere,
+      # so the backoff was dead code).
+      save_state ".current.last_429_at = \"$(date -Is)\""
+      LAST_429=$(jq -r '.current.last_429_at // empty' "$STATE")
+    fi
+    BACKOFF_END=$(date -d "$LAST_429 + $BACKOFF_MIN minutes" +%s 2>/dev/null || echo 0)
+    NOW_TS=$(date +%s)
+    if [ "$NOW_TS" -lt "$BACKOFF_END" ]; then
+      log "Azure 429 backoff: $(( (BACKOFF_END - NOW_TS) / 60 ))m remaining; not resuming yet"
       exit 0
     fi
-    log "prep died with script.json present but audio/art incomplete — resuming"
-  else
-    # No script.json yet. Was it a 429 (throttle) or a script-gen failure?
-    if log_tail_has "$STEP_LOG" "HTTP 429\|Too Many Requests\|Downstream Service Throttled"; then
-      LAST_429=$(jq -r '.current.last_429_at // empty' "$STATE")
-      if [ -n "$LAST_429" ] && [ "$LAST_429" != "null" ]; then
-        BACKOFF_END=$(date -d "$LAST_429 + $BACKOFF_MIN minutes" +%s 2>/dev/null || echo 0)
-        NOW_TS=$(date +%s)
-        if [ "$NOW_TS" -lt "$BACKOFF_END" ]; then
-          log "Azure 429 backoff: $(( (BACKOFF_END - NOW_TS) / 60 ))m remaining; not resuming yet"
-          exit 0
-        fi
-      fi
-      log "Azure 429 backoff expired — resuming prep"
-      save_state ".current.last_429_at = null"
-    elif [ -f "$JOB_DIR/script-partial.json" ]; then
-      log "prep died during script generation (partial checkpoint exists, no script.json) — resuming from the partial (saved scenes reused verbatim)"
-    else
-      log "prep died before any script checkpoint — relaunching a fresh --prep"
-    fi
+    log "Azure 429 backoff expired — resuming prep"
+    save_state ".current.last_429_at = null"
   fi
-  # Resume (or relaunch) the prep.
+  # Floor failure (B17/A5, ITEM 4): a script that failed the length/scene
+  # floor was generated from a partial whose saved acts are the thin ones
+  # that just failed — resuming it would fail the same floor again.
+  # VideoGen deletes the partial before dying, but if it is still here
+  # (killed mid-cleanup, old binary), drop it so the next attempt starts
+  # a fresh prep instead of resuming the failure.
+  if [ -f "$JOB_DIR/script-partial.json" ] && log_tail_has "$STEP_LOG" "Long-form script is far too short"; then
+    rm -f "$JOB_DIR/script-partial.json" "$JOB_DIR/script-progress.json"
+    log "floor failure in prep log (Long-form script is far too short) — deleted script-partial.json so the next attempt starts fresh"
+  fi
+  # Decide the recovery flavour (log only).
+  if [ -f "$JOB_DIR/script.json" ]; then
+    log "prep died with script.json present but audio/art incomplete — resuming"
+  elif [ -f "$JOB_DIR/script-partial.json" ]; then
+    log "prep died during script generation (partial checkpoint exists, no script.json) — resuming from the partial (saved scenes reused verbatim)"
+  else
+    log "prep died before any script checkpoint — relaunching a fresh --prep"
+  fi
+  # B25: a manual --prep/--resume/--assemble for this job is invisible to
+  # the recorded pid — never launch a second step on top of it.
+  if pipeline_step_running "$JOB_ID"; then
+    log "a pipeline step is already running for $JOB_ID (not the recorded pid — possibly manual) — waiting"
+    exit 0
+  fi
+  # Resume (or relaunch) the prep. This is a recovery after a death, so it
+  # counts toward the escalation gate (previously prep deaths never did,
+  # so the gate could never trip from the most failure-prone phase).
+  bump_failure
   RESUME_LOG="$TMPDIR/trendline-prep-driver-$(date +%Y%m%d-%H%M%S).log"
+  # A fresh relaunch (no checkpoint) must re-apply a forced next_topic, or it
+  # auto-picks the top story and duplicates the previous video (seen 2026-11-22).
+  RELAUNCH_TOPIC=$(jq -r '.next_topic // empty' "$STATE" 2>/dev/null || true)
+  RELAUNCH_TOPIC_ARG=""
+  [ -n "$RELAUNCH_TOPIC" ] && RELAUNCH_TOPIC_ARG="--topic \"$RELAUNCH_TOPIC\""
   if [ -f "$JOB_DIR/script.json" ]; then
     launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --resume --job $JOB_ID >> '$RESUME_LOG' 2>&1"
   elif [ -f "$JOB_DIR/script-partial.json" ]; then
     launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow --job $JOB_ID >> '$RESUME_LOG' 2>&1"
   else
-    launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow >> '$RESUME_LOG' 2>&1"
+    launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow $RELAUNCH_TOPIC_ARG >> '$RESUME_LOG' 2>&1"
+    # Fresh prep creates a new job dir: clear .current.job so the next tick
+    # discovers the new job id from the log instead of reusing the stale one.
+    save_state ".current.job = null"
   fi
   NEWPID=$LAUNCH_PID
-  save_state ".current.pid = $NEWPID | .current.log = \"$RESUME_LOG\" | .current.updated_at = \"$(date -Is)\""
+  save_state ".current.pid = $NEWPID | .current.pgid = $LAUNCH_PGID | .current.log = \"$RESUME_LOG\" | .current.updated_at = \"$(date -Is)\""
   log "prep resumed/relaunched: pid $NEWPID log $RESUME_LOG"
   exit 0
 fi
@@ -395,10 +947,51 @@ if [ "$PHASE" = "prep_done" ]; then
     log "render already running for $JOB_ID (pid $PID); waiting"
     exit 0
   fi
+  # B25: a manual --assemble for this job is invisible to the recorded pid
+  # — never launch a second one on top of it.
+  if pipeline_step_running "$JOB_ID"; then
+    log "a pipeline step is already running for $JOB_ID (not the recorded pid — possibly manual) — waiting"
+    exit 0
+  fi
   if ! preflight; then
     log "prep_done: preflight failed — not launching --assemble this tick"
     exit 0
   fi
+  if laptop_mode; then
+    # Laptop mode: write both props files (light, inline — the outro comes
+    # from the disk cache, no render, no heavy compute) and move to
+    # render_chunks, where the helper ships/triggers/polls/pulls.
+    # --assemble is never launched here.
+    WRITE_PROPS_LOG="$TMPDIR/trendline-write-props-driver-$(date +%Y%m%d-%H%M%S).log"
+    if [ "${TRENDLINE_DRY_RUN:-0}" = "1" ]; then
+      log "DRY-RUN: would run --write-props for $JOB_ID (log $WRITE_PROPS_LOG)"
+      set_phase "render_chunks" "null" "null"
+      exit 0
+    fi
+    log "prep_done: laptop mode — writing props with --write-props (no VM render)"
+    if (cd "$REPO/BroadcastContentAutomation/VideoGen" && dotnet bin/Release/net8.0/VideoGen.dll --write-props --job "$JOB_ID" >> "$WRITE_PROPS_LOG" 2>&1); then
+      log "prep_done: props written — moving to render_chunks (laptop)"
+      set_phase "render_chunks" "null" "null"
+    else
+      log "prep_done: --write-props FAILED (log $WRITE_PROPS_LOG) — counting a failure"
+      bump_failure
+    fi
+    exit 0
+  fi
+  if ! memory_gate_ok; then
+    log "prep_done: memory gate blocked --assemble this tick — waiting, not a failure"
+    exit 0
+  fi
+  if ! vm_render_allowed; then
+    # VM render is OFF and laptop mode is not on: the link is still being
+    # set up. Wait here (not a failure) instead of silently rendering on
+    # the VM.
+    log "prep_done: VM render is OFF (laptop mode not enabled and vm_render_fallback_enabled=false) — waiting for the laptop link; not a failure"
+    exit 0
+  fi
+  # B6: memory picture before the render, so a silent death afterwards has
+  # a "before" to compare against.
+  log_memory_context "before-assemble $JOB_ID"
   # Launch --assemble (vertical first, then landscape). The landscape will
   # almost certainly exceed the 180-min Remotion timeout or be killed by a
   # VM restart; the driver recovers it via chunk rendering (see
@@ -415,6 +1008,13 @@ fi
 
 # --- phase: render_assemble ---------------------------------------------------
 if [ "$PHASE" = "render_assemble" ]; then
+  if laptop_mode; then
+    # Laptop mode never launches --assemble; a job found here was left by
+    # the VM path before the switch. Move to chunk recovery (laptop).
+    log "render_assemble: laptop mode — no VM assemble runs; moving to render_chunks (laptop)"
+    set_phase "render_chunks" "null" "null"
+    exit 0
+  fi
   V_PROPS="$JOB_DIR/remotion-props-1080x1920.json"
   L_PROPS="$JOB_DIR/remotion-props-1920x1080.json"
   if pid_alive "$PID"; then
@@ -422,13 +1022,10 @@ if [ "$PHASE" = "render_assemble" ]; then
     # threshold AND we own it — a silent --assemble is stuck (Remotion
     # prints frame progress continuously while healthy).
     if [ "$DRIVER_OWNED" = "true" ] && [ -f "$STEP_LOG" ]; then
-      LOG_MTIME=$(stat -c %Y "$STEP_LOG" 2>/dev/null || echo 0)
-      LOG_AGE_MIN=$(( ($(date +%s) - LOG_MTIME) / 60 ))
+      LOG_AGE_MIN=$(step_log_age_min)
       if [ "$LOG_AGE_MIN" -ge "$STALL_MIN" ]; then
-        log "assemble pid $PID log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m) — killing and chunk-recovering"
-        kill "$PID" 2>/dev/null || true
-        sleep 2
-        kill -9 "$PID" 2>/dev/null || true
+        log "assemble pid $PID log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m) — killing the whole process group and chunk-recovering"
+        kill_step_group "$PID"
         bump_failure
         set_phase "render_chunks" "null" "null"
         exit 0
@@ -438,6 +1035,14 @@ if [ "$PHASE" = "render_assemble" ]; then
     exit 0
   fi
   # The --assemble process is dead. What did it leave behind?
+  # B6: make the death diagnosable even when the process left no FATAL or
+  # SIGTERM line (OOM/SIGKILL/VM teardown cannot be caught in-process):
+  # last Remotion frame, the memory picture now, and a FATAL line naming
+  # the phase, pid, and exit evidence — the next silent death must leave
+  # this line behind.
+  log_memory_context "assemble-dead $JOB_ID"
+  LAST_FRAME=$(last_render_frame "$STEP_LOG")
+  log "FATAL: --assemble for $JOB_ID (pid $PID) died; last render frame $LAST_FRAME; log $STEP_LOG"
   if [ -f "$L_PROPS" ]; then
     log "assemble died but landscape props exist — switching to chunk recovery for both orientations"
     set_phase "render_chunks" "null" "null"
@@ -448,15 +1053,25 @@ if [ "$PHASE" = "render_assemble" ]; then
     set_phase "render_chunks" "null" "null"
     exit 0
   fi
-  # Died before writing any props: likely a crash at startup. Check the log
-  # tail for a fatal marker.
+  # Died before writing any props: likely a crash at startup. Retry, but
+  # honour render.max_assemble_retries (config) — a repeatedly crashing
+  # --assemble must escalate instead of looping forever.
+  ASSEMBLE_RETRIES=$(jq -r '.current.assemble_retries // 0' "$STATE")
+  ASSEMBLE_RETRIES=$((ASSEMBLE_RETRIES + 1))
+  save_state ".current.assemble_retries = $ASSEMBLE_RETRIES"
+  if [ "$ASSEMBLE_RETRIES" -gt "$MAX_ASSEMBLE_RETRIES" ]; then
+    log "assemble died $ASSEMBLE_RETRIES times (max $MAX_ASSEMBLE_RETRIES retries) — escalating; Rishi to decide"
+    save_state ".current.failures = $MAX_FAILURES | .current.updated_at = \"$(date -Is)\""
+    exit 0
+  fi
+  # Check the log tail for a fatal marker.
   if log_tail_has "$STEP_LOG" "FATAL\|Unhandled exception\|OutOfMemoryException"; then
-    log "assemble died before writing props (fatal marker in log) — retrying --assemble once"
+    log "assemble died before writing props (fatal marker in log) — retrying --assemble (attempt $ASSEMBLE_RETRIES of $MAX_ASSEMBLE_RETRIES)"
     bump_failure
     set_phase "prep_done" "null" "null"
     exit 0
   fi
-  log "assemble died before writing props (no fatal marker; possibly a VM reboot or the 180-min timeout) — retrying --assemble"
+  log "assemble died before writing props (no fatal marker; possibly a VM reboot or the 180-min timeout) — retrying --assemble (attempt $ASSEMBLE_RETRIES of $MAX_ASSEMBLE_RETRIES)"
   bump_failure
   set_phase "prep_done" "null" "null"
   exit 0
@@ -467,8 +1082,75 @@ fi
 # for an orientation whose final is NOT already done and whose chunks are
 # NOT already valid. When nothing needs a chunk render, move to verify.
 if [ "$PHASE" = "render_chunks" ]; then
+  if laptop_mode; then
+    # Laptop mode: one helper `step` per orientation per tick. The helper
+    # ships the package once, triggers the render detached on the laptop,
+    # polls, and pulls finished chunks back. A VM restart loses nothing:
+    # the next tick re-reads the marker and re-polls — never re-shipping
+    # finished chunks, never re-triggering a running render. Helper exit
+    # codes: 0 done/waiting, 1 error (count a failure), 2 unreachable or
+    # approval pending (wait WITHOUT counting a failure).
+    if [ "${TRENDLINE_DRY_RUN:-0}" = "1" ]; then
+      log "DRY-RUN: would run laptop-render.sh step for $JOB_ID (first incomplete orientation)"
+      exit 0
+    fi
+    LAPTOP_DONE=true
+    for ori in vertical landscape; do
+      if "$PROD/finish-chunks.py" --job "$JOB_DIR" --orientation "$ori" --check-final-only >> "$LOG" 2>&1; then
+        log "laptop: $ori is already finished and valid for $JOB_ID"
+        continue
+      fi
+      if "$PROD/finish-chunks.py" --job "$JOB_DIR" --orientation "$ori" --check-chunks-only >> "$LOG" 2>&1; then
+        log "laptop: $ori chunks are all valid for $JOB_ID (ready to finish in the verify phase)"
+        continue
+      fi
+      LAPTOP_DONE=false
+      "$LAPTOP_HELPER" step --job "$JOB_ID" --orientation "$ori" >> "$LOG" 2>&1
+      STEP_RC=$?
+      save_state ".current.laptop = {orientation: \"$ori\", step_rc: $STEP_RC, updated_at: \"$(date -Is)\"}"
+      if [ "$STEP_RC" -eq 2 ]; then
+        log "laptop: $ori unreachable or awaiting approval — waiting, not a failure"
+      elif [ "$STEP_RC" -ne 0 ]; then
+        log "laptop: step for $ori failed (rc $STEP_RC) — counting a failure"
+        bump_failure
+      else
+        log "laptop: step for $ori OK (render running, waiting, or complete)"
+      fi
+      break
+    done
+    if [ "$LAPTOP_DONE" = "true" ]; then
+      log "laptop: no chunk render needed — moving to verify"
+      set_phase "verify" "null" "null"
+    fi
+    exit 0
+  fi
+  # Was the previous chunk render for this orientation a death (vs a first
+  # launch, or a render that actually completed)? Only a same-orientation
+  # relaunch after a death counts as a retry — a first launch for the other
+  # orientation, after the first one completed, is not a failure.
+  PREV_ORI=$(jq -r '.current.render_orientation // empty' "$STATE")
+  PREV_DIED=false
+  if [ -n "$PID" ] && [ "$PID" != "null" ] && ! pid_alive "$PID"; then
+    PREV_DIED=true
+  fi
   if pid_alive "$PID"; then
+    # Stall check: a chunk render whose log has been silent for the
+    # threshold is hung (Remotion prints frame progress continuously while
+    # healthy) — kill the whole group; the next tick relaunches from the
+    # last valid chunk and counts the failure then.
+    if [ "$DRIVER_OWNED" = "true" ] && step_stalled "$STALL_MIN"; then
+      log "chunk render pid $PID log silent $(step_log_age_min)m (>= ${STALL_MIN}m) — killing the whole process group"
+      kill_step_group "$PID"
+      exit 0
+    fi
     log "chunk render still running (pid $PID, $JOB_ID)"
+    exit 0
+  fi
+  # Guard: never start a second chunk render while ANY chunk render is
+  # already running for this job. A manual render is invisible to the
+  # recorded pid, and two writers to the same chunk files corrupt them.
+  if pgrep -f "remotion render.*$JOB_ID" >/dev/null 2>&1 || pgrep -f "render-chunks.sh.*$JOB_ID" >/dev/null 2>&1; then
+    log "a chunk render is already running for $JOB_ID (not the recorded pid — possibly manual) — waiting"
     exit 0
   fi
   LAUNCHED=""
@@ -492,10 +1174,38 @@ if [ "$PHASE" = "render_chunks" ]; then
       set_phase "prep_done" "null" "null"
       exit 0
     fi
+    # Memory gate BEFORE the retry counting below: a blocked tick must not
+    # burn a retry on the same death (the recorded pid stays dead, so the
+    # next tick would count it again). When the gate passes, the counting
+    # runs once and the launch follows.
+    if ! memory_gate_ok; then
+      log "render_chunks: memory gate blocked the $ori chunk render this tick — waiting, not a failure"
+      exit 0
+    fi
+    if ! vm_render_allowed; then
+      # VM render is OFF and laptop mode is not on: wait here (not a
+      # failure, and NOT a retry — the launch below never runs).
+      log "render_chunks: VM render is OFF (laptop mode not enabled and vm_render_fallback_enabled=false) — waiting for the laptop link; not a failure"
+      exit 0
+    fi
+    # This launch retries a chunk render that died: count it toward the
+    # escalation gate and the render.max_chunk_retries cap (previously a
+    # dead chunk render was silently relaunched forever).
+    if [ "$PREV_DIED" = "true" ] && [ "$ori" = "$PREV_ORI" ]; then
+      bump_failure
+      CHUNK_RETRIES=$(jq -r '.current.chunk_retries // 0' "$STATE")
+      CHUNK_RETRIES=$((CHUNK_RETRIES + 1))
+      save_state ".current.chunk_retries = $CHUNK_RETRIES"
+      if [ "$CHUNK_RETRIES" -gt "$MAX_CHUNK_RETRIES" ]; then
+        log "chunk render for $ori died $CHUNK_RETRIES times (max $MAX_CHUNK_RETRIES retries) — escalating; Rishi to decide"
+        save_state ".current.failures = $MAX_FAILURES | .current.updated_at = \"$(date -Is)\""
+        exit 0
+      fi
+    fi
     CHUNK_LOG="$TMPDIR/trendline-chunks-driver-$(date +%Y%m%d-%H%M%S).log"
     launch "'$PROD/render-chunks.sh' --job '$JOB_DIR' --orientation $ori >> '$CHUNK_LOG' 2>&1"
     NEWPID=$LAUNCH_PID
-    save_state ".current.pid = $NEWPID | .current.log = \"$CHUNK_LOG\" | .current.render_orientation = \"$ori\" | .current.updated_at = \"$(date -Is)\""
+    save_state ".current.pid = $NEWPID | .current.pgid = $LAUNCH_PGID | .current.log = \"$CHUNK_LOG\" | .current.render_orientation = \"$ori\" | .current.updated_at = \"$(date -Is)\""
     log "chunk render launched for $ori: pid $NEWPID log $CHUNK_LOG"
     LAUNCHED="$ori"
     break
@@ -519,6 +1229,14 @@ if [ "$PHASE" = "finish" ]; then
     exit 0
   fi
   if pid_alive "$PID"; then
+    # Stall check: a finish (concat + loudnorm) whose log has been silent
+    # for the threshold is hung — kill the whole group; the next tick
+    # re-checks the final and counts the failure if it is still invalid.
+    if [ "$DRIVER_OWNED" = "true" ] && step_stalled "$STALL_MIN"; then
+      log "finish pid $PID log silent $(step_log_age_min)m (>= ${STALL_MIN}m) — killing the whole process group"
+      kill_step_group "$PID"
+      exit 0
+    fi
     log "finish still running for $ORI (pid $PID, $JOB_ID)"
     exit 0
   fi
@@ -549,7 +1267,7 @@ if [ "$PHASE" = "verify" ]; then
       FINISH_LOG="$TMPDIR/trendline-finish-driver-$(date +%Y%m%d-%H%M%S).log"
       launch "'$PROD/finish-chunks.py' --job '$JOB_DIR' --orientation $ori >> '$FINISH_LOG' 2>&1"
       NEWPID=$LAUNCH_PID
-      save_state ".current.phase = \"finish\" | .current.finish_orientation = \"$ori\" | .current.pid = $NEWPID | .current.log = \"$FINISH_LOG\" | .current.updated_at = \"$(date -Is)\""
+      save_state ".current.phase = \"finish\" | .current.finish_orientation = \"$ori\" | .current.pid = $NEWPID | .current.pgid = $LAUNCH_PGID | .current.log = \"$FINISH_LOG\" | .current.updated_at = \"$(date -Is)\""
       log "finish launched for $ori: pid $NEWPID log $FINISH_LOG"
       exit 0
     fi
@@ -568,13 +1286,23 @@ if [ "$PHASE" = "verify" ]; then
         log "cleaned up chunks-$ori for $JOB_ID"
       fi
     done
-    save_state ".completed += [{job: \"$JOB_ID\", profile: \"trendlinenow\", title: \"$TITLE\", completed_at: \"$(date -Is)\"}] | .current = {job: null, profile: null, phase: \"idle\", pid: null, log: null, driver_owned: false, failures: 0, updated_at: \"$(date -Is)\"}"
+    if laptop_mode && [ "${TRENDLINE_DRY_RUN:-0}" != "1" ]; then
+      # Best-effort: free the laptop's disk now that both finals verify.
+      # Never fails the tick — the finals are already safe on the VM.
+      for ori in vertical landscape; do
+        "$LAPTOP_HELPER" cleanup --job "$JOB_ID" --orientation "$ori" >> "$LOG" 2>&1 || true
+      done
+      log "laptop: remote chunks cleaned up for $JOB_ID"
+    fi
+    save_state ".completed += [{job: \"$JOB_ID\", profile: \"trendlinenow\", title: \"$TITLE\", completed_at: \"$(date -Is)\"}] | .current = {job: null, profile: null, phase: \"idle\", pid: null, pgid: null, log: null, driver_owned: false, failures: 0, assemble_retries: 0, chunk_retries: 0, updated_at: \"$(date -Is)\"}"
     log "advanced to idle; next video starts on the next tick"
     exit 0
   fi
   exit 0
 fi
 
-log "unknown phase: $PHASE — resetting to idle"
-save_state '.current = {job: null, profile: null, phase: "idle", pid: null, log: null, driver_owned: false, failures: 0, updated_at: "'$(date -Is)'"}'
+# Unknown phase: the job is in a state the driver does not understand —
+# record it as abandoned (with the phase as the reason) instead of
+# silently discarding its history.
+abandon_current "unknown phase: $PHASE"
 exit 0

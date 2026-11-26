@@ -21,7 +21,7 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
 
     private string Base => $"https://graph.facebook.com/{cfg.GraphVersion}";
 
-    public bool Accepts(Sidecar sidecar, out string? reason)
+    public bool Accepts(Sidecar sidecar, string videoPath, out string? reason)
     {
         if (!sidecar.IsVertical)
         {
@@ -42,6 +42,29 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
 
         try
         {
+            // Idempotency: a previous run may have published the Reel and died
+            // before the sidecar was saved. If the recorded media is live,
+            // reuse it — do not post a second Reel.
+            if (!string.IsNullOrWhiteSpace(request.ExistingId))
+            {
+                var lookup = await MetaGraph.MediaExistsAsync(http, Base, request.ExistingId, cfg.AccessToken, ct);
+                if (lookup == MediaLookup.Found)
+                    return PublishResult.Ok(request.ExistingId);
+                if (lookup == MediaLookup.Unknown)
+                    return PublishResult.Retry(
+                        $"Could not verify previously recorded Instagram media {request.ExistingId}; " +
+                        "not re-publishing blind to avoid a duplicate Reel.");
+                log.Info($"  [instagram] previously recorded media {request.ExistingId} not found; uploading fresh.");
+            }
+
+            // Pre-flight: fail fast on a bad encode instead of burning a
+            // container + a 26 MB upload + a transcode wait before Meta
+            // rejects it. A file that fails this check will not pass on retry,
+            // so it is Fatal, not Retry.
+            var preflight = PreflightCheck(request.VideoPath);
+            if (preflight is not null)
+                return PublishResult.Fatal(preflight);
+
             var caption = request.Sidecar.CaptionFor(Platforms.Instagram, CaptionLimit);
 
             // 1. Container with upload_type=resumable — this is what lets us send the
@@ -86,6 +109,12 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
             ], ct);
 
             var mediaId = MetaGraph.RequireString(published.RootElement, "id");
+
+            // The Reel is live NOW. Record the media id before the permalink
+            // lookup, so a VM restart in that window cannot post a second Reel.
+            if (request.OnPlatformIdAsync is not null)
+                await request.OnPlatformIdAsync(mediaId);
+
             var permalink = await TryPermalinkAsync(http, mediaId, ct);
 
             return PublishResult.Ok(mediaId, permalink);
@@ -116,5 +145,35 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
             // turn a successful publish into a retry that double-posts.
             return null;
         }
+    }
+
+    // Encoding pre-flight (fail fast, before any bytes are sent): the pipeline
+    // renders H.264/AAC 1080x1920 30fps, and a file that is not that will never
+    // transcode no matter how often it is retried. Returns the Fatal error
+    // message, or null when the file passes (or cannot be probed — a missing
+    // ffprobe must not block an upload by itself, so that case only warns).
+    private string? PreflightCheck(string videoPath)
+    {
+        var probe = MediaProbe.Probe(videoPath, log);
+        if (probe is null)
+        {
+            log.Warn($"  [instagram] pre-flight probe unavailable for {Path.GetFileName(videoPath)}; uploading without it.");
+            return null;
+        }
+
+        if (probe.DurationSeconds <= 0)
+            return $"Instagram pre-flight: {Path.GetFileName(videoPath)} has no readable duration — refusing to upload a broken file.";
+        if (!string.Equals(probe.VideoCodec, "h264", StringComparison.OrdinalIgnoreCase))
+            return $"Instagram pre-flight: video codec is {probe.VideoCodec ?? "unknown"}, expected H.264 — refusing to upload a file Meta will not transcode.";
+        if (probe.Width != 1080 || probe.Height != 1920)
+            return $"Instagram pre-flight: dimensions are {probe.Width}x{probe.Height}, expected 1080x1920 for a Reel — refusing to upload.";
+        if (probe.Fps is < 29 or > 31)
+            return $"Instagram pre-flight: frame rate is {probe.Fps:0.##} fps, expected ~30 — refusing to upload.";
+        if (probe.AudioCodec is not null && !string.Equals(probe.AudioCodec, "aac", StringComparison.OrdinalIgnoreCase))
+            return $"Instagram pre-flight: audio codec is {probe.AudioCodec}, expected AAC — refusing to upload a file Meta will not transcode.";
+        if (probe.AudioCodec is null)
+            log.Warn($"  [instagram] pre-flight: no audio stream found in {Path.GetFileName(videoPath)}; uploading anyway.");
+
+        return null;
     }
 }

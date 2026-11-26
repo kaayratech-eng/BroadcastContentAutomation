@@ -25,7 +25,7 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
     public bool Enabled => cfg.Enabled;
     public int MaxPerRun => cfg.MaxUploadsPerRun;
 
-    public bool Accepts(Sidecar sidecar, out string? reason)
+    public bool Accepts(Sidecar sidecar, string videoPath, out string? reason)
     {
         if (!sidecar.IsVertical)
         {
@@ -56,6 +56,16 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
         {
             var accessToken = await RefreshAccessTokenAsync(http, ct);
             http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+
+            // Idempotency: a previous run may have called init and died before
+            // the sidecar was saved. If that publish is live in the inbox (or
+            // still processing), reuse/wait for it — do not create a second draft.
+            if (!string.IsNullOrWhiteSpace(request.ExistingId))
+            {
+                var prior = await CheckPriorPublishAsync(http, request.ExistingId, ct);
+                if (prior is not null) return prior;
+                // null = the prior publish is gone/failed — fall through to a fresh init.
+            }
 
             var caption = request.Sidecar.CaptionFor(Platforms.TikTok, 2200);
             var info = new FileInfo(request.VideoPath);
@@ -114,6 +124,12 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
             var data = initJson.RootElement.GetProperty("data");
             var publishId = data.GetProperty("publish_id").GetString()!;
             var uploadUrl = data.GetProperty("upload_url").GetString()!;
+
+            // The publish_id exists from this point on. Record it immediately
+            // (sidecar.SaveAsync) so a VM restart mid-upload can resume/check
+            // this publish instead of starting a second one.
+            if (request.OnPlatformIdAsync is not null)
+                await request.OnPlatformIdAsync(publishId);
 
             log.Info($"  [tiktok] publish {publishId}, uploading {Text.Bytes(info.Length)} in {totalChunks} chunks");
             log.Info($"  [tiktok] caption (also saved to {Path.GetFileName(captionFile)}) - copy-paste into the draft:\n{caption}");
@@ -224,14 +240,63 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
 
             if (status == "FAILED")
             {
+                // B20: a single FAILED poll used to return Fatal, permanently
+                // killing the target — inconsistent with
+                // CheckPriorPublishAsync, which treats a FAILED prior publish
+                // as "start fresh". A transient TikTok processing failure
+                // must not be terminal: Retry, so the next run re-checks
+                // (and re-inits if the publish is still FAILED).
                 var reason = data.TryGetProperty("fail_reason", out var fr) ? fr.GetString() : "unknown";
-                return PublishResult.Fatal($"TikTok processing failed: {reason}");
+                log.Info($"  [tiktok] processing failed ({reason}); retrying next run instead of abandoning.");
+                return PublishResult.Retry($"TikTok processing failed: {reason}");
             }
 
             if (DateTimeOffset.UtcNow > deadline)
                 return PublishResult.Retry($"TikTok still processing after {cfg.ProcessingTimeoutSeconds}s (last status: {status}).");
 
             log.Info($"  [tiktok] processing… {status}");
+        }
+    }
+
+    // Ask TikTok what happened to a publish_id recorded by a previous run that
+    // died before the sidecar was saved. Live -> reuse it (no second draft);
+    // still processing -> wait; failed -> null (fresh init). A lookup failure
+    // is tri-state like YouTube's: only a 4xx rejection (Permanent) means the
+    // publish_id is invalid/gone and a fresh init is safe; a 5xx, rate limit,
+    // or transport failure means the check itself failed, so retry instead of
+    // risking a second draft in the inbox.
+    private async Task<PublishResult?> CheckPriorPublishAsync(HttpClient http, string publishId, CancellationToken ct)
+    {
+        try
+        {
+            using var statusResp = await http.PostAsync($"{ApiBase}/post/publish/status/fetch/",
+                new StringContent(JsonSerializer.Serialize(new { publish_id = publishId }), Encoding.UTF8, "application/json"), ct);
+            using var statusJson = await ReadTikTokResponseAsync(statusResp, ct);
+
+            var status = statusJson.RootElement.GetProperty("data").GetProperty("status").GetString() ?? "";
+            if (status is "PUBLISH_COMPLETE" or "SEND_TO_USER_INBOX")
+                return PublishResult.Ok(publishId);
+            if (status == "FAILED")
+            {
+                log.Info($"  [tiktok] previously recorded publish {publishId} failed; starting a fresh upload.");
+                return null;
+            }
+            return PublishResult.Retry($"TikTok publish {publishId} from a previous run is still {status}; waiting before retrying.");
+        }
+        catch (Exception ex) when (ex is TikTokApiException or HttpRequestException or IOException or TaskCanceledException or InvalidOperationException)
+        {
+            if (ex is TikTokApiException apiEx && apiEx.Permanent)
+            {
+                log.Info($"  [tiktok] previously recorded publish {publishId} is invalid/gone ({ex.Message}); starting a fresh upload.");
+                return null;
+            }
+            // R7: an InvalidOperationException here is a malformed response
+            // shape (e.g. GetProperty on a non-object "data") — the check
+            // itself failed, not the publish. Retry instead of letting it
+            // escape to the uploader's per-video catch, which would burn a
+            // crash retry and eventually move the video to failed/.
+            log.Info($"  [tiktok] could not verify prior publish {publishId} ({ex.Message}); waiting before retrying.");
+            return PublishResult.Retry($"Could not verify previously recorded TikTok publish {publishId}; not creating a second draft blind.");
         }
     }
 
@@ -252,18 +317,45 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
             ["refresh_token"] = stored.RefreshToken,
         });
 
-        using var resp = await http.PostAsync($"{ApiBase}/oauth/token/", body, ct);
-        using var json = await ReadTikTokResponseAsync(resp, ct);
-        var root = json.RootElement;
+        JsonDocument json;
+        try
+        {
+            using var resp = await http.PostAsync($"{ApiBase}/oauth/token/", body, ct);
+            json = await ReadTikTokResponseAsync(resp, ct);
+        }
+        catch (TikTokApiException ex)
+        {
+            // A rejected refresh token is not a transient blip — the stored token
+            // is dead and every later run will fail auth the same way until a human
+            // re-authorizes. Say exactly that, instead of a generic API error.
+            throw new TikTokApiException(
+                "TikTok refresh token rejected (invalid/expired) — token invalid, re-authorize: " +
+                "run the one-time TikTok OAuth consent flow to obtain a new refresh token (see README). " +
+                $"Original error: {ex.Message}",
+                Permanent: true);
+        }
 
-        var accessToken = root.GetProperty("access_token").GetString()!;
-        var newRefreshToken = root.GetProperty("refresh_token").GetString()!;
+        using (json)
+        {
+            var root = json.RootElement;
+            var accessToken = root.GetProperty("access_token").GetString()!;
+            var newRefreshToken = root.GetProperty("refresh_token").GetString()!;
 
-        var temp = cfg.TokenStorePath + ".tmp";
-        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new TikTokTokenFile(newRefreshToken)), ct);
-        File.Move(temp, cfg.TokenStorePath, overwrite: true);
+            // Keep the previous refresh token as a backup until the new one is
+            // confirmed written: if the write below is interrupted, the .bak still
+            // holds the last known-good token file (the old token is already
+            // invalidated server-side by this refresh, so this is belt-and-braces
+            // for a torn write, not a substitute for re-authorizing).
+            var backup = cfg.TokenStorePath + ".bak";
+            try { File.Copy(cfg.TokenStorePath, backup, overwrite: true); }
+            catch (Exception ex) { log.Warn($"  [tiktok] could not back up the previous refresh token ({ex.Message})."); }
 
-        return accessToken;
+            var temp = cfg.TokenStorePath + ".tmp";
+            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(new TikTokTokenFile(newRefreshToken)), ct);
+            File.Move(temp, cfg.TokenStorePath, overwrite: true);
+
+            return accessToken;
+        }
     }
 
     private static async Task<JsonDocument> ReadTikTokResponseAsync(HttpResponseMessage resp, CancellationToken ct)

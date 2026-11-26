@@ -15,6 +15,11 @@
     <ProjectReference Include="..\Shared\Shared.csproj" />
   </ItemGroup>
   <ItemGroup>
+    <!-- Tests assert against VideoGen internals (script generation, salvage,
+         act repair) directly instead of through reflection. -->
+    <InternalsVisibleTo Include="BroadcastContentAutomation.Tests" />
+  </ItemGroup>
+  <ItemGroup>
     <None Update="appsettings.json" CopyToOutputDirectory="PreserveNewest" />
     <None Update="appsettings.Local.json" CopyToOutputDirectory="PreserveNewest" Condition="Exists('appsettings.Local.json')" />
   </ItemGroup>

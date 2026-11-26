@@ -184,7 +184,7 @@ record ContentProfile
 
     // TTS-friendly spoken form of OutroLines, used only for the outro's voiceover.
     // Null means "use the legacy spoken line". The handle is written out as the
-    // channel name here - Azure would otherwise spell "@trendlinenow" letter by letter.
+    // channel name here - Azure would otherwise spell "@spotlightnowofficial" letter by letter.
     public string? OutroSpoken { get; init; }
 
     // Platform names shown as chips on the branded outro card (e.g. YouTube,
@@ -192,14 +192,15 @@ record ContentProfile
     // means no chips - the legacy card has none.
     public string[] OutroHandles { get; init; } = [];
 
-    // Animated intro sting (Trendline Now, 2026-11-21): the brand logo image
-    // drawn by Remotion's Intro component at the very start of every render,
-    // plus the sting's duration in seconds. Empty/0 means "no intro" - other
-    // profiles render exactly as before. The path is re-rooted by
-    // ApplyAssetMapping (Program.cs) the same way BackgroundMusicPath is, so a
-    // Windows-origin path still resolves on Linux.
-    public string IntroLogoPath { get; init; } = "";
-    public double IntroSeconds { get; init; } = 0;
+    // Shorts end card (Rishi 2026-11-25 13:56 EST): the vertical cut ends by
+    // sending viewers to the full story on YouTube — spoken AND on screen.
+    // Null means "use the generic line" — other profiles keep the plain
+    // "Watch the full video on YouTube" pair. The on-screen line may carry
+    // an emoji and the literal handle; the spoken line must NOT (Azure
+    // would spell "@spotlightnowofficial" letter by letter — the handle is
+    // written out as the channel name here, same as OutroSpoken).
+    public string? ShortOutroLine { get; init; }
+    public string? ShortOutroSpoken { get; init; }
 
     // Closed menu of Azure express-as styles this profile's active voice actually supports
     // (verified live against /cognitiveservices/voices/list - see VoiceOverride), keyed by

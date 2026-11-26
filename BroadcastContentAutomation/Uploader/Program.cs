@@ -31,9 +31,30 @@ var config = new ConfigurationBuilder()
 var cfg = config.Get<AppConfig>() ?? throw new InvalidOperationException("appsettings.json missing or invalid");
 var log = new Logger(cfg.LogDirectory);
 
+// B28: single-instance lock — two concurrent uploader runs can both read
+// Pending and both publish (the ExistingId check cannot help: neither has
+// saved an id yet). Held for the whole run; a second process exits
+// without touching anything. The lock is kernel-held, so a killed run
+// releases it automatically.
+using var instanceLock = SingleInstanceLock.TryAcquire(Path.Combine(cfg.LogDirectory, "uploader.lock"));
+if (instanceLock is null)
+{
+    log.Warn("Another uploader run is already active (uploader.lock is held); exiting without publishing anything.");
+    return 0;
+}
+
 try
 {
-    await RunAsync(cfg, log);
+    var videosWithNoPublish = await RunAsync(cfg, log);
+    if (videosWithNoPublish > 0)
+    {
+        // A run that publishes nothing is a failure, not a success — the exit
+        // code must say so, so the scheduler/monitoring can tell it apart from
+        // a clean run (previously every run exited 0, even one where every
+        // target was Abandoned).
+        log.Error($"{videosWithNoPublish} video(s) ended with no published target.");
+        return 1;
+    }
     return 0;
 }
 catch (Exception ex)
@@ -42,8 +63,11 @@ catch (Exception ex)
     return 1;
 }
 
-static async Task RunAsync(AppConfig cfg, Logger log)
+// Returns the number of videos that finished processing with no published
+// target on any platform (used for the exit code — see Main above).
+static async Task<int> RunAsync(AppConfig cfg, Logger log)
 {
+    var videosWithNoPublish = 0;
     if (!string.IsNullOrWhiteSpace(cfg.TopicHistoryDirectory))
         TopicHistory.DirectoryOverride = cfg.TopicHistoryDirectory;
     if (cfg.Channels.Count == 0)
@@ -88,16 +112,34 @@ static async Task RunAsync(AppConfig cfg, Logger log)
     // generated-content case they already agree (VideoGen always writes
     // Channel = profile.Id into the same folder it renders to), and this makes
     // the channel available even before a sidecar is resolved.
-    var videos = channels
+    var allFiles = channels
         .Select(channel => (Channel: channel, Dir: Path.Combine(cfg.WatchDirectory, channel)))
         .Where(c => Directory.Exists(c.Dir))
         .SelectMany(c => Directory.GetFiles(c.Dir, "*.mp4").Select(p => (Path: p, c.Channel)))
-        .Where(v => (DateTime.UtcNow - File.GetLastWriteTimeUtc(v.Path)).TotalSeconds >= cfg.MinFileAgeSeconds)
-        .Where(v => IsPastCrashRetryBackoff(v.Path, cfg))
-        .OrderBy(v => File.GetCreationTimeUtc(v.Path))
+        // Story cuts (Rishi 2026-11-26) are derivatives of a Short, not
+        // videos: they have no sidecar, and a trendlinenow file without
+        // one is moved straight to failed/ (B21). Never scan them in.
+        .Where(v => !StoryCut.IsStoryCut(v.Path))
         .ToList();
 
-    if (videos.Count == 0) { log.Info("No videos to process."); return; }
+    // B27: files younger than MinFileAgeSeconds are skipped, and each one
+    // is logged by name — the old silent Where() made an all-too-new run
+    // just print "No videos to process." with no hint a fresh render was
+    // sitting in the watch dir.
+    var videos = FilterByMinAge(allFiles, cfg.MinFileAgeSeconds, DateTime.UtcNow,
+            msg => log.Info($"  [scan] {msg}"))
+        .Where(v => IsPastCrashRetryBackoff(v.Path, cfg))
+        // Long-forms before their Shorts (Rishi 2026-11-22, review SEO #3):
+        // a Short's "Watch the full video" footer needs the long-form's
+        // YouTube id, which only exists once the long-form is published.
+        // The vertical cut is rendered (and therefore created) first, so
+        // plain creation-time order would upload the Short before its
+        // long-form and the cross-link could never be filled in.
+        .OrderBy(v => Path.GetFileNameWithoutExtension(v.Path).EndsWith("-short", StringComparison.OrdinalIgnoreCase) ? 1 : 0)
+        .ThenBy(v => File.GetCreationTimeUtc(v.Path))
+        .ToList();
+
+    if (videos.Count == 0) { log.Info("No videos to process."); return videosWithNoPublish; }
 
     log.Info($"Found {videos.Count} video(s).");
 
@@ -148,7 +190,26 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                     continue;
                 }
 
-                if (!publisher.Accepts(sidecar, out var reason))
+                // Story cut (Rishi 2026-11-26): when the Short runs over
+                // 60s, finish writes a first-60s sibling cut; the
+                // instagram_story target uploads the cut instead of the
+                // full Short. No cut (older video, or the cut failed at
+                // finish time) keeps the old behaviour — the publisher's
+                // gate skips the target. The sidecar still belongs to the
+                // Short: only the file handed to Accepts/PublishAsync
+                // changes, never the sidecar path or its records.
+                var targetPath = path;
+                if (target.Equals(Platforms.InstagramStory, StringComparison.OrdinalIgnoreCase))
+                {
+                    var cut = StoryCut.PathFor(path);
+                    if (File.Exists(cut))
+                    {
+                        targetPath = cut;
+                        log.Info($"  [instagram_story] using 60s story cut {Path.GetFileName(cut)}.");
+                    }
+                }
+
+                if (!publisher.Accepts(sidecar, targetPath, out var reason))
                 {
                     log.Info($"  [{publisher.Platform}] skipping {Path.GetFileName(path)}: {reason}");
                     sidecar.PublicationFor(target).Status = PublishStatus.Skipped;
@@ -165,33 +226,51 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                 var publication = sidecar.PublicationFor(target);
                 publication.Attempts++;
 
-                var result = await publisher.PublishAsync(new PublishRequest(path, sidecar), CancellationToken.None);
+                // Idempotency wiring (fix 4): hand the publisher the id a
+                // previous run may already have recorded, and a callback it
+                // invokes the moment the platform returns a live id — the
+                // callback persists it immediately, before any post-publish
+                // work, so a VM restart in that window cannot double-publish.
+                var request = new PublishRequest(targetPath, sidecar)
+                {
+                    ExistingId = publication.Id,
+                    OnPlatformIdAsync = async id =>
+                    {
+                        publication.Id = id;
+                        await sidecar.SaveAsync(path);
+                    },
+                };
 
-                if (result.Success)
-                {
-                    publication.Status = PublishStatus.Published;
-                    publication.Id = result.Id;
-                    publication.Url = result.Url;
-                    publication.At = DateTimeOffset.UtcNow;
-                    log.Info($"  [{channel}/{publisher.Platform}] published: {result.Url ?? result.Id}");
-                }
-                else if (result.Permanent || publication.Attempts >= cfg.MaxAttemptsPerPlatform)
-                {
-                    publication.Status = PublishStatus.Abandoned;
-                    publication.Error = result.Error;
-                    log.Error($"  [{channel}/{publisher.Platform}] abandoned after {publication.Attempts} attempt(s): {result.Error}");
-                }
-                else
-                {
-                    publication.Status = PublishStatus.Failed;
-                    publication.Error = result.Error;
-                    log.Error($"  [{channel}/{publisher.Platform}] failed (attempt {publication.Attempts}/{cfg.MaxAttemptsPerPlatform}, will retry): {result.Error}");
-                }
+                var result = await publisher.PublishAsync(request, CancellationToken.None);
+
+                RecordTargetResult(publication, result, cfg.MaxAttemptsPerPlatform, log, channel, publisher.Platform);
 
                 // Saved per-target rather than once at the end of the loop, so a video
                 // whose next target throws (moving it to the crash-retry path below)
                 // doesn't lose the results already recorded for the targets before it.
                 await sidecar.SaveAsync(path);
+            }
+
+            // R3 (fix sequence #2, ITEM 5): reconcile the Short<->long-form
+            // cross-links on EVERY run, not just at publish time. A Short that
+            // published before its long-form (or a long-form whose Short
+            // published first) gets both directions linked once both are live;
+            // a second run is a no-op when both links are already present.
+            // Best-effort and description-only: it never re-uploads anything,
+            // never fails the video's run, and only patches descriptions of
+            // already-published videos.
+            if (channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase)
+                && publishersByPlatform.TryGetValue(Platforms.YouTube, out var ytPublisher)
+                && ytPublisher is YouTubePublisher youtubePublisher)
+            {
+                try
+                {
+                    await youtubePublisher.ReconcileCrossLinksAsync(path, sidecar, CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    log.Warn($"  [youtube] cross-link reconciliation failed: {ex.Message}");
+                }
             }
 
             // This video's own processing reached the end without throwing, whatever the
@@ -200,12 +279,12 @@ static async Task RunAsync(AppConfig cfg, Logger log)
 
             if (sidecar.AllTargetsTerminal())
             {
-                // The topic only counts as "covered" once something actually went live -
-                // this is the sole writer of topic-history, deliberately later than
-                // render/approval, so VideoGen never marks a topic used until a real
-                // publish confirms it.
                 if (sidecar.AnyPublished())
                 {
+                    // The topic only counts as "covered" once something actually went live -
+                    // this is the sole writer of topic-history, deliberately later than
+                    // render/approval, so VideoGen never marks a topic used until a real
+                    // publish confirms it.
                     await TopicHistory.AppendAsync(channel, sidecar.Title);
                     // Analytics loop (priority 1): one line per published video,
                     // in the watch directory's analytics folder, so VideoGen's
@@ -223,10 +302,19 @@ static async Task RunAsync(AppConfig cfg, Logger log)
                             ThumbnailPath = sidecar.ThumbnailPath,
                             PublishedAt = published?.At ?? DateTimeOffset.UtcNow,
                         });
-                }
 
-                MoveWithSiblings(path, cfg.DoneDirFor(channel));
-                log.Info($"Done: {Path.GetFileName(path)} ({(sidecar.AnyPublished() ? "published" : "no successful targets")})");
+                    MoveWithSiblings(path, cfg.DoneDirFor(channel));
+                    log.Info($"Done: {Path.GetFileName(path)} (published)");
+                }
+                else
+                {
+                    // Nothing went live on any target — this is a failure, not a
+                    // completion. It must not sit in done/ alongside published
+                    // videos, where it looks finished and is never retried.
+                    videosWithNoPublish++;
+                    MoveWithSiblings(path, cfg.FailedDirFor(channel));
+                    log.Error($"Done: {Path.GetFileName(path)} (no successful targets) — moved to failed/.");
+                }
             }
             else
             {
@@ -236,6 +324,18 @@ static async Task RunAsync(AppConfig cfg, Logger log)
         catch (Exception ex)
         {
             log.Error($"Failed {Path.GetFileName(path)}: {ex.Message}");
+
+            // B21: a Trendline Now video without a sidecar is a missing
+            // input, not a transient crash — do not burn 3 crash retries
+            // (with 30-min backoffs) on it. Move it to failed/ at once
+            // with the clear message above.
+            if (ex.Message.StartsWith("SIDECAR_REQUIRED:", StringComparison.Ordinal))
+            {
+                videosWithNoPublish++;
+                log.Error($"  Not retrying {Path.GetFileName(path)}: the video needs a sidecar (see above) — moved to failed/.");
+                MoveWithSiblings(path, cfg.FailedDirFor(channel));
+                continue;
+            }
 
             var state = LoadCrashRetryState(path) ?? new CrashRetryState();
             state.Attempts++;
@@ -252,9 +352,99 @@ static async Task RunAsync(AppConfig cfg, Logger log)
             }
         }
     }
+
+    // B31: YouTube's API exposes no remaining-quota endpoint — the only
+    // quota signal is a 403 quotaExceeded error, which is already too
+    // late. Log a dispatch-based estimate instead so the daily headroom is
+    // visible on every run (see EstimateYouTubeQuotaUnits for the unit
+    // costs; the project quota is 10,000 units/day).
+    var youtubeDispatches = dispatchedThisRun
+        .Where(kv => kv.Key.Platform == Platforms.YouTube).Sum(kv => kv.Value);
+    log.Info($"YouTube quota estimate this run: ~{EstimateYouTubeQuotaUnits(youtubeDispatches)} units of the 10,000/day project quota " +
+             $"({youtubeDispatches} YouTube dispatch(es); the API exposes no remaining-quota endpoint, so this is a dispatch-based estimate).");
+
+    return videosWithNoPublish;
+}
+
+// B31: estimated YouTube Data API quota units for N YouTube dispatches in
+// one run: ~1,600 (videos.insert) + ~50 (thumbnails.set) + ~50
+// (videos.update for cross-links/captions) + ~50 (playlistItems.insert)
+// per dispatch. A dispatch that only reconciles a cross-link costs far
+// less, so this over-estimates on quiet runs — deliberately: it is a
+// headroom guard, not a bill.
+static int EstimateYouTubeQuotaUnits(int youtubeDispatches) => youtubeDispatches * 1700;
+
+// B27: split a scan into files old enough to process and files skipped for
+// being too new, logging each skipped file by name. Extracted from the
+// dispatch loop so the accounting is testable on its own — see
+// Item6Tests. A file younger than MinFileAgeSeconds is probably still
+// being written, so it waits for the next run instead of publishing a
+// partial file.
+static List<(string Path, string Channel)> FilterByMinAge(
+    IEnumerable<(string Path, string Channel)> files, int minAgeSeconds,
+    DateTimeOffset utcNow, Action<string> logSkipped)
+{
+    var ready = new List<(string Path, string Channel)>();
+    foreach (var (path, channel) in files)
+    {
+        var age = (utcNow - File.GetLastWriteTimeUtc(path)).TotalSeconds;
+        if (age < minAgeSeconds)
+        {
+            logSkipped?.Invoke($"Skipping {Path.GetFileName(path)}: only {age:F0}s old (< {minAgeSeconds}s minimum file age; likely still being written).");
+            continue;
+        }
+        ready.Add((path, channel));
+    }
+    return ready;
 }
 
 static string CrashRetryMarkerPath(string videoPath) => Path.ChangeExtension(videoPath, ".retry.json");
+
+// Records one target's publish outcome into its Publication. Extracted
+// from the dispatch loop (which increments Attempts before PublishAsync)
+// so the accounting is testable on its own — see
+// AttemptAndCrossLinkTests. A Defer (B19: the publisher established no
+// state and did no work) undoes that increment, so the run consumes none
+// of the attempt budget and the target stays Failed (retryable) instead of
+// marching toward Abandoned on every run.
+static void RecordTargetResult(Publication publication, PublishResult result, int maxAttemptsPerPlatform, Logger log, string channel, string platform)
+{
+    if (result.IsDeferred)
+    {
+        publication.Attempts = Math.Max(0, publication.Attempts - 1);
+        publication.Status = PublishStatus.Failed;
+        publication.Error = result.Error;
+        log.Info($"  [{channel}/{platform}] deferred without burning an attempt ({publication.Attempts}/{maxAttemptsPerPlatform} used): {result.Error}");
+        return;
+    }
+
+    if (result.Success)
+    {
+        publication.Status = PublishStatus.Published;
+        publication.Id = result.Id;
+        publication.Url = result.Url;
+        publication.At = DateTimeOffset.UtcNow;
+        // Clear the stale failure: a published record must not keep
+        // carrying an old error (video #2's YouTube record still
+        // showed "invalid_grant" even though it published). The
+        // message is kept in LastError for history.
+        publication.LastError = publication.Error;
+        publication.Error = null;
+        log.Info($"  [{channel}/{platform}] published: {result.Url ?? result.Id}");
+    }
+    else if (result.Permanent || publication.Attempts >= maxAttemptsPerPlatform)
+    {
+        publication.Status = PublishStatus.Abandoned;
+        publication.Error = result.Error;
+        log.Error($"  [{channel}/{platform}] abandoned after {publication.Attempts} attempt(s): {result.Error}");
+    }
+    else
+    {
+        publication.Status = PublishStatus.Failed;
+        publication.Error = result.Error;
+        log.Error($"  [{channel}/{platform}] failed (attempt {publication.Attempts}/{maxAttemptsPerPlatform}, will retry): {result.Error}");
+    }
+}
 
 static CrashRetryState? LoadCrashRetryState(string videoPath)
 {
@@ -312,6 +502,10 @@ static void MoveWithSiblings(string videoPath, string destRoot)
     }
 
     MoveIfExists(videoPath);
+    // A Story cut belongs to its Short: it travels to done/ (or failed/)
+    // with it, so it never lingers in the watch dir after the Short is
+    // resolved. Harmless no-op for long-forms (no cut exists for them).
+    MoveIfExists(StoryCut.PathFor(videoPath));
     MoveIfExists(Sidecar.PathFor(videoPath));
     foreach (var suffix in new[] { ".srt", ".thumb.jpg", ".tiktok-caption.txt", ".retry.json" })
         MoveIfExists(Path.ChangeExtension(videoPath, suffix));
@@ -326,10 +520,25 @@ static async Task<Sidecar> ResolveSidecarAsync(
     if (existing is not null)
     {
         log.Info($"Using sidecar metadata for {Path.GetFileName(videoPath)}");
-        return AppendTrendlineDisclaimer(existing, channel, log);
+        AppendMusicCredit(existing, channel, log);
+        AppendTrendlineDisclaimer(existing, channel, log);
+        return await AppendTrendlineFooterAsync(existing, videoPath, channel, log);
     }
 
     log.Info("No sidecar — generating metadata from YouTube trends + free Groq/Gemini.");
+
+    // B21: the no-sidecar path always fails for Trendline Now — it needs
+    // GroqApiKey/GeminiApiKey, neither of which is configured for this
+    // channel — and the cryptic "No free metadata provider configured"
+    // error then burns 3 crash retries before landing in failed/. Fail
+    // fast with a clear message instead: a Trendline Now video must ship
+    // with the sidecar VideoGen writes next to the render. (Other
+    // channels keep the fallback — they may have a key configured.)
+    if (channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+        throw new InvalidOperationException(
+            $"SIDECAR_REQUIRED: no sidecar found for {Path.GetFileName(videoPath)} — Spotlight Now videos must ship with the sidecar VideoGen writes next to the render. " +
+            "The auto-metadata fallback cannot help here: it needs GroqApiKey or GeminiApiKey, neither is configured for this channel, and its prompt writes kids-nursery-rhyme metadata. " +
+            "Drop the video with its sidecar JSON, or configure a metadata API key.");
 
     // A manually dropped video carries no channel signal of its own, but it was
     // found under `channel`'s watch folder, so it publishes through that
@@ -338,7 +547,7 @@ static async Task<Sidecar> ResolveSidecarAsync(
     var trends = await youtube.FetchTrendingDataAsync(cfg.TrendQueries, log, CancellationToken.None);
     var meta = await GenerateMetadataAsync(videoPath, trends, cfg, log);
 
-    return AppendTrendlineDisclaimer(new Sidecar
+    var fresh = AppendTrendlineDisclaimer(new Sidecar
     {
         Title = meta.Title,
         Description = meta.Description,
@@ -351,6 +560,37 @@ static async Task<Sidecar> ResolveSidecarAsync(
         // the one target every render supports regardless of orientation.
         Targets = [Platforms.YouTube],
     }, channel, log);
+    return await AppendTrendlineFooterAsync(fresh, videoPath, channel, log);
+}
+
+static Sidecar AppendMusicCredit(Sidecar sidecar, string channel, Logger log)
+{
+    if (!channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+        return sidecar;
+
+    if (string.IsNullOrWhiteSpace(sidecar.MusicTrack))
+    {
+        // No track recorded (sidecar written before VideoGen added MusicTrack):
+        // the credit cannot be determined, and silently skipping it would ship
+        // a CC BY track without attribution. Warn loudly instead — until
+        // VideoGen writes MusicTrack this warns on every trendlinenow video,
+        // which is the intended behaviour, not noise.
+        log.Warn("Music credit could not be determined: sidecar has no MusicTrack. " +
+                 "If this video uses a CC BY track, add its credit line to the description before approving.");
+        return sidecar;
+    }
+
+    // CC0 track (or an unknown filename) — no credit line required.
+    if (!MusicCredits.ByFile.TryGetValue(sidecar.MusicTrack, out var credit))
+        return sidecar;
+
+    if (string.IsNullOrWhiteSpace(sidecar.Description))
+        return sidecar;
+    if (sidecar.Description.Contains(credit, StringComparison.Ordinal))
+        return sidecar;
+    sidecar.Description = sidecar.Description.TrimEnd() + "\n\n" + credit;
+    log.Info($"Appended music credit for {sidecar.MusicTrack}.");
+    return sidecar;
 }
 
 // Legal disclaimer (Rishi 2026-11-21) - every Trendline Now video description,
@@ -364,14 +604,9 @@ static async Task<Sidecar> ResolveSidecarAsync(
 // TrendlineNowProfile.SafetyFraming are what keep the content itself legal.
 static Sidecar AppendTrendlineDisclaimer(Sidecar sidecar, string channel, Logger log)
 {
-    // Local const (not a top-level const - the compiler flags top-level const
-    // declarations after the entry point's return as unreachable code).
-    const string disclaimer =
-        "Disclaimer: This video is for informational and entertainment purposes. " +
-        "We work from publicly reported facts, but some segments include commentary, " +
-        "opinion, and speculation — these are clearly labelled and are not presented " +
-        "as established fact. News develops quickly and details may change after " +
-        "publication. If you spot an error, tell us in the comments and we will correct it.";
+    // Text lives in Sidecar.TrendlineDisclaimer (Shared) so CaptionFor can strip
+    // the same text from the caption fallback — a caption must never carry it.
+    var disclaimer = Sidecar.TrendlineDisclaimer;
 
     if (!channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
         return sidecar;
@@ -380,8 +615,84 @@ static Sidecar AppendTrendlineDisclaimer(Sidecar sidecar, string channel, Logger
     if (sidecar.Description.Contains(disclaimer, StringComparison.Ordinal))
         return sidecar;
     sidecar.Description = sidecar.Description.TrimEnd() + "\n\n" + disclaimer;
-    log.Info("Appended the Trendline Now legal disclaimer to the description.");
+    log.Info("Appended the Spotlight Now legal disclaimer to the description.");
     return sidecar;
+}
+
+// Description footer (Rishi 2026-11-22, review SEO #3) - subscribe CTA plus
+// the channel's social links, appended after the disclaimer so CaptionFor
+// (which truncates at the disclaimer) strips the footer from captions too.
+// A Short also gets a "Watch the full video" line pointing at its long-form,
+// but only when the long-form's YouTube id is already recorded - the uploader
+// processes long-forms before their Shorts, so a same-run long-form is live
+// by the time the Short resolves. When the id is not known yet (long-form
+// not uploaded, or this Short is the only file), the Short still gets the
+// static footer; the cross-link is not faked. A footer saved without the
+// link is NOT stuck that way: the per-run reconciliation
+// (YouTubePublisher.ReconcileCrossLinksAsync, R3) re-adds it once the
+// long-form is Published. Idempotent: the subscribe marker keeps a re-run
+// from stacking a second copy.
+static async Task<Sidecar> AppendTrendlineFooterAsync(Sidecar sidecar, string videoPath, string channel, Logger log)
+{
+    if (!channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+        return sidecar;
+    if (string.IsNullOrWhiteSpace(sidecar.Description))
+        return sidecar;
+    if (sidecar.Description.Contains(Sidecar.TrendlineFooterMarker, StringComparison.Ordinal))
+        return sidecar;
+
+    var footer = Sidecar.TrendlineFooter;
+    if (sidecar.IsVertical)
+    {
+        var longFormId = await FindSiblingLongFormYouTubeIdAsync(videoPath, log);
+        if (!string.IsNullOrWhiteSpace(longFormId))
+        {
+            footer = $"{YouTubePublisher.FullVideoLinkLine(longFormId)}\n\n" + footer;
+            log.Info($"Short footer links to the long-form https://youtu.be/{longFormId}.");
+        }
+        else
+        {
+            log.Info("Short footer has no long-form link yet (long-form not published); static footer only.");
+        }
+    }
+
+    sidecar.Description = sidecar.Description.TrimEnd() + "\n\n" + footer;
+    log.Info("Appended the Spotlight Now description footer.");
+    return sidecar;
+}
+
+// The long-form's published YouTube id, for a Short's "Watch the full video"
+// line. The Short filename is "<slug>-en-short.mp4" and the long-form is
+// "<slug>-en.mp4". The long-form is usually already published and moved to
+// done/<slug>/<slug>.json; the watch-dir copy is the fallback for a long-form
+// that has not been moved yet. Returns null when the long-form is not
+// published on YouTube yet - the caller then ships the static footer only.
+static async Task<string?> FindSiblingLongFormYouTubeIdAsync(string shortVideoPath, Logger log)
+{
+    var fileName = Path.GetFileNameWithoutExtension(shortVideoPath);
+    if (!fileName.EndsWith("-short", StringComparison.OrdinalIgnoreCase))
+        return null;
+    var longFormSlug = fileName[..^"-short".Length];
+    var channelDir = Path.GetDirectoryName(shortVideoPath);
+    if (channelDir is null)
+        return null;
+
+    var candidates = new[]
+    {
+        Path.Combine(channelDir, "done", longFormSlug, longFormSlug + ".mp4"),
+        Path.Combine(channelDir, longFormSlug + ".mp4"),
+    };
+    foreach (var candidate in candidates)
+    {
+        var sibling = await Sidecar.LoadAsync(candidate);
+        if (sibling is null)
+            continue;
+        if (sibling.Publications.TryGetValue(Platforms.YouTube, out var pub)
+            && pub.Status == PublishStatus.Published
+            && !string.IsNullOrWhiteSpace(pub.Id))
+            return pub.Id;
+    }
+    return null;
 }
 
 // ---- Free metadata generation (fallback for videos with no sidecar) -------
@@ -471,4 +782,20 @@ class CrashRetryState
 {
     public int Attempts { get; set; }
     public DateTimeOffset LastAttemptUtc { get; set; }
+}
+
+// CC BY music credits (from VideoGen/assets/music-trendline/README.md). The two
+// John Bartmann tracks are CC0 and need no line; the other three are CC BY 4.0
+// and the video description MUST credit them. VideoGen records the resolved
+// track filename in Sidecar.MusicTrack at assemble time; the uploader appends
+// the matching line next to the disclaimer, so no upload can go out without
+// the attribution the licence requires.
+static class MusicCredits
+{
+    public static readonly Dictionary<string, string> ByFile = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["uplifting-tech-01.mp3"] = "Music: \"Rising Light (Uplifting Orchestral)\" by AurosonMusic — https://freemusicarchive.org/music/aurosonmusic/single/rising-light-uplifting-orchestral/ — CC BY 4.0",
+        ["calm-neutral-01.mp3"] = "Music: \"Old chantry\" by Serat — https://freemusicarchive.org/music/serat/piano-textures/old-chantry-1/ — CC BY 4.0",
+        ["cinematic-epic-01.mp3"] = "Music: \"A Hero for our Time\" by Geoff Harvey (Purple Planet Music) — https://freemusicarchive.org/music/geoff-harvey-purple-planet-music/epic-missions/a-hero-for-our-timemp3/ — CC BY 4.0",
+    };
 }

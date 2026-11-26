@@ -21,35 +21,44 @@ class StockFootageClient(GenConfig cfg) : IStockFootageClient
     // the run the way a failed image *generation* would be.
     public async Task<string?> DownloadBestMatchAsync(string query, string outputPathWithoutExtension, ImageClient.Orientation orientation)
     {
-        var video = await TryDownloadVideoAsync(query, outputPathWithoutExtension + ".mp4", orientation);
+        var detailed = await DownloadBestMatchDetailedAsync(query, outputPathWithoutExtension, orientation);
+        return detailed?.Path;
+    }
+
+    public async Task<StockDownload?> DownloadBestMatchDetailedAsync(string query, string outputPathWithoutExtension, ImageClient.Orientation orientation, IReadOnlySet<long>? excludeVideoIds = null)
+    {
+        var video = await TryDownloadVideoAsync(query, outputPathWithoutExtension + ".mp4", orientation, excludeVideoIds);
         if (video is not null) return video;
         return await TryDownloadPhotoAsync(query, outputPathWithoutExtension + ".jpg", orientation);
     }
 
-    private async Task<string?> TryDownloadVideoAsync(string query, string outputPath, ImageClient.Orientation orientation)
+    // Pure video selection (testable without the network): prefer the
+    // highest-resolution mp4 that matches the requested orientation and
+    // isn't absurdly large (cap at ~1080p) — Pexels returns every encode
+    // of every candidate clip, not just one file per video. Frame rate
+    // first (2026-11-13: a 24fps clip in the 30fps composition plays back
+    // with 3:2 judder — duplicated frames alternating with double-steps —
+    // which reads as shaking. 30fps is native; 60fps decimates evenly to
+    // 30; 25fps judders less than 24fps), then area. Clips in
+    // excludeVideoIds are skipped outright (Rishi's reuse rule — never
+    // the same clip twice within < 4 scenes); when the best clip is
+    // excluded, the next-best clip wins instead of the same footage
+    // under a different filename.
+    internal static (string? Link, long? VideoId, string? PageUrl) PickBestVideoFile(
+        JsonElement videos, ImageClient.Orientation orientation, IReadOnlySet<long>? excludeVideoIds = null)
     {
-        using var http = NewClient();
-        var url = $"{VideoSearchUrl}?query={Uri.EscapeDataString(query)}&per_page=5&orientation={PexelsOrientation(orientation)}";
-        var resp = await http.GetAsync(url);
-        if (!resp.IsSuccessStatusCode)
-            throw new Exception($"Pexels video search failed ({(int)resp.StatusCode}): {Text.Tail(await resp.Content.ReadAsStringAsync(), 500)}");
-
-        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
-        if (!doc.RootElement.TryGetProperty("videos", out var videos) || videos.GetArrayLength() == 0)
-            return null;
-
-        // Prefer the highest-resolution mp4 file that actually matches the requested
-        // orientation and isn't absurdly large (cap at ~1080p) - Pexels returns every
-        // encode of every candidate clip, not just one file per video.
-        // Frame rate first (2026-11-13: a 24fps clip in the 30fps composition
-        // plays back with 3:2 judder — duplicated frames alternating with
-        // double-steps — which reads as shaking. 30fps is native; 60fps
-        // decimates evenly to 30; 25fps judders less than 24fps), then area.
         string? bestLink = null;
+        long? bestVideoId = null;
+        string? bestPageUrl = null;
         long bestArea = 0;
         var bestFpsScore = -1;
         foreach (var clip in videos.EnumerateArray())
         {
+            var videoId = clip.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+                ? idEl.GetInt64()
+                : (long?)null;
+            if (videoId is not null && excludeVideoIds is not null && excludeVideoIds.Contains(videoId.Value))
+                continue;
             if (!clip.TryGetProperty("video_files", out var files)) continue;
             foreach (var file in files.EnumerateArray())
             {
@@ -73,16 +82,38 @@ class StockFootageClient(GenConfig cfg) : IStockFootageClient
                     bestFpsScore = fpsScore;
                     bestArea = area;
                     bestLink = file.GetProperty("link").GetString();
+                    bestVideoId = videoId;
+                    bestPageUrl = clip.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String
+                        ? urlEl.GetString()
+                        : null;
                 }
             }
         }
+        return (bestLink, bestVideoId, bestPageUrl);
+    }
+
+    private async Task<StockDownload?> TryDownloadVideoAsync(string query, string outputPath, ImageClient.Orientation orientation, IReadOnlySet<long>? excludeVideoIds = null)
+    {
+        using var http = NewClient();
+        var url = $"{VideoSearchUrl}?query={Uri.EscapeDataString(query)}&per_page=5&orientation={PexelsOrientation(orientation)}";
+        var resp = await http.GetAsync(url);
+        if (!resp.IsSuccessStatusCode)
+            throw new Exception($"Pexels video search failed ({(int)resp.StatusCode}): {Text.Tail(await resp.Content.ReadAsStringAsync(), 500)}");
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
+        if (!doc.RootElement.TryGetProperty("videos", out var videos) || videos.GetArrayLength() == 0)
+            return null;
+
+        var (bestLink, bestVideoId, bestPageUrl) = PickBestVideoFile(videos, orientation, excludeVideoIds);
         if (bestLink is null) return null;
 
         await File.WriteAllBytesAsync(outputPath, await http.GetByteArrayAsync(bestLink));
-        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0 ? outputPath : null;
+        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0
+            ? new StockDownload(outputPath, "video", bestVideoId, null, bestPageUrl, null)
+            : null;
     }
 
-    private async Task<string?> TryDownloadPhotoAsync(string query, string outputPath, ImageClient.Orientation orientation)
+    private async Task<StockDownload?> TryDownloadPhotoAsync(string query, string outputPath, ImageClient.Orientation orientation)
     {
         using var http = NewClient();
         var url = $"{PhotoSearchUrl}?query={Uri.EscapeDataString(query)}&per_page=1&orientation={PexelsOrientation(orientation)}";
@@ -94,11 +125,23 @@ class StockFootageClient(GenConfig cfg) : IStockFootageClient
         if (!doc.RootElement.TryGetProperty("photos", out var photos) || photos.GetArrayLength() == 0)
             return null;
 
-        var link = photos[0].GetProperty("src").GetProperty("large2x").GetString();
+        var photo = photos[0];
+        var link = photo.GetProperty("src").GetProperty("large2x").GetString();
         if (string.IsNullOrEmpty(link)) return null;
+        var photoId = photo.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
+            ? idEl.GetInt64()
+            : (long?)null;
+        var pageUrl = photo.TryGetProperty("url", out var urlEl) && urlEl.ValueKind == JsonValueKind.String
+            ? urlEl.GetString()
+            : null;
+        var alt = photo.TryGetProperty("alt", out var altEl) && altEl.ValueKind == JsonValueKind.String
+            ? altEl.GetString()
+            : null;
 
         await File.WriteAllBytesAsync(outputPath, await http.GetByteArrayAsync(link));
-        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0 ? outputPath : null;
+        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0
+            ? new StockDownload(outputPath, "photo", null, photoId, pageUrl, alt)
+            : null;
     }
 
     private HttpClient NewClient()

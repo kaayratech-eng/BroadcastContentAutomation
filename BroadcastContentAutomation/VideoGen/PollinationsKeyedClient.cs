@@ -11,6 +11,13 @@ using GiggleGarden.Shared;
 // client shells out to the pollinations_image.py helper, which performs
 // the authd surrogate exchange. No key value is handled here.
 //
+// DORMANT until Pollen exists (balance 0, 2026-11-24): a $0 balance
+// fails fast with HTTP 402, and a missing connection with a surrogate
+// error. Either is a key-blocked failure, not a transient one —
+// retrying it burns a real HTTP round-trip for nothing, so a
+// key-blocked failure throws immediately (no second attempt) and the
+// chain logs the leg dormant for the rest of the run (see ImagePool).
+//
 // The endpoint does not return the exact requested size (1080x1920 came
 // back 768x1280), but a 1024x1024 request IS honoured (verified live
 // 2026-11-11: 1024x1024 JPEG in 10.5s). The pipeline therefore generates
@@ -69,7 +76,7 @@ static class PollinationsKeyedClient
                 Console.WriteLine($"  Keyed Pollinations square art: {Path.GetFileName(outputPath)} ({bytes / 1024} KB, flux, seed {seed})");
                 return outputPath;
             }
-            catch (Exception ex) when (attempt < maxAttempts)
+            catch (Exception ex) when (attempt < maxAttempts && !ImagePool.IsKeyBlockedError(ex.Message))
             {
                 Console.WriteLine($"  Keyed Pollinations square art attempt {attempt} failed ({ex.Message}), retrying...");
             }

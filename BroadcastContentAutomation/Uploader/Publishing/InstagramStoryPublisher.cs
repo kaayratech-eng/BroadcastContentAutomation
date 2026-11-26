@@ -18,13 +18,37 @@ sealed class InstagramStoryPublisher(InstagramConfig cfg, Logger log) : IPublish
 
     private string Base => $"https://graph.facebook.com/{cfg.GraphVersion}";
 
-    public bool Accepts(Sidecar sidecar, out string? reason)
+    public bool Accepts(Sidecar sidecar, string videoPath, out string? reason)
     {
         if (!sidecar.IsVertical)
         {
             reason = "Instagram Stories only accepts the 9:16 render.";
             return false;
         }
+
+        // Instagram Stories are capped at 60s. The Shorts this pipeline makes
+        // are 78-81s, so without this gate every Story burns a full container +
+        // upload + transcode wait before Meta rejects it — and a rejection used
+        // to be terminal (see MetaGraph.ParseError, code -1). Gate here, not in
+        // PublishAsync, so the target is marked Skipped with a clear reason
+        // instead of Failed/Abandoned. Facebook Story is NOT gated: it published
+        // fine at 78.8s, so no cap is assumed for it.
+        //
+        // Story cut (Rishi 2026-11-26): finish-chunks.py writes a first-60s
+        // sibling cut for over-60s Shorts, and the dispatcher hands the
+        // cut's path here. The sidecar still carries the FULL Short's
+        // duration, so the gate must probe the actual file when the path
+        // is a cut — trusting the sidecar would skip every cut.
+        var duration = StoryCut.IsStoryCut(videoPath)
+            ? MediaProbe.TryGetDurationSeconds(videoPath, log)
+            : sidecar.DurationSeconds ?? MediaProbe.TryGetDurationSeconds(videoPath, log);
+        if (duration.HasValue && duration.Value > 60)
+        {
+            reason = $"Instagram Stories are capped at 60s; this video is {duration.Value:0.#}s — skipping the Story target.";
+            return false;
+        }
+        if (!duration.HasValue)
+            log.Warn($"  [instagram_story] could not determine duration for {Path.GetFileName(videoPath)}; attempting anyway.");
 
         reason = null;
         return true;
@@ -39,6 +63,21 @@ sealed class InstagramStoryPublisher(InstagramConfig cfg, Logger log) : IPublish
 
         try
         {
+            // Idempotency: a previous run may have published the Story and died
+            // before the sidecar was saved. If the recorded media is live,
+            // reuse it — do not post a second Story.
+            if (!string.IsNullOrWhiteSpace(request.ExistingId))
+            {
+                var lookup = await MetaGraph.MediaExistsAsync(http, Base, request.ExistingId, cfg.AccessToken, ct);
+                if (lookup == MediaLookup.Found)
+                    return PublishResult.Ok(request.ExistingId);
+                if (lookup == MediaLookup.Unknown)
+                    return PublishResult.Retry(
+                        $"Could not verify previously recorded Instagram Story media {request.ExistingId}; " +
+                        "not re-publishing blind to avoid a duplicate Story.");
+                log.Info($"  [instagram_story] previously recorded media {request.ExistingId} not found; uploading fresh.");
+            }
+
             // 1. Container with upload_type=resumable, no caption (Stories don't take one).
             using var container = await MetaGraph.PostFormAsync(http, $"{Base}/{cfg.IgUserId}/media",
             [
@@ -78,6 +117,12 @@ sealed class InstagramStoryPublisher(InstagramConfig cfg, Logger log) : IPublish
             ], ct);
 
             var mediaId = MetaGraph.RequireString(published.RootElement, "id");
+
+            // The Story is live NOW. Record the media id before the permalink
+            // lookup, so a VM restart in that window cannot post a second Story.
+            if (request.OnPlatformIdAsync is not null)
+                await request.OnPlatformIdAsync(mediaId);
+
             var permalink = await TryPermalinkAsync(http, mediaId, ct);
 
             return PublishResult.Ok(mediaId, permalink);
