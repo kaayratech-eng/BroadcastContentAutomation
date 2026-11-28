@@ -300,7 +300,7 @@ public class PrepHardeningTests
         // Video #3: 40 scenes / 4,236 chars — both floors must catch a
         // script like that.
         var ex = Assert.ThrowsAny<Exception>(() =>
-            InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 40, 4236));
+            InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 40, 4236, null));
         Assert.Contains("Long-form script is far too short", ex.Message);
         Assert.Contains("50", ex.Message);
     }
@@ -311,16 +311,16 @@ public class PrepHardeningTests
         // A 40-scene script at 150 chars/scene (6,000 chars) passes the
         // old chars-only floor but still misses the 50–60 scene target.
         var ex = Assert.ThrowsAny<Exception>(() =>
-            InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 40, 9000));
+            InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 40, 9000, null));
         Assert.Contains("50", ex.Message);
     }
 
     [Fact]
     public void SceneCountFloor_FiftyScenesPasses()
     {
-        InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 50, 7500);
+        InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 50, 7500, null);
         // 50 scenes at 6,000 chars: count floor passes, chars only warn.
-        InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 50, 6000);
+        InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 50, 6000, null);
     }
 
     [Fact]
@@ -329,7 +329,7 @@ public class PrepHardeningTests
         // The existing <5,500-char hard fail is unchanged: 55 scenes but
         // only 5,499 chars still fails.
         var ex = Assert.ThrowsAny<Exception>(() =>
-            InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 55, 5499));
+            InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors", 55, 5499, null));
         Assert.Contains("Long-form script is far too short", ex.Message);
     }
 
@@ -344,7 +344,7 @@ public class PrepHardeningTests
         Assert.Equal(4236, totalChars);
         var ex = Assert.ThrowsAny<Exception>(() =>
             InvokeStatic(ReflectionHelper.VideoGen, "ValidateLongFormFloors",
-                scenes.GetArrayLength(), totalChars));
+                scenes.GetArrayLength(), totalChars, null));
         Assert.Contains("Long-form script is far too short", ex.Message);
     }
 
@@ -361,6 +361,21 @@ public class PrepHardeningTests
         Assert.True(Check("Long-form script is far too short: 40 scenes, 9000 chars of narration"));
         Assert.False(Check("Groq request failed with HTTP 429"));
         Assert.False(Check("All script providers failed (3)"));
+    }
+
+    [Fact]
+    public void FloorFailure_MessageNamesJobAndTopic()
+    {
+        // L70: a floor failure must name the job + topic — the FATAL line
+        // carries the job id (L21) but not the topic, so the message
+        // itself must, or a driver log with several sequential preps
+        // cannot attribute the failure.
+        var ex = Assert.ThrowsAny<Exception>(() =>
+            ScriptGenerator.ValidateLongFormFloors(40, 4236,
+                new PrepIdentity("job-20261126-test", "Test topic")));
+        Assert.Contains("Long-form script is far too short", ex.Message);
+        Assert.Contains("job-20261126-test", ex.Message);
+        Assert.Contains("Test topic", ex.Message);
     }
 
     [Fact]
@@ -383,6 +398,76 @@ public class PrepHardeningTests
         {
             Directory.Delete(dir, recursive: true);
         }
+    }
+
+    [Fact]
+    public void FloorFailure_DeleteFailureIsLogged()
+    {
+        // L71: a floor failure whose partial cannot be deleted must log
+        // the file + the reason — the old bare `catch { }` left the next
+        // attempt silently resuming the same thin partial.
+        var dir = Path.Combine(Path.GetTempPath(), "prep-hardening-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        var partial = Path.Combine(dir, "script-partial.json");
+        File.WriteAllText(partial, "{}");
+        Chmod(dir, "0555");
+        string log;
+        bool stillThere;
+        try
+        {
+            log = CaptureConsole(() => InvokeStatic(ReflectionHelper.VideoGen, "DeletePartialScriptFiles", dir));
+            stillThere = File.Exists(partial);
+        }
+        finally
+        {
+            Chmod(dir, "0755");
+            Directory.Delete(dir, recursive: true);
+        }
+        Assert.True(stillThere, "the undeletable partial must still be on disk");
+        Assert.Contains("could not delete", log);
+        Assert.Contains("script-partial.json", log);
+        Assert.Contains("next attempt may resume the thin partial", log);
+    }
+
+    private static void Chmod(string dir, string mode)
+    {
+        var psi = new ProcessStartInfo("chmod") { UseShellExecute = false };
+        psi.ArgumentList.Add(mode);
+        psi.ArgumentList.Add(dir);
+        using var p = Process.Start(psi)!;
+        p.WaitForExit();
+        Assert.Equal(0, p.ExitCode);
+    }
+
+    [Fact]
+    public void Prep_EmptyFactsBlockWarnsBeforeGeneration()
+    {
+        // L71: generation starting with an empty facts block must warn
+        // before act 1 (news profiles) — a trend fetch returning "" used
+        // to sail into generation silently.
+        var previous = PrepContext.Current;
+        PrepContext.Current = new PrepIdentity("job-20261126-test", "Test topic");
+        try
+        {
+            var warned = CaptureConsole(() =>
+                InvokeStatic(ReflectionHelper.VideoGen, "WarnOnEmptyFactsBlock", "", true));
+            Assert.Contains("empty facts block", warned);
+            Assert.Contains("job-20261126-test", warned);
+            Assert.DoesNotContain("WARNING", CaptureConsole(() =>
+                InvokeStatic(ReflectionHelper.VideoGen, "WarnOnEmptyFactsBlock", "some facts", true)));
+            Assert.DoesNotContain("WARNING", CaptureConsole(() =>
+                InvokeStatic(ReflectionHelper.VideoGen, "WarnOnEmptyFactsBlock", "", false)));
+        }
+        finally
+        {
+            PrepContext.Current = previous;
+        }
+        // And the warning is wired into the fresh prep before generation.
+        var program = ReadRepoFile("BroadcastContentAutomation", "VideoGen", "Program.cs");
+        var fresh = Region(program, "async Task<int> RunPrepAsync()", "// Shared tail of --prep");
+        var warnAt = fresh.IndexOf("WarnOnEmptyFactsBlock(trendContext", StringComparison.Ordinal);
+        var genAt = fresh.IndexOf("ScriptGenerator.GenerateAsync(profile, topic,", StringComparison.Ordinal);
+        Assert.True(warnAt >= 0 && genAt > warnAt, "RunPrepAsync must warn on an empty facts block before GenerateAsync");
     }
 
     [Fact]
@@ -457,7 +542,7 @@ public class PrepHardeningTests
         var method = provider.GetType().GetMethod("SynthesizeAsync")
             ?? throw new MissingMethodException(provider.GetType().Name, "SynthesizeAsync");
         var task = (Task)method.Invoke(provider,
-            ["test narration for the fallback check", "en", outPath, "+10%", "-4%", null])!;
+            ["test narration for the fallback check", "en", outPath, "+10%", "-4%", null, null])!;
         Block(task);
     }
 

@@ -37,7 +37,7 @@ public class LengthFixTests
         public QueueProvider(IEnumerable<string> responses) =>
             _responses = new Queue<string>(responses);
 
-        public Task<string> CompleteAsync(string prompt)
+        public Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
         {
             Prompts.Add(prompt);
             if (_responses.Count == 0)
@@ -208,6 +208,105 @@ public class LengthFixTests
         Assert.Equal(2, provider.Prompts.Count);
         Assert.Contains("PREVIOUS ATTEMPT FAILED", provider.Prompts[1]);
         Assert.Contains("needs the same number of values as labels", provider.Prompts[1]);
+    }
+
+    private sealed class EmptyScenesLeg : IScriptProvider
+    {
+        public Task<string> CompleteAsync(string prompt, PrepIdentity? context = null) =>
+            Task.FromResult("{\"scenes\":[]}");
+    }
+
+    [Fact]
+    public async Task CompleteAndParse_FinalFailureLogsBeforeThrow()
+    {
+        // L68: the final failure must log a line with the label + both
+        // errors + the last response length before throwing — it used to
+        // throw with no log line at all.
+        var calls = 0;
+        var provider = new QueueProvider(["{\"scenes\":[]}", "{\"scenes\":[]}", "{\"scenes\":[]}", "{\"scenes\":[]}"]);
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        Exception ex;
+        try
+        {
+            ex = await Assert.ThrowsAsync<Exception>(() =>
+                ScriptGenerator.CompleteAndParseAsync<ScenesOnly>(
+                    provider, "Write scenes.", "test act",
+                    validate: _ =>
+                    {
+                        calls++;
+                        throw new InvalidDataException(calls <= 3 ? "attempt defect" : "strict defect");
+                    },
+                    context: new PrepIdentity("job-20261126-test", "Test topic")));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.Contains("attempt defect", ex.Message);
+        Assert.Contains("strict defect", ex.Message);
+        var log = sb.ToString();
+        Assert.Contains("[test act]", log);
+        Assert.Contains("attempt defect", log);
+        Assert.Contains("strict defect", log);
+        Assert.Contains("13 chars", log);
+        Assert.Contains("job-20261126-test", log);
+        Assert.Contains("aborting prep", log);
+    }
+
+    [Fact]
+    public void VisualDemotion_LogsOffendingNumbers()
+    {
+        // L69: a demoted visual must log the offending numbers + the scene
+        // number + the job — the old line named neither number.
+        var scenes = new List<Scene>
+        {
+            new()
+            {
+                Narration = "The market kept growing through the year, with more buyers joining every month.",
+                SceneKind = "visual",
+                VisualSpec = new VisualSpec("callout", Text: "30% growth"),
+            },
+        };
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        try
+        {
+            ScriptGenerator.ValidateNewsScenes(scenes, "The market kept growing through the year.",
+                new PrepIdentity("job-20261126-test", "Test topic"));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.Equal("art", scenes[0].SceneKind);
+        Assert.Null(scenes[0].VisualSpec);
+        var log = sb.ToString();
+        Assert.Contains("30", log);
+        Assert.Contains("scene 1", log);
+        Assert.Contains("job-20261126-test", log);
+        Assert.Contains("demoted to art", log);
+    }
+
+    [Fact]
+    public async Task ZeroSceneResult_NamesWinningLeg()
+    {
+        // L68: a 0-scene result must name the winning pool leg + the
+        // returned char count + job/topic — the pool used to hide which
+        // leg won, so the throw could not be attributed.
+        var profile = ContentProfileRegistry.Get("trendlinenow");
+        var pool = new FallbackScriptProvider([new EmptyScenesLeg()]);
+        var ex = await Assert.ThrowsAsync<Exception>(() =>
+            ScriptGenerator.GenerateAsync(profile, topic: "Test topic", language: "en", pool,
+                trendContext: "Test facts: a water sample failed safety checks.",
+                longForm: true, topicCategory: "general",
+                context: new PrepIdentity("job-20261126-test", "Test topic")));
+        Assert.Contains("EmptyScenesLeg", ex.Message);
+        Assert.Contains("13 chars", ex.Message);
+        Assert.Contains("job-20261126-test", ex.Message);
+        Assert.Contains("Test topic", ex.Message);
     }
 
     // --- (e) end-to-end: thin Act 1 repaired, floor cleared -------------

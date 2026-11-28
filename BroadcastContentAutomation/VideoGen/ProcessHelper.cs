@@ -16,15 +16,21 @@ static class ProcessHelper
     public sealed record Result(int ExitCode, string Stdout, string Stderr);
 
     public static async Task<Result> RunAsync(
-        string exe, IEnumerable<string> args, int timeoutMinutes = 10)
+        string exe, IEnumerable<string> args, int timeoutMinutes = 10,
+        // L62: `exe` is always `python3`, so a bare timeout named nothing
+        // useful. `what` is the caller's label (helper path + leg); when a
+        // caller passes none, the first argument (the helper path) stands
+        // in. `context` carries the job id for the timeout line.
+        string? what = null, PrepIdentity? context = null)
     {
+        var argList = args.ToList();
         var psi = new ProcessStartInfo(exe)
         {
             RedirectStandardOutput = true,
             RedirectStandardError = true,
             UseShellExecute = false,
         };
-        foreach (var arg in args) psi.ArgumentList.Add(arg);
+        foreach (var arg in argList) psi.ArgumentList.Add(arg);
 
         using var p = Process.Start(psi)
             ?? throw new Exception($"Could not start {exe}.");
@@ -37,9 +43,17 @@ static class ProcessHelper
         }
         catch (OperationCanceledException)
         {
-            try { p.Kill(entireProcessTree: true); } catch { }
+            var whatLabel = what ?? $"{exe} {argList.FirstOrDefault() ?? ""}".Trim();
+            var prefix = PrepContext.PrefixFor(context);
+            try { p.Kill(entireProcessTree: true); }
+            catch (Exception killEx)
+            {
+                // L62: the old bare `catch { }` left an orphaned helper
+                // running with no log line at all.
+                Console.WriteLine($"  {prefix}[process] kill failed after timeout for {whatLabel}: {killEx.GetType().Name}: {killEx.Message} — orphaned process may still be running");
+            }
             throw new TimeoutException(
-                $"{exe} did not finish within {timeoutMinutes} minutes.");
+                $"{prefix}{whatLabel} did not finish within {timeoutMinutes} minutes — killing process tree, leg fails, pool falls through");
         }
         return new Result(p.ExitCode, await stdoutTask, await stderrTask);
     }

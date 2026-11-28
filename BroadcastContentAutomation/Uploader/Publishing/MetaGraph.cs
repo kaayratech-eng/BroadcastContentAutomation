@@ -169,7 +169,7 @@ static class MetaGraph
             {
                 // The stream broke before the server had the whole remainder.
                 // Ask the server how much it kept, then resume from there.
-                var probed = await ProbeAcceptedOffsetAsync(http, uploadUrl, accessToken, total, ct);
+                var probed = await ProbeAcceptedOffsetAsync(http, uploadUrl, accessToken, total, ct, log);
                 if (probed.HasValue)
                 {
                     if (probed.Value >= total)
@@ -219,7 +219,7 @@ static class MetaGraph
     // "not found", so a transient 500 on the verification GET caused a
     // duplicate publish.
     public static async Task<MediaLookup> MediaExistsAsync(
-        HttpClient http, string baseUrl, string mediaId, string accessToken, CancellationToken ct)
+        HttpClient http, string baseUrl, string mediaId, string accessToken, CancellationToken ct, Logger? log = null)
     {
         try
         {
@@ -233,8 +233,14 @@ static class MetaGraph
         {
             return MediaLookup.NotFound;
         }
-        catch
+        catch (Exception ex)
         {
+            // L31: a transient 500, a bad token, and a transport failure
+            // used to collapse to Unknown with no log, so the caller could
+            // only record "could not verify … not re-publishing blind".
+            // Name the cause; the Unknown result (retry, never re-publish
+            // blind) is unchanged.
+            log?.Warn($"  [meta] media-exists check failed for {mediaId}: {ex.GetType().Name}: {ex.Message}; treating as Unknown, will retry not re-publish");
             return MediaLookup.Unknown;
         }
     }
@@ -244,7 +250,8 @@ static class MetaGraph
     // error message names the maximum accepted offset. A 1-byte body keeps
     // the probe cheap; the server validates the offset before reading it.
     private static async Task<long?> ProbeAcceptedOffsetAsync(
-        HttpClient http, string uploadUrl, string accessToken, long total, CancellationToken ct)
+        HttpClient http, string uploadUrl, string accessToken, long total, CancellationToken ct,
+        Action<string>? log = null)
     {
         try
         {
@@ -269,8 +276,11 @@ static class MetaGraph
                 return total;
             return null;
         }
-        catch
+        catch (Exception ex)
         {
+            // L31: same collapse as MediaExistsAsync — a failed probe used
+            // to return null with no record of why.
+            log?.Invoke($"  [meta] offset probe failed: {ex.GetType().Name}: {ex.Message}; continuing without a probe result");
             return null;
         }
     }
@@ -284,27 +294,46 @@ static class MetaGraph
         var deadline = DateTimeOffset.UtcNow.AddSeconds(timeoutSeconds);
         var delay = TimeSpan.FromSeconds(5);
         var lastDetail = "unknown";
+        var attempt = 0;
 
         while (DateTimeOffset.UtcNow < deadline)
         {
+            attempt++;
             await Task.Delay(delay, ct);
             delay = TimeSpan.FromSeconds(Math.Min(20, delay.TotalSeconds * 1.5));
 
-            using var doc = await GetAsync(http, statusUrl, ct);
-            var (done, failed, detail) = read(doc.RootElement);
-            lastDetail = detail;
+            // L35: a poll that throws on attempt 1 vs attempt 20 used to be
+            // indistinguishable — the exception propagated with no line for
+            // the failed poll at all. Log the attempt + last status and
+            // keep polling until the deadline instead.
+            JsonDocument doc;
+            try
+            {
+                doc = await GetAsync(http, statusUrl, ct);
+            }
+            catch (Exception ex)
+            {
+                log.Warn($"  [{tag}] status poll failed (attempt {attempt}, last status {lastDetail}): {ex.GetType().Name}: {ex.Message}; retrying until {deadline:HH:mm:ss}");
+                continue;
+            }
 
-            if (done) return detail;
-            // Processing failures (transcode ERROR/EXPIRED) are retryable, consistent
-            // with ReadAsync above, which deliberately treats an HTTP 400 carrying
-            // ProcessingFailedError as retryable because Meta's self-reported
-            // retriable:false is empirically wrong. The same underlying transcode
-            // blip must not be retried or abandoned depending on which call
-            // happens to surface it — a fresh attempt creates a fresh container,
-            // which is exactly what Meta prescribes for these failures.
-            if (failed) throw new MetaGraphException(new GraphError(0, 0, $"Processing failed: {detail}", Permanent: false));
+            using (doc)
+            {
+                var (done, failed, detail) = read(doc.RootElement);
+                lastDetail = detail;
 
-            log.Info($"  [{tag}] processing… {detail}");
+                if (done) return detail;
+                // Processing failures (transcode ERROR/EXPIRED) are retryable, consistent
+                // with ReadAsync above, which deliberately treats an HTTP 400 carrying
+                // ProcessingFailedError as retryable because Meta's self-reported
+                // retriable:false is empirically wrong. The same underlying transcode
+                // blip must not be retried or abandoned depending on which call
+                // happens to surface it — a fresh attempt creates a fresh container,
+                // which is exactly what Meta prescribes for these failures.
+                if (failed) throw new MetaGraphException(new GraphError(0, 0, $"Processing failed: {detail}", Permanent: false));
+
+                log.Info($"  [{tag}] processing… {detail}");
+            }
         }
 
         throw new MetaGraphException(new GraphError(0, 0,

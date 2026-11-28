@@ -48,10 +48,12 @@ are ready to be finished). Exits non-zero if the checked thing is missing
 or invalid.
 """
 import argparse
+from datetime import datetime, timedelta, timezone
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -426,6 +428,448 @@ def with_canonical_hashtags(caption, canonical, max_hashtags, max_length):
     return f"{fitted} {tag_str}".strip()
 
 
+# Second Short (fix #5 rework, 2026-11-27): payoff cut ASSEMBLED from
+# the job's own assets — NOT cut from the landscape final.
+#
+# CORRECTION (verified by the Drake one-off build, 2026-11-27 18:35 EST):
+# there is NO full-length vertical master in this pipeline. The vertical
+# render only ever covers the main Short itself (76.1s, scenes 0-6 on
+# Drake); chunks-vertical/vertical-joined.mp4 IS the Short, not a 458s
+# video. The previous implementation cut the payoff from the LANDSCAPE
+# final and verticalized it with a blurred pillarbox — that shipped
+# landscape-framed, caption-baked footage in a vertical Short. The cut
+# is now assembled the way the Drake one-off did it (see
+# ~/workspace/tmp/drake-short2-fixed/build-short2.py, read-only):
+# per-scene segments (zoompan on the scene's portrait art + its
+# narration mp3), concatenated, plus the outro/end card cut from the
+# Short itself (the vertical final being finished), with the music bed
+# mixed under the scenes and ASS captions burned in. No re-render, no
+# new images, no new TTS. The driver finishes vertical BEFORE
+# landscape again (the landscape-final dependency is gone).
+SHORT2_MAX_SECONDS = 59.5
+SHORT2_MIN_SECONDS = 30
+SHORT2_HOLD_HOURS = 12  # Rishi 2026-11-27: PublishAfterUtc = finish + 12h,
+# a FALLBACK hold only. Cadence (Rishi 2026-11-27 18:19 EST): uploads
+# alternate every 12h — long-form + main Short together, 2nd Short 12h
+# later — so the GOVERNING hold is measured from the main Short going
+# live, and the uploader anchors it off the sibling main Short's YouTube
+# publication time when that exists. The finish can only stamp its own
+# time, so finish + 12h stands in until the uploader re-anchors it.
+
+
+def _is_closing_cta(narration):
+    """True when a scene's narration is only a follow/subscribe prompt or
+    the closing comment question — a CTA, not a story beat. The payoff
+    window must open on a hook and end on a story beat, never on the CTA:
+    a cut that ends "Follow @spotlightnowofficial..." / "What is your
+    favourite moment? Tell us in the comments below." is an outro, not a
+    payoff. Detects the follow prompt by its opening words and the
+    closing question by a "?" that sends the viewer to the comments."""
+    text = (narration or "").strip()
+    if not text:
+        return False
+    low = text.lower()
+    if low.startswith("follow @"):
+        return True
+    if "?" in text and "comment" in low:
+        return True
+    return False
+
+
+def select_payoff_scenes(scene_durations, outro_seconds, main_last_scene,
+                         narrations=None):
+    """The payoff window for the 2nd Short: a contiguous run of scenes
+    near the END of the video, strictly after the main Short's last
+    scene (zero overlap — the same predicate as
+    SecondShortOverlapsMainShort), whose total (sum of the scenes'
+    durationInSeconds + outroSeconds) is in [30, 59.5]s.
+    Returns (scene_indices, None), or (None, reason) when no window
+    satisfies all constraints. Pure: no ffmpeg, no files.
+    `scene_durations` is the per-scene durationInSeconds list from the
+    landscape props, in script order (the landscape props hold ALL
+    scenes); `outro_seconds` is the outroSeconds from the VERTICAL
+    props (the Short's own outro, which closes the cut);
+    `main_last_scene` is (number of scenes in the vertical props) - 1.
+    `narrations` (optional, script order) lets the rule skip trailing
+    closing/CTA scenes: the walk starts at the last NON-CTA scene, so
+    the window opens on a hook and ends on a story beat instead of
+    ending on the follow prompt / closing question. Without narrations
+    the walk starts at the last scene as-is.
+    Rule, in order: (1) skip trailing closing/CTA scenes; (2) walk
+    backwards from there, accumulating scenes while the total stays
+    <= 59.5s — the walk prefers the payoff stretch NEAREST THE END;
+    (3) the window must total >= 30s, else there is no cut (a later
+    boundary can never help: scenes only add time, and the walk
+    already took every scene back to the main Short)."""
+    if not scene_durations:
+        return (None, "no scenes in the landscape props")
+    if outro_seconds is None or outro_seconds <= 0:
+        return (None, f"outro is {outro_seconds}s — no outro to close the cut with")
+    n = len(scene_durations)
+    if main_last_scene >= n - 1:
+        return (None, f"main Short already covers scenes 0..{main_last_scene} of {n} — no scene is left for a payoff cut")
+    end = n - 1
+    if narrations is not None:
+        while end > main_last_scene and end < len(narrations) and _is_closing_cta(narrations[end]):
+            end -= 1
+        if end <= main_last_scene:
+            return (None, "every scene after the main Short is a closing/CTA scene — no story beat left for a payoff cut")
+    total = float(outro_seconds)
+    chosen = []
+    i = end
+    while i > main_last_scene:
+        d = float(scene_durations[i])
+        if total + d > SHORT2_MAX_SECONDS:
+            break
+        chosen.append(i)
+        total += d
+        i -= 1
+    if not chosen:
+        return (None, f"no payoff window: scene {end} alone ({float(scene_durations[end]):.2f}s) + outro ({float(outro_seconds):.2f}s) already exceeds {SHORT2_MAX_SECONDS}s")
+    chosen.reverse()
+    if total < SHORT2_MIN_SECONDS:
+        return (None, f"payoff window scenes {chosen[0]}..{chosen[-1]} is only {total:.2f}s (<{SHORT2_MIN_SECONDS}s) even taking every scene after the main Short")
+    return (chosen, None)
+
+
+def scene_composition_durations(starts, fps, outro_seconds):
+    """Per-scene COMPOSITION durations in seconds from chunk_ranges'
+    scene_starts output: starts[i+1] - starts[i] (a scene's slot in the
+    composition is its duration minus one shared transition, tf/fps).
+    The last scene runs to total_frames/fps minus the outro: its slot
+    is starts[n] - starts[n-1] less the outro frames
+    (round(outro_seconds*fps)), matching the SRT writer's outro_start.
+    `starts` has n+1 entries with starts[n] == total_frames. Returns a
+    list of n durations, rounded to 3 decimals (the ffmpeg -t values).
+    Where the starts math is ambiguous, the props' durationInSeconds
+    is the fallback — callers use these durations for the segment
+    encodes and log them."""
+    n = len(starts) - 1
+    if n <= 0:
+        return []
+    outro_frames = round(float(outro_seconds or 0) * fps)
+    durations = []
+    for i in range(n):
+        if i == n - 1:
+            d = (starts[n] - starts[i] - outro_frames) / fps
+        else:
+            d = (starts[i + 1] - starts[i]) / fps
+        durations.append(round(d, 3))
+    return durations
+
+
+def missing_short2_assets(job, scene_indices):
+    """Scene art / narration files missing — or empty — for the given
+    scenes. Returns the list of missing paths ([] means the cut can be
+    built with no holes). A cut is never shipped with a hole in it: one
+    missing file skips the whole 2nd Short."""
+    missing = []
+    for i in scene_indices:
+        for name in (f"scene{i:02d}-art.png", f"scene{i:02d}.mp3"):
+            path = os.path.join(job, name)
+            if not os.path.exists(path) or os.path.getsize(path) == 0:
+                missing.append(path)
+    return missing
+
+
+def find_music_bed(job, *candidates):
+    """Resolve the music-bed path from the props: an absolute path, a
+    path relative to the job dir, or a bare filename in the job dir
+    (the props carry "tense-newsroom-02.mp3", which lives in the job
+    dir). Returns the path, or None when no candidate exists on disk."""
+    for cand in candidates:
+        if not cand:
+            continue
+        if os.path.isabs(cand) and os.path.exists(cand):
+            return cand
+        p = os.path.join(job, cand)
+        if os.path.exists(p):
+            return p
+        if os.path.exists(cand):
+            return os.path.abspath(cand)
+    return None
+
+
+def _ass_time(t):
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = t % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def build_short2_ass(narrations, durations):
+    """ASS captions for the assembled 2nd Short, exactly like the Drake
+    one-off: cumulative word-reveal, 4-word chunks, timed evenly across
+    each scene's window. `narrations`/`durations` are aligned lists for
+    the payoff scenes; windows are cumulative from 0. Captions cover
+    the scenes portion only — the outro carries its own on-screen card.
+    DejaVu Sans 52, bottom-center, as in the one-off. Pure: no ffmpeg,
+    no files."""
+    events = []
+    offset = 0.0
+    for narration, dur in zip(narrations, durations):
+        words = (narration or "").split()
+        if words:
+            chunks = [words[j:j + 4] for j in range(0, len(words), 4)]
+            count = len(chunks)
+            for k in range(count):
+                start = offset + (k / count) * dur
+                end = offset + ((k + 1) / count) * dur if k < count - 1 else offset + dur
+                shown = " ".join(words[:(k + 1) * 4])
+                events.append((start, end, shown))
+        offset += dur
+    ass = """[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+ScaledBorderAndShadow: yes
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Cap,DejaVu Sans,52,&H00FFFFFF,&H000000FF,&H00000000,&H00000000,-1,0,0,0,100,100,0,0,1,2.5,0,2,60,60,170,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    for start, end, text in events:
+        ass += f"Dialogue: 0,{_ass_time(start)},{_ass_time(end)},Cap,,0,0,0,,{text}\n"
+    return ass
+
+
+def assemble_second_short(job, job_id, scene_indices, comp_durations,
+                          narrations, outro_seconds, short_duration,
+                          short_path, music_path, music_volume, fps,
+                          short2_path):
+    """Assemble the 2nd Short from the job's own assets (the Drake
+    one-off's stages, in production form). Returns
+    (duration_seconds, None) on success, (None, reason) on failure.
+    Bonus-only: never raises, every ffmpeg step is check=False, and a
+    failed cut is discarded — the caller logs the reason with the job
+    id and ships the main Short only.
+    Stages: A — per-scene segments (zoompan on sceneNN-art.png +
+    sceneNN.mp3, duration = the scene's composition duration); B —
+    concat the scene segments (stream copy); C — outro cut from the
+    Short itself (`short_path`, the vertical final being finished) at
+    (short_duration - outro_seconds), re-encoded; D — concat scenes +
+    outro; E/F — mix the music bed under the SCENES portion only
+    (volume + fade-out in the last 2s of the scenes; no bed when the
+    file is missing), burn the ASS captions, final encode libx264
+    medium crf 20 yuv420p AAC, and loudness-normalize the final audio
+    (loudnorm I=-14:TP=-1.5:LRA=11, linear=true) so the cut matches
+    the pipeline's -14 LUFS target (the one-off did not do this).
+    All intermediates go to the system temp dir (TMPDIR), never the
+    watch dir; the final cut lands at `short2_path`. No SRT for the
+    cut (burned-in captions are already in the picture)."""
+    tmpdir = tempfile.mkdtemp(prefix="short2-")
+    try:
+        # Stage A: per-scene segments.
+        seg_files = []
+        for idx, dur in zip(scene_indices, comp_durations):
+            if dur is None or dur <= 0:
+                return (None, f"scene {idx} has no usable composition duration ({dur})")
+            seg = os.path.join(tmpdir, f"seg{idx:02d}.mp4")
+            seg_files.append(seg)
+            frames = int(round(dur * fps))
+            r = run(["ffmpeg", "-v", "error", "-y",
+                     "-loop", "1", "-framerate", str(fps), "-i",
+                     os.path.join(job, f"scene{idx:02d}-art.png"),
+                     "-i", os.path.join(job, f"scene{idx:02d}.mp3"),
+                     "-filter_complex",
+                     f"[0:v]zoompan=z='1+0.10*on/{frames}':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s=1080x1920:fps={fps},format=yuv420p[v];"
+                     f"[1:a]apad,atrim=0:{dur}[a]",
+                     "-map", "[v]", "-map", "[a]", "-t", str(dur),
+                     "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                     "-c:a", "aac", "-b:a", "160k", seg],
+                    check=False)
+            if r.returncode != 0:
+                return (None, f"scene {idx} segment ffmpeg failed (exit {r.returncode})")
+        # Stage B: concat the scene segments (stream copy).
+        scenes_list = os.path.join(tmpdir, "concat-scenes.txt")
+        atomic_write(scenes_list, "".join(f"file '{s}'\n" for s in seg_files))
+        scenes_mp4 = os.path.join(tmpdir, "scenes.mp4")
+        r = run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0",
+                 "-i", scenes_list, "-c", "copy", scenes_mp4], check=False)
+        if r.returncode != 0:
+            return (None, f"scene concat ffmpeg failed (exit {r.returncode})")
+        # Stage C: outro cut from the Short itself (the vertical final).
+        outro_start = short_duration - outro_seconds
+        if outro_start < 0:
+            return (None, f"outro start would be {outro_start:.2f}s (Short {short_duration:.2f}s, outro {outro_seconds:.2f}s)")
+        outro_mp4 = os.path.join(tmpdir, "outro.mp4")
+        r = run(["ffmpeg", "-v", "error", "-y",
+                 "-ss", f"{outro_start:.2f}", "-i", short_path,
+                 "-t", f"{outro_seconds:.2f}",
+                 "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                 "-color_range", "tv", "-colorspace", "bt709",
+                 "-color_primaries", "bt709", "-color_trc", "bt709",
+                 "-c:a", "aac", "-b:a", "160k", outro_mp4], check=False)
+        if r.returncode != 0:
+            return (None, f"outro cut ffmpeg failed (exit {r.returncode})")
+        # Stage D: concat scenes + outro (stream copy).
+        all_list = os.path.join(tmpdir, "concat-all.txt")
+        atomic_write(all_list, f"file '{scenes_mp4}'\nfile '{outro_mp4}'\n")
+        base_mp4 = os.path.join(tmpdir, "base.mp4")
+        r = run(["ffmpeg", "-v", "error", "-y", "-f", "concat", "-safe", "0",
+                 "-i", all_list, "-c", "copy", base_mp4], check=False)
+        if r.returncode != 0:
+            return (None, f"scenes+outro concat ffmpeg failed (exit {r.returncode})")
+        # Stages E/F: music bed under the scenes + ASS captions + final
+        # encode with loudness normalization to -14 LUFS.
+        scenes_dur = round(sum(comp_durations), 3)
+        ass_path = os.path.join(tmpdir, "captions.ass")
+        atomic_write(ass_path, build_short2_ass(narrations, comp_durations))
+        cmd = ["ffmpeg", "-v", "error", "-y", "-i", base_mp4]
+        if music_path and os.path.exists(music_path):
+            vol = music_volume if music_volume else 0.116
+            cmd += ["-i", music_path]
+            audio_filter = (
+                f"[1:a]atrim=0:{scenes_dur},volume={vol},"
+                f"afade=t=out:st={max(scenes_dur - 2, 0)}:d=2[bed];"
+                f"[0:a][bed]amix=inputs=2:duration=first:normalize=0[mixed];"
+                f"[mixed]loudnorm=I=-14:TP=-1.5:LRA=11:linear=true[aout]")
+            print(f"  second Short music bed: {music_path} at volume {vol} under the scenes ({scenes_dur:.2f}s, fading out in the last 2s)")
+        else:
+            audio_filter = "[0:a]loudnorm=I=-14:TP=-1.5:LRA=11:linear=true[aout]"
+            print("  second Short music bed: none (bed file missing — shipping narration only)")
+        cmd += ["-filter_complex", audio_filter,
+                "-map", "0:v", "-map", "[aout]",
+                "-vf", f"subtitles={ass_path}",
+                "-c:v", "libx264", "-preset", "medium", "-crf", "20",
+                "-color_range", "tv", "-colorspace", "bt709",
+                "-color_primaries", "bt709", "-color_trc", "bt709",
+                "-c:a", "aac", "-b:a", "128k", "-ar", "48000", short2_path]
+        r = run(cmd, check=False)
+        if r.returncode != 0:
+            if os.path.exists(short2_path):
+                os.remove(short2_path)
+            return (None, f"final encode ffmpeg failed (exit {r.returncode})")
+        probe = run(["ffprobe", "-v", "error", "-show_entries",
+                     "format=duration", "-of", "csv=p=0", short2_path],
+                    check=False)
+        try:
+            cut_dur = float(probe.stdout.strip()) if probe.returncode == 0 else None
+        except ValueError:
+            cut_dur = None
+        if cut_dur is None or not (SHORT2_MIN_SECONDS <= cut_dur <= 60.5):
+            if os.path.exists(short2_path):
+                os.remove(short2_path)
+            return (None, f"assembled cut probed at {cut_dur}s (outside {SHORT2_MIN_SECONDS}..60.5s)")
+        return (cut_dur, None)
+    except Exception as ex:
+        if os.path.exists(short2_path):
+            try:
+                os.remove(short2_path)
+            except OSError:
+                pass
+        return (None, f"assembly raised {type(ex).__name__}: {ex}")
+    finally:
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+
+
+def make_short2_thumbnail(job_id, final, short2_path):
+    """Thumbnail still for the assembled cut: a frame from the cut at
+    ~1s. It must differ from the main Short's first frame — an identical
+    frame would repeat the duplicate-thumbnail defect. Retry at 3s when
+    identical. Bonus only: a missing thumb never fails the finish.
+    Returns the thumbnail path, or None."""
+    thumb_path = os.path.splitext(short2_path)[0] + ".thumb.jpg"
+    main_frame_tmp = os.path.join(
+        tempfile.gettempdir(),
+        f"{os.path.basename(short2_path)}.mainframe-{os.getpid()}.jpg")
+    try:
+        grab_main = run(["ffmpeg", "-y", "-ss", "1", "-i", final,
+                         "-frames:v", "1", "-q:v", "2", main_frame_tmp],
+                        check=False)
+        grab_cut = run(["ffmpeg", "-y", "-ss", "1", "-i", short2_path,
+                        "-frames:v", "1", "-q:v", "2", thumb_path],
+                       check=False)
+        if (grab_main.returncode != 0 or grab_cut.returncode != 0
+                or not os.path.exists(thumb_path)
+                or not os.path.exists(main_frame_tmp)):
+            print(f"  WARNING [{job_id}]: second Short thumbnail frame extraction failed — continuing without a thumbnail still.", file=sys.stderr)
+            if os.path.exists(thumb_path):
+                os.remove(thumb_path)
+            return None
+        if sha256_file(main_frame_tmp) == sha256_file(thumb_path):
+            print("  second Short thumbnail at 1s is identical to the main Short's first frame — retrying at 3s")
+            grab_retry = run(["ffmpeg", "-y", "-ss", "3", "-i", short2_path,
+                              "-frames:v", "1", "-q:v", "2", thumb_path],
+                             check=False)
+            if grab_retry.returncode != 0 or not os.path.exists(thumb_path):
+                print(f"  WARNING [{job_id}]: second Short thumbnail retry at 3s failed — continuing without a thumbnail still.", file=sys.stderr)
+                if os.path.exists(thumb_path):
+                    os.remove(thumb_path)
+                return None
+            print(f"  second Short thumbnail: {thumb_path} (frame at 3s)")
+        else:
+            print(f"  second Short thumbnail: {thumb_path} (frame at 1s, differs from main Short first frame)")
+        return thumb_path
+    except Exception as ex:
+        print(f"  WARNING [{job_id}]: second Short thumbnail failed ({type(ex).__name__}: {ex}) — continuing without a thumbnail still.", file=sys.stderr)
+        if os.path.exists(thumb_path):
+            try:
+                os.remove(thumb_path)
+            except OSError:
+                pass
+        return None
+    finally:
+        if os.path.exists(main_frame_tmp):
+            try:
+                os.remove(main_frame_tmp)
+            except OSError:
+                pass
+
+
+def first_sentence_title(narration):
+    """The first sentence of a narration, as a title: the text up to and
+    including the first ". " / "? " / "! " boundary, or the whole text
+    when it is a single sentence. A trailing "." is dropped (a title is
+    not a sentence); a trailing "?" / "!" is kept. Truncated to 100
+    chars (the YouTube title limit). Empty when the narration is null,
+    blank, or yields no words. Mirrors VideoGen/ShortRules.cs
+    FirstSentence so both sides of the pipeline derive the same title."""
+    text = (narration or "").strip()
+    if not text:
+        return ""
+    idx = -1
+    for boundary in (". ", "? ", "! "):
+        found = text.find(boundary)
+        if found >= 0 and (idx < 0 or found < idx):
+            idx = found
+    sentence = text[:idx + 1].strip() if idx >= 0 else text
+    if sentence.endswith("."):
+        sentence = sentence[:-1].rstrip()
+    if len(sentence) > 100:
+        sentence = sentence[:100].rstrip()
+    return sentence
+
+
+def pick_second_short_title(main_title, variants, opening_narration):
+    """The 2nd Short's own title. Variant 3 = variants[2] when present,
+    non-empty, and different from the main title (case-insensitive,
+    trimmed) — used as-is, fallback False. Otherwise a title derived
+    from the opening narration's first sentence (first_sentence_title)
+    — fallback False. Only when there is no usable variant AND no
+    usable narration does it fall back to the main title, with
+    fallback True and a loud stderr warning: a 2nd Short wearing the
+    main Short's title is the defect this rule exists to prevent.
+    Mirrors VideoGen/ShortRules.cs PickSecondShortTitle.
+    Returns (title, used_fallback)."""
+    main = (main_title or "").strip()
+    variants = variants or []
+    if len(variants) > 2:
+        candidate = (variants[2] or "").strip()
+        if candidate and candidate.lower() != main.lower():
+            return (candidate, False)
+    derived = first_sentence_title(opening_narration)
+    if derived:
+        return (derived, False)
+    print(f"  WARNING: no usable title variant or opening narration for second Short — reusing main title {main_title!r} (Short2TitleFallback=true)", file=sys.stderr)
+    return (main_title, True)
+
+
 def atomic_write(path, text, encoding="utf-8"):
     """Write via temp file + os.replace so a kill mid-write never leaves a
     truncated file at the real path (a partial sidecar/SRT/concat-list used
@@ -444,6 +888,71 @@ def dump_sidecar(path, sidecar):
     atomic_write(path, text)
 
 
+# L9 — interruption tracking. A VM reboot mid-finish used to leave no
+# record of how far the finish got (concat done? loudnorm done? SRT /
+# sidecar written?). _FINISH_CTX is the current step; the signal handler
+# logs it and aborts via KeyboardInterrupt, which also kills the ffmpeg
+# child mid-call and runs the loudnorm-temp finally cleanup.
+_FINISH_CTX = {"job": None, "orientation": None, "step": "starting"}
+
+
+def _finish_signal_handler(signum, frame):
+    job = _FINISH_CTX.get("job") or "?"
+    ori = _FINISH_CTX.get("orientation") or "?"
+    step = _FINISH_CTX.get("step") or "?"
+    name = ("SIGTERM" if signum == signal.SIGTERM else
+            "SIGINT" if signum == signal.SIGINT else f"signal {signum}")
+    print(f"finish interrupted at {step} (job {job} {ori}) — received {name}; partial outputs are untrusted, next run re-validates",
+          file=sys.stderr, flush=True)
+    raise KeyboardInterrupt
+
+
+def _install_finish_signal_handlers():
+    try:
+        signal.signal(signal.SIGTERM, _finish_signal_handler)
+        signal.signal(signal.SIGINT, _finish_signal_handler)
+    except ValueError:
+        # Not the main thread (e.g. imported by a test harness) — signal
+        # handlers can only be installed there; the finish still runs.
+        print("  WARNING: could not install finish signal handlers (not main thread)", file=sys.stderr)
+
+
+def cleanup_orphaned_finish_temps(final, chunks_dir, prefix):
+    """Remove temp files left by a finish killed mid-run (L9) and log
+    them, so the next run notes the orphans instead of silently
+    overwriting them. Loudnorm temps are per-pid: only a temp whose pid
+    is dead is removed (a live pid means another finish is running).
+    The joined file is recreated by concat on every run, so a stale one
+    is safe to remove."""
+    basename = os.path.basename(final)
+    try:
+        names = os.listdir(tempfile.gettempdir())
+    except OSError:
+        names = []
+    for name in names:
+        if not (name.startswith(basename + ".loud-") and name.endswith(".mp4")):
+            continue
+        path = os.path.join(tempfile.gettempdir(), name)
+        pid = name[len(basename + ".loud-"):-len(".mp4")]
+        try:
+            os.kill(int(pid), 0)
+            continue  # pid alive: another finish is using it
+        except (ValueError, ProcessLookupError, PermissionError):
+            pass
+        print(f"  finish: removing orphaned loudnorm temp from interrupted run: {path}")
+        try:
+            os.remove(path)
+        except OSError as ex:
+            print(f"  WARNING: could not remove orphaned temp {path}: {ex}")
+    joined = os.path.join(chunks_dir, f"{prefix}-joined.mp4")
+    if os.path.exists(joined):
+        print(f"  finish: removing orphaned joined file from interrupted run: {joined}")
+        try:
+            os.remove(joined)
+        except OSError as ex:
+            print(f"  WARNING: could not remove orphaned joined file {joined}: {ex}")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--job", required=True)
@@ -456,21 +965,36 @@ def main():
 
     job = os.path.abspath(args.job)
     orientation = args.orientation
+    # L9: track the current step so a kill mid-finish is logged with the
+    # step reached, not just a silent death.
+    _FINISH_CTX["job"] = os.path.basename(job)
+    _FINISH_CTX["orientation"] = orientation
+    _FINISH_CTX["step"] = "1-verify-chunks"
+    _install_finish_signal_handlers()
+    print(f"finish started: job {_FINISH_CTX['job']} orientation {orientation} step 1-verify-chunks")
     w, h = (1080, 1920) if orientation == "vertical" else (1920, 1080)
     prefix = orientation
     props_path = os.path.join(job, f"remotion-props-{w}x{h}.json")
     if not os.path.exists(props_path):
         print(f"PROPS MISSING: {props_path}", file=sys.stderr)
         return 2
-    with open(os.path.join(job, "script.json")) as f:
-        script = json.load(f)
-    with open(props_path) as f:
-        props = json.load(f)
-    profile_id = script.get("Profile") or "gigglegarden"
-    prof = CONFIG["profiles"][profile_id]
-    lang = script.get("Language", "en")
-    out_dir = os.path.join(VIDEOS_DIR, profile_id)
-    slug_base = slug(script["Title"])
+    # L58: a bad script.json / props, an unknown profile or a missing
+    # title used to exit 1 via an uncaught traceback, with no
+    # FINISH FAILED line naming the job — wrap the load/config block so
+    # the failure is one clean log line (job + orientation + reason).
+    try:
+        with open(os.path.join(job, "script.json")) as f:
+            script = json.load(f)
+        with open(props_path) as f:
+            props = json.load(f)
+        profile_id = script.get("Profile") or "gigglegarden"
+        prof = CONFIG["profiles"][profile_id]
+        lang = script.get("Language", "en")
+        out_dir = os.path.join(VIDEOS_DIR, profile_id)
+        slug_base = slug(script["Title"])
+    except Exception as ex:
+        print(f"FINISH FAILED: job {job} orientation {orientation}: {type(ex).__name__}: {ex}", file=sys.stderr)
+        return 1
     final = os.path.join(out_dir, f"{slug_base}-{lang}" + ("-short.mp4" if orientation == "vertical" else ".mp4"))
     chunks_dir = os.path.join(job, f"chunks-{prefix}")
     # Landscape chunks are shorter (2026-11-23): scenes_per_chunk_landscape
@@ -516,11 +1040,17 @@ def main():
         if orientation == "landscape":
             print(f"  thumbnail: 1280x720 from first story scene (index>=1) landscape art")
         print(f"  sidecar: {os.path.splitext(final)[0] + '.json'} (Approved=false)")
+        if orientation == "vertical":
+            print("  second Short: payoff scenes assembled from job assets (-short2.mp4 + sidecar, own title + thumbnail, +12h publish hold as fallback) when the Short runs over 60s")
         return 0
 
     os.makedirs(out_dir, exist_ok=True)
 
+    # L9: note + remove temps left by a finish killed mid-run.
+    cleanup_orphaned_finish_temps(final, chunks_dir, prefix)
+
     # 2. Concatenate.
+    _FINISH_CTX["step"] = "2-concat"
     print("Concatenating chunks...")
     joined = os.path.join(chunks_dir, f"{prefix}-joined.mp4")
     concat_path = os.path.join(chunks_dir, "concat.txt")
@@ -533,6 +1063,7 @@ def main():
     print(f"  joined: {probe_duration(joined):.2f}s")
 
     # 3. Delivery gate + loudness (NormalizeLoudnessAsync).
+    _FINISH_CTX["step"] = "3-loudnorm"
     print("Delivery gate + loudness-normalize to -14 LUFS...")
     vfmt = probe_video_format(joined)
     pix_fmt = vfmt.get("pix_fmt", "")
@@ -587,6 +1118,12 @@ def main():
     # a bad cut is discarded — a missing cut just means the Story target
     # is skipped as before. A stale cut from an earlier, longer finish
     # is removed when the Short now fits in 60s.
+    _FINISH_CTX["step"] = "3b-story60"
+    short2_path = None
+    short2_duration = None
+    short2_title = None
+    short2_title_fallback = False
+    short2_publish_after = None
     story60 = os.path.splitext(final)[0] + "-story60.mp4"
     if orientation == "vertical":
         if total_frames / fps > 60:
@@ -597,7 +1134,10 @@ def main():
                        "-c:a", "aac", "-b:a", "128k", "-ar", "48000", story60],
                       check=False)
             if cut.returncode != 0:
-                print("  WARNING: story cut ffmpeg failed; continuing without one — the Story target will be skipped as before.")
+                # L81: this warning used to go to stdout with no job id,
+                # so the driver could not tell a missing cut happened
+                # without grepping the log. Stderr + job id + exit code.
+                print(f"  WARNING [{_FINISH_CTX['job']}]: story cut ffmpeg failed (exit {cut.returncode}) — continuing without one; the Story target will be skipped as before.", file=sys.stderr)
             else:
                 probe = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
                              "-of", "csv=p=0", story60], check=False)
@@ -608,7 +1148,9 @@ def main():
                 if cut_dur is not None and cut_dur <= 60:
                     print(f"  story cut: {story60} ({cut_dur:.2f}s)")
                 else:
-                    print(f"  WARNING: story cut probed at {cut_dur}s — discarding; the Story target will be skipped as before.")
+                    # L81: same as the ffmpeg-failure warning above —
+                    # stderr + job id, so a discarded cut is machine-visible.
+                    print(f"  WARNING [{_FINISH_CTX['job']}]: story cut probed at {cut_dur}s — discarding; the Story target will be skipped as before.", file=sys.stderr)
                     if os.path.exists(story60):
                         os.remove(story60)
         elif os.path.exists(story60):
@@ -617,7 +1159,131 @@ def main():
             print(f"  removing stale story cut (Short now fits in 60s): {story60}")
             os.remove(story60)
 
+    # 3c. Second Short — payoff cut ASSEMBLED from the job's own assets
+    # (fix #5 rework, Rishi 2026-11-27: the old tail cut of the vertical
+    # master replayed the main Short's own scenes, and the landscape-cut
+    # rework was wrong too — there is NO full-length vertical master;
+    # the vertical render only ever covers the main Short itself).
+    # The cut is assembled from the payoff scenes' own portrait art +
+    # narration (zoompan segments), plus the outro/end card cut from
+    # the Short itself (the vertical final being finished here), with
+    # the music bed mixed under the scenes and ASS captions burned in
+    # — see assemble_second_short. No re-render, no new images, no new
+    # TTS, no landscape final needed: the vertical finish stands alone.
+    # The 2nd Short gets its own title (variant 3, else derived from
+    # the payoff's opening narration), its own thumbnail still, and a
+    # 12h publish hold as a FALLBACK (PublishAfterUtc = finish + 12h):
+    # the governing hold is measured from the main Short going live,
+    # and the uploader re-anchors it off the sibling main Short's
+    # YouTube publication time when that exists (cadence: uploads
+    # alternate every 12h, Rishi 2026-11-27 18:19 EST).
+    # Bonus only, like the story cut: every step here is check=False
+    # and a failed cut never fails the Short. No SRT is written for
+    # the cut: the burned-in captions are already in the picture.
+    _FINISH_CTX["step"] = "3c-short2"
+    if orientation == "vertical":
+        duration_s = total_frames / fps
+        if duration_s <= 60:
+            # The main Short already fits in 60s: a payoff cut would be a
+            # near-duplicate of it, not a second Short.
+            print("  no second Short: main Short already fits in 60s")
+        else:
+            landscape_props_path = os.path.join(job, "remotion-props-1920x1080.json")
+            if not os.path.exists(landscape_props_path):
+                print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — landscape props not found ({landscape_props_path}); the video ships with its main Short only.", file=sys.stderr)
+            else:
+                landscape_starts = None
+                try:
+                    with open(landscape_props_path) as f:
+                        landscape_props = json.load(f)
+                    _, landscape_starts, _, landscape_fps, _ = scene_starts(landscape_props)
+                    landscape_scenes = landscape_props.get("scenes") or []
+                except Exception as ex:
+                    print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — could not load landscape props ({landscape_props_path}): {type(ex).__name__}: {ex}; the video ships with its main Short only.", file=sys.stderr)
+                if landscape_starts is not None:
+                    outro_seconds = props.get("outroSeconds")
+                    if not outro_seconds or outro_seconds <= 0:
+                        print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — vertical props carry no outroSeconds (the Short's own outro closes the cut); the video ships with its main Short only.", file=sys.stderr)
+                    else:
+                        main_last_scene = len(prop_scenes) - 1
+                        try:
+                            scene_durations = [float(s["durationInSeconds"]) for s in landscape_scenes]
+                        except (KeyError, TypeError, ValueError) as ex:
+                            print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — landscape props carry an unusable scene duration ({type(ex).__name__}: {ex}); the video ships with its main Short only.", file=sys.stderr)
+                            scene_durations = None
+                        if scene_durations is not None:
+                            script_scenes = script.get("Scenes") or []
+                            narrations = ([s.get("Narration") for s in script_scenes]
+                                          if len(script_scenes) == len(scene_durations) else None)
+                            window, reason = select_payoff_scenes(
+                                scene_durations, outro_seconds, main_last_scene, narrations)
+                            if window is None:
+                                print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — {reason} (main Short covers scenes 0..{main_last_scene}); the video ships with its main Short only.", file=sys.stderr)
+                            else:
+                                missing = missing_short2_assets(job, window)
+                                if missing:
+                                    shown = ", ".join(missing[:3])
+                                    extra = f" (+{len(missing) - 3} more)" if len(missing) > 3 else ""
+                                    print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — payoff scene assets missing ({shown}{extra}); a cut is never shipped with a hole in it; the video ships with its main Short only.", file=sys.stderr)
+                                else:
+                                    comp_all = scene_composition_durations(
+                                        landscape_starts, landscape_fps,
+                                        landscape_props.get("outroSeconds", 0))
+                                    if len(comp_all) != len(scene_durations) or any(d is None or d <= 0 for d in comp_all):
+                                        print(f"  WARNING [{_FINISH_CTX['job']}]: no second Short cut — composition durations unusable ({comp_all}); the video ships with its main Short only.", file=sys.stderr)
+                                    else:
+                                        comp_window = [comp_all[i] for i in window]
+                                        payoff_narrations = [
+                                            script_scenes[i].get("Narration") if i < len(script_scenes) else None
+                                            for i in window]
+                                        main_title = fit(script["Title"], 100)
+                                        opening_narration = payoff_narrations[0] if payoff_narrations else None
+                                        variants = script.get("TitleVariants") or []
+                                        if (len(variants) > 2 and (variants[2] or "").strip()
+                                                and (variants[2] or "").strip().lower() != main_title.strip().lower()):
+                                            title_source = "title variant 3"
+                                        elif first_sentence_title(opening_narration):
+                                            title_source = "derived from payoff opening narration"
+                                        else:
+                                            title_source = "main title (fallback — no variant, no narration)"
+                                        short2_title, short2_title_fallback = pick_second_short_title(
+                                            main_title, variants, opening_narration)
+                                        short2_publish_after = (datetime.now(timezone.utc) + timedelta(hours=SHORT2_HOLD_HOURS)).isoformat()
+                                        short2_path = os.path.splitext(final)[0] + "2.mp4"
+                                        print(f"  second Short: assembling payoff scenes {window[0]}..{window[-1]} from job assets (no re-render)")
+                                        print(f"    scene composition durations (s): {', '.join(f'{i}:{d:.2f}' for i, d in zip(window, comp_window))}; outro {outro_seconds:.2f}s cut from the Short itself")
+                                        probe_short = run(["ffprobe", "-v", "error", "-show_entries", "format=duration",
+                                                           "-of", "csv=p=0", final], check=False)
+                                        try:
+                                            short_duration = float(probe_short.stdout.strip()) if probe_short.returncode == 0 else duration_s
+                                        except ValueError:
+                                            short_duration = duration_s
+                                        music_path = find_music_bed(
+                                            job, props.get("backgroundMusicPath"),
+                                            landscape_props.get("backgroundMusicPath"))
+                                        music_volume = (props.get("backgroundMusicVolume")
+                                                        or landscape_props.get("backgroundMusicVolume"))
+                                        cut_dur, asm_reason = assemble_second_short(
+                                            job, _FINISH_CTX["job"], window, comp_window,
+                                            payoff_narrations, outro_seconds, short_duration,
+                                            final, music_path, music_volume, landscape_fps,
+                                            short2_path)
+                                        if cut_dur is None:
+                                            # L81 pattern: stderr + job id + reason.
+                                            print(f"  WARNING [{_FINISH_CTX['job']}]: second Short assembly failed — {asm_reason}; the video ships with its main Short only.", file=sys.stderr)
+                                            if os.path.exists(short2_path):
+                                                os.remove(short2_path)
+                                            short2_path = None
+                                            short2_title = None
+                                            short2_publish_after = None
+                                        else:
+                                            short2_duration = cut_dur
+                                            print(f"  second Short: {short2_path} ({cut_dur:.2f}s, payoff scenes {window[0]}..{window[-1]} assembled from job assets, no re-render)")
+                                            print(f"    title: {short2_title!r} ({title_source}); PublishAfterUtc {short2_publish_after} (fallback hold, finish +{SHORT2_HOLD_HOURS}h — governing hold is sibling-anchored in the uploader)")
+                                            make_short2_thumbnail(_FINISH_CTX["job"], final, short2_path)
+
     # 4. SRT from the props scenes (the rendered scene list). Cue boundaries
+    _FINISH_CTX["step"] = "4-srt"
     # are the scenes' ACTUAL start frames in the composition — the shared
     # frame starts from chunk_ranges.scene_starts (brief + intro included),
     # so the SRT agrees with the chunk ranges and the rendered video.
@@ -653,9 +1319,15 @@ def main():
     print(f"  {srt_path} ({len(lines)} cues: {n_brief} brief + {len(prop_scenes)} scenes)")
 
     # 5. Thumbnail (landscape only) + sidecar.
+    _FINISH_CTX["step"] = "5-thumbnail-sidecar"
     thumb = None
     if orientation == "landscape":
         print("Building thumbnail...")
+        # L80: the finish path builds a plain 1280x720 crop, never the
+        # fix-#3 variants (real-photo source + overlay words + mobile
+        # check) that --assemble builds. Say so, so the finish log
+        # cannot be read as "variants built".
+        print("  thumbnail: plain 1280x720 crop (finish path does not build fix-#3 variants)")
         thumb = os.path.splitext(final)[0] + ".thumb.jpg"
         # Thumbnail source (Rishi 2026-11-21): a MAJOR story picture, not the
         # scene-0 title card (video #1's title-card thumbnail was wrong).
@@ -788,9 +1460,36 @@ def main():
     sidecar_path = os.path.splitext(final)[0] + ".json"
     dump_sidecar(sidecar_path, sidecar)
     print(f"  {sidecar_path}")
+    if orientation == "vertical" and short2_path is not None and os.path.exists(short2_path):
+        # Fix #5 rework: the second Short is a distinct payoff moment,
+        # so it carries its OWN title (variant 3 or derived from the
+        # payoff's opening narration), a 12h publish hold as a FALLBACK
+        # (PublishAfterUtc = finish + 12h — the governing hold is
+        # measured from the main Short going live and the uploader
+        # re-anchors it off the sibling main Short's YouTube
+        # publication time when that exists), and Short2TitleFallback=true
+        # only when the title fell back to the main title.
+        # Description/tags/targets still reuse the main Short's packaging.
+        # Its own sidecar (Approved=false)
+        # makes it an independent video for the uploader, with its own
+        # Publications; the "-short2" filename is what the uploader keys
+        # the quota guard and the sibling lookup on.
+        short2_sidecar = dict(sidecar)
+        short2_sidecar["DurationSeconds"] = short2_duration
+        short2_sidecar["Publications"] = {}
+        if short2_title is not None:
+            short2_sidecar["Title"] = short2_title
+        if short2_publish_after is not None:
+            short2_sidecar["PublishAfterUtc"] = short2_publish_after
+        if short2_title_fallback:
+            short2_sidecar["Short2TitleFallback"] = True
+        short2_sidecar_path = os.path.splitext(short2_path)[0] + ".json"
+        dump_sidecar(short2_sidecar_path, short2_sidecar)
+        print(f"  {short2_sidecar_path}")
 
     # 6. Verify.
-    return verify_final(final, w, h, total_frames, fps)
+    _FINISH_CTX["step"] = "6-verify"
+    return verify_final(final, w, h, total_frames, fps, job=job, orientation=orientation)
 
 
 def probe_streams(path):
@@ -1007,7 +1706,7 @@ def leading_silence_error(gaps, min_seconds=2.0):
     return None
 
 
-def verify_final(final, w, h, total_frames, fps=30):
+def verify_final(final, w, h, total_frames, fps=30, job=None, orientation=None):
     """Full verification after a finish: delivery gate + loudness +
     silence. A measured loudness more than 1 LUFS from -14 is a
     FAILURE (tightened from ±2: the channel standard is -14 ±1, and a
@@ -1032,8 +1731,10 @@ def verify_final(final, w, h, total_frames, fps=30):
         if not loudness_ok(out_i):
             print(f"  FAIL: measured loudness {out_i} LUFS is far from -14 (±1)", file=sys.stderr)
             ok = False
-    except Exception:
-        print("  (could not parse loudness JSON; see output above)")
+    except Exception as ex:
+        ident = f"{job} {orientation}" if job else final
+        print(f"  FAIL: verify_final: loudness JSON unparseable for {ident}: {ex} — failing verification", file=sys.stderr)
+        ok = False
     print("Checking for silence...")
     s = run(["ffmpeg", "-i", final, "-af",
              "silencedetect=noise=-50dB:d=0.5", "-f", "null", "-"], check=False)

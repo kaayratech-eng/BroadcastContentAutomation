@@ -51,6 +51,14 @@ class GovernorClient
     private readonly Func<string, IEnumerable<string>, Task<ProcessHelper.Result>> _runner;
     private readonly bool _helperMissing;
 
+    // L21: the prep identity this client logs with. Set at construction
+    // (via FromConfig) or per call by the pool (SetContext); when neither
+    // was given, the ambient PrepContext.Current is the fallback, so
+    // governor lines still carry [jobId] in a prep.
+    private PrepIdentity? _context;
+    public PrepIdentity? Context => _context;
+    public void SetContext(PrepIdentity? context) => _context = context;
+
     // Per-call amounts the pools charge (GenConfig defaults): every
     // script leg charges ~7,000 tokens/act except Cloudflare, which
     // charges ~926 Workers AI neurons/act; every FLUX image charges
@@ -59,19 +67,20 @@ class GovernorClient
     public int CloudflareUnitsPerActCall => _cfg.GovernorCloudflareUnitsPerActCall;
     public int CloudflareUnitsPerImageCall => _cfg.GovernorCloudflareUnitsPerImageCall;
 
-    public GovernorClient(GenConfig cfg, Func<string, IEnumerable<string>, Task<ProcessHelper.Result>>? runner = null)
+    public GovernorClient(GenConfig cfg, Func<string, IEnumerable<string>, Task<ProcessHelper.Result>>? runner = null, PrepIdentity? context = null)
     {
         _cfg = cfg;
         _runner = runner ?? ((exe, args) => ProcessHelper.RunAsync(exe, args));
+        _context = context;
         _helperMissing = !File.Exists(cfg.GovernorHelperPath);
         if (_helperMissing)
-            Console.WriteLine($"  [governor] helper missing: {cfg.GovernorHelperPath} — calls fail open");
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] helper missing: {cfg.GovernorHelperPath} — calls fail open");
     }
 
     // A client is always returned, even when the helper file is missing:
     // that client fails open on every call (see the constructor log — one
     // line only, not one per call).
-    public static GovernorClient? FromConfig(GenConfig cfg) => new GovernorClient(cfg);
+    public static GovernorClient? FromConfig(GenConfig cfg, PrepIdentity? context = null) => new GovernorClient(cfg, null, context);
 
     // `acquire` = check + record in one locked step: 1 request plus the
     // passed amounts. The governor exits 1 when denied but still prints
@@ -79,7 +88,13 @@ class GovernorClient
     // JSON is. Only unparseable output fails open.
     public async Task<GovernorDecision> AcquireAsync(string provider, int tokens = 0, int chars = 0, int units = 0)
     {
-        if (_helperMissing) return FailOpen("governor helper missing");
+        // L61: the constructor logs once, but every later call failed open
+        // silently — log once per call so an ungoverned run is visible.
+        if (_helperMissing)
+        {
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] helper missing — proceeding ungoverned (fail open)");
+            return FailOpen("governor helper missing");
+        }
         var args = new List<string> { _cfg.GovernorHelperPath, "acquire", "--provider", provider };
         if (tokens > 0) { args.Add("--tokens"); args.Add(tokens.ToString()); }
         if (chars > 0) { args.Add("--chars"); args.Add(chars.ToString()); }
@@ -90,7 +105,12 @@ class GovernorClient
     // Read-only check: same verdict shape, nothing recorded.
     public async Task<GovernorDecision> CheckAsync(string provider)
     {
-        if (_helperMissing) return FailOpen("governor helper missing");
+        // L61: see AcquireAsync — one fail-open line per call.
+        if (_helperMissing)
+        {
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] helper missing — proceeding ungoverned (fail open)");
+            return FailOpen("governor helper missing");
+        }
         return await RunGovernorAsync(provider, new[] { _cfg.GovernorHelperPath, "check", "--provider", provider });
     }
 
@@ -108,10 +128,15 @@ class GovernorClient
             var args = new List<string> { _cfg.GovernorHelperPath, "mark-cooled", "--provider", provider, "--reason", reason };
             if (until is not null) { args.Add("--until"); args.Add(until); }
             await _runner("python3", args);
+            // L60: a parked leg was invisible until the next act logged a
+            // skip — name the park, the reason, and that the pool moves on.
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] {provider} parked (mark-cooled) after rate-limit: {reason} — trying next leg");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  [governor] mark-cooled {provider} failed: {Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200)}");
+            // L60: a failed park is not a blocked leg — the leg may be
+            // retried once more, and the pool continues to the next leg.
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] mark-cooled {provider} failed: {Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200)} — leg NOT parked, may be retried once more, continuing to next leg");
         }
     }
 
@@ -122,12 +147,14 @@ class GovernorClient
             var result = await _runner("python3", args);
             var decision = TryParseDecision(result.Stdout);
             if (decision is not null) return decision;
-            Console.WriteLine($"  [governor] {provider}: unparseable output (exit {result.ExitCode}) — failing open");
+            // L61: the exit code alone could never diagnose the malformed
+            // output — log the stdout/stderr tail with it.
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] {provider}: unparseable output (exit {result.ExitCode}): {Text.Tail(result.Stdout + result.Stderr, 300)} — failing open");
             return FailOpen("governor output unparseable");
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  [governor] {provider}: {Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200)} — failing open");
+            Console.WriteLine($"  {PrepContext.PrefixFor(_context)}[governor] {provider}: {Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200)} — failing open");
             return FailOpen("governor call failed");
         }
     }

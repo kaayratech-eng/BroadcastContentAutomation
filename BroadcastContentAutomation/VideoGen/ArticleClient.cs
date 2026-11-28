@@ -41,12 +41,13 @@ static class ArticleClient
     public const int DefaultMaxTotalChars = 10500;
 
     public static async Task<IReadOnlyList<Article>> FetchForTopicAsync(
-        string topic, GenConfig cfg, int maxArticles = DefaultMaxArticles, int maxCharsPerArticle = DefaultMaxCharsPerArticle)
+        string topic, GenConfig cfg, int maxArticles = DefaultMaxArticles, int maxCharsPerArticle = DefaultMaxCharsPerArticle,
+        PrepIdentity? context = null)
     {
         if (string.IsNullOrWhiteSpace(topic)) return [];
         if (!File.Exists(cfg.ArticleHelperPath) || !File.Exists(cfg.ArticleHelperPythonPath))
         {
-            Console.WriteLine("  [articles] helper not found (article_fetch.py or its venv python) — continuing without article text.");
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] helper not found (article_fetch.py or its venv python) — continuing without article text.");
             return [];
         }
         try
@@ -57,22 +58,22 @@ static class ArticleClient
                 "--topic", topic,
                 "--max-articles", maxArticles.ToString(),
                 "--max-chars", maxCharsPerArticle.ToString(),
-            ], timeoutMinutes: 3);
+            ], timeoutMinutes: 3, what: $"article helper ({cfg.ArticleHelperPath})", context: context);
             if (result.ExitCode != 0)
             {
-                Console.WriteLine($"  [articles] helper failed for \"{topic}\" (exit {result.ExitCode}): {TextTail(result.Stderr + result.Stdout, 300)}");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] helper failed for \"{topic}\" (exit {result.ExitCode}): {TextTail(result.Stderr + result.Stdout, 300)}");
                 return [];
             }
             var articles = ParseArticles(result.Stdout);
             if (articles.Count > 0)
-                Console.WriteLine($"  [articles] {articles.Count} article(s) for \"{Truncate(topic, 60)}\": {string.Join(", ", articles.Select(a => $"{a.Outlet} ({a.Text.Length} chars)"))}");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] {articles.Count} article(s) for \"{Truncate(topic, 60)}\": {string.Join(", ", articles.Select(a => $"{a.Outlet} ({a.Text.Length} chars)"))}");
             else
-                Console.WriteLine($"  [articles] no matching articles for \"{Truncate(topic, 60)}\" — headlines + Wikipedia only.");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] no matching articles for \"{Truncate(topic, 60)}\" — headlines + Wikipedia only.");
             return articles;
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  [articles] fetch failed for \"{topic}\": {ex.Message} — continuing without article text.");
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] fetch failed for \"{topic}\": {ex.Message} — continuing without article text.");
             return [];
         }
     }
@@ -80,7 +81,7 @@ static class ArticleClient
     // Parse the helper's JSON output. Tolerant by design: a malformed or
     // partial document yields the articles that did parse, never a throw —
     // the caller treats [] as "no articles", not as an error.
-    internal static IReadOnlyList<Article> ParseArticles(string json)
+    internal static IReadOnlyList<Article> ParseArticles(string json, PrepIdentity? context = null)
     {
         var articles = new List<Article>();
         if (string.IsNullOrWhiteSpace(json)) return articles;
@@ -89,18 +90,80 @@ static class ArticleClient
             using var doc = JsonDocument.Parse(json);
             if (!doc.RootElement.TryGetProperty("articles", out var arr) || arr.ValueKind != JsonValueKind.Array)
                 return articles;
+            var dropped = 0;
             foreach (var el in arr.EnumerateArray())
             {
                 var outlet = GetString(el, "outlet") ?? "";
                 var url = GetString(el, "url") ?? "";
                 var title = GetString(el, "title") ?? "";
                 var text = GetString(el, "text") ?? "";
-                if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(url)) continue;
+                if (string.IsNullOrWhiteSpace(text) || string.IsNullOrWhiteSpace(url)) { dropped++; continue; }
                 articles.Add(new Article(outlet, url, title, text));
             }
+            // L64: dropped articles were silent — name the count.
+            if (dropped > 0)
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] helper output skipped {dropped} article(s) with empty text/url — continuing with the {articles.Count} parsed article(s).");
         }
-        catch (JsonException) { return articles; }
+        catch (JsonException ex)
+        {
+            // L64: a malformed document used to yield whatever parsed
+            // (usually nothing) with no log — salvage each complete
+            // article object, and log the parse error + how many survived.
+            articles.AddRange(SalvageArticles(json));
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] helper output was malformed JSON ({ex.Message}); returning {articles.Count} parsed article(s) — continuing without the rest");
+        }
         return articles;
+    }
+
+    // L64 salvage: the helper can emit a truncated document (a valid
+    // article followed by `, broken`). JsonDocument.Parse fails the whole
+    // document, so scan for complete top-level `{...}` objects and keep
+    // the ones that parse as articles — a truncated tail must not discard
+    // the good articles ahead of it.
+    private static List<Article> SalvageArticles(string json)
+    {
+        var found = new List<Article>();
+        for (var i = 0; i < json.Length; i++)
+        {
+            if (json[i] != '{') continue;
+            var depth = 0;
+            var inString = false;
+            var escaped = false;
+            var j = i;
+            for (; j < json.Length; j++)
+            {
+                var c = json[j];
+                if (inString)
+                {
+                    if (escaped) escaped = false;
+                    else if (c == '\\') escaped = true;
+                    else if (c == '"') inString = false;
+                }
+                else if (c == '"') inString = true;
+                else if (c == '{') depth++;
+                else if (c == '}')
+                {
+                    depth--;
+                    if (depth == 0) break;
+                }
+            }
+            if (depth != 0) continue; // unterminated object — not salvageable
+            var span = json[i..(j + 1)];
+            try
+            {
+                using var doc = JsonDocument.Parse(span);
+                var el = doc.RootElement;
+                var outlet = GetString(el, "outlet") ?? "";
+                var url = GetString(el, "url") ?? "";
+                var title = GetString(el, "title") ?? "";
+                var text = GetString(el, "text") ?? "";
+                if (!string.IsNullOrWhiteSpace(text) && !string.IsNullOrWhiteSpace(url))
+                    found.Add(new Article(outlet, url, title, text));
+            }
+            catch (JsonException) { /* not an article object — keep scanning */ }
+            i = j;
+        }
+        return found;
     }
 
     // The trend-context section carrying the article text, in the same

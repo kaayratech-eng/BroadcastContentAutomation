@@ -24,6 +24,14 @@ using GiggleGarden.Shared;
 // CharacterSource calls this client directly (its funnel never goes
 // through that wrapper) with no --only, so the helper tries OVH then
 // Pexels in its default order.
+// Square-crop provenance (Drake 2026-11-27): the raw photo's
+// dimensions plus the crop anchor the helper used, so the quality
+// gate can flag a head-crop risk instead of shipping it.
+// VerticalBias is the ffmpeg crop anchor: 0 = top, 0.5 = centre.
+// Top level (not nested in ArtPoolClient) so Program.cs and the
+// quality gate can name it without qualification.
+internal sealed record ArtProvenance(int RawWidth, int RawHeight, double VerticalBias);
+
 static class ArtPoolClient
 {
     // Maps the art_pool.py provider name printed on success
@@ -48,6 +56,21 @@ static class ArtPoolClient
             "wikimedia" => "wikimedia-commons",
             var other => other,
         };
+    }
+
+    // Parses the "(raw WxH, crop top|centre)" provenance art_pool.py
+    // prints on its success line. Null when the helper predates the
+    // provenance line or the line is absent (older helper, hand-placed
+    // file) — the gate then has no crop to check and skips it.
+    internal static ArtProvenance? ParseProvenance(string stdout)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            stdout ?? "", @"\(raw (\d+)x(\d+), crop (top|centre)\)");
+        if (!m.Success) return null;
+        return new ArtProvenance(
+            int.Parse(m.Groups[1].Value),
+            int.Parse(m.Groups[2].Value),
+            m.Groups[3].Value == "top" ? 0.0 : 0.5);
     }
 
     // Generates one 1024x1024 square source image via the pool helper.
@@ -75,6 +98,18 @@ static class ArtPoolClient
         GenConfig cfg, string prompt, string outputPath,
         string? only, string? query, string? seenFile, int maxAttempts = 2)
     {
+        var (path, source, _) = await GenerateSquareWithProvenanceAsync(
+            cfg, prompt, outputPath, only, query, seenFile, maxAttempts);
+        return (path, source);
+    }
+
+    // Same as GenerateSquareWithSourceAsync, but also returns the
+    // square-crop provenance the helper printed (see ParseProvenance),
+    // so the caller can run the head-crop quality check on it.
+    public static async Task<(string Path, string? Source, ArtProvenance? Provenance)> GenerateSquareWithProvenanceAsync(
+        GenConfig cfg, string prompt, string outputPath,
+        string? only, string? query, string? seenFile, int maxAttempts = 2)
+    {
         // Quality gate (video #4): never ask the model to draw text —
         // free models cannot spell. Sanitize here as well as in
         // Program.GenerateSquareArtAsync, because CharacterSource calls
@@ -87,8 +122,14 @@ static class ArtPoolClient
 
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
-        if (ProcessHelper.AlreadyOnDisk(outputPath)) return (outputPath, null);
+        if (ProcessHelper.AlreadyOnDisk(outputPath)) return (outputPath, null, null);
 
+        // L50: the final attempt is caught too (the old loop's catch ran
+        // only while attempt < maxAttempts, so the summary throw below
+        // was dead code and the last error's reason was lost). The
+        // terminal record now names the leg, the scene file, the attempt
+        // count and the last error.
+        Exception? lastError = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
@@ -117,13 +158,18 @@ static class ArtPoolClient
                 var bytes = new FileInfo(outputPath).Length;
                 var source = ParseProviderName(result.Stdout);
                 Console.WriteLine($"  Art pool square art: {Path.GetFileName(outputPath)} ({bytes / 1024} KB, {Text.Tail(result.Stdout, 120).Trim()})");
-                return (outputPath, source);
+                return (outputPath, source, ParseProvenance(result.Stdout));
             }
             catch (Exception ex) when (attempt < maxAttempts)
             {
                 Console.WriteLine($"  Art pool square art attempt {attempt} failed ({ex.Message}), retrying...");
             }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
         }
-        throw new Exception($"Art pool square art generation failed after {maxAttempts} attempts for {outputPath}.");
+        Console.WriteLine($"  art leg art-pool scene {Path.GetFileName(outputPath)} failed after {maxAttempts} attempts, last error: {lastError?.Message}");
+        throw new Exception($"Art pool square art generation failed after {maxAttempts} attempts for {outputPath} (leg art-pool, scene {Path.GetFileName(outputPath)}): last error: {lastError?.Message}");
     }
 }

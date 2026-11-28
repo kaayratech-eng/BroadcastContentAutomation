@@ -36,6 +36,13 @@ if [ "${1:-}" = "may-start" ]; then
     REASON=$(printf '%s' "$OUT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('reason',''))" 2>/dev/null || echo "governor denied")
     echo "governor-check: $REASON" >&2
   fi
+  # L14: the governor's stderr (fail-open reasons, corrupt-file warnings)
+  # used to be deleted unread with the .err file, so a fail-open allow
+  # left no trace in the driver log. Surface it on our own stderr — the
+  # stream the driver/cron captures — before deleting.
+  if [ -s "$DIR/.governor-check.err" ]; then
+    cat "$DIR/.governor-check.err" >&2
+  fi
   rm -f "$DIR/.governor-check.err"
   exit $RC
 fi

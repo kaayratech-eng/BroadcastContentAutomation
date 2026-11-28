@@ -64,12 +64,13 @@ public class UploaderTests
 
     // Calls the REAL MetaGraph.MediaExistsAsync (internal static class, so
     // reached via reflection) with a canned handler. Synchronous: the
-    // runner does not await Task-returning [Fact]s.
-    private static (MediaLookup Result, HttpRequestMessage? Request) LookupWith(CannedHandler handler)
+    // runner does not await Task-returning [Fact]s. The optional logger
+    // (L31) rides as the 6th argument; existing callers pass null.
+    private static (MediaLookup Result, HttpRequestMessage? Request) LookupWith(CannedHandler handler, GiggleGarden.Uploader.Logger? log = null)
     {
         using var http = new HttpClient(handler);
         var task = ReflectionHelper.Invoke<Task<MediaLookup>>(ReflectionHelper.Uploader, "MediaExistsAsync",
-            http, "https://graph.facebook.com/v21.0", "123456789", "test-token", CancellationToken.None);
+            http, "https://graph.facebook.com/v21.0", "123456789", "test-token", CancellationToken.None, log);
         return (task.GetAwaiter().GetResult(), handler.LastRequest);
     }
 

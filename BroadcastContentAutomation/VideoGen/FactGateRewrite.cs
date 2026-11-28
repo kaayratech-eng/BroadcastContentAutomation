@@ -346,7 +346,13 @@ internal static class FactGateRewrite
         }
     }
 
-    internal static RewriteResult Rewrite(VideoScript script, List<string> findings, string checkContext, DateTime prepDate)
+    internal static RewriteResult Rewrite(VideoScript script, List<string> findings, string checkContext, DateTime prepDate,
+        // L72: Rewrite() itself never logged — every action depended on the
+        // caller iterating result.Actions, so a future caller that forgot
+        // the loop got silent rewrites/drops. Rewrite logs each action
+        // itself now, with the job id; callers pass their identity (and
+        // the repair path tags its lines "rewrite (repair)").
+        PrepIdentity? context = null, string actionTag = "rewrite")
     {
         var state = new RewriteState { Script = script };
         var current = ParseFindings(findings);
@@ -392,11 +398,23 @@ internal static class FactGateRewrite
                     : c.Scene is null ? "(scene dropped)"
                     : c.Scene.Narration))
             .ToList();
-        return new RewriteResult(
+        var result = new RewriteResult(
             state.DroppedScenes, state.ReframedScenes, state.SourceFixedScenes, state.DemotedScenes,
             state.Actions, changes, current.Select(f => $"scene {f.SceneNumber} [{f.Kind}]: {f.Detail}").ToList(),
             script.Scenes.Count, totalChars, belowFloor);
+        // L72: log each action here (job id + scene number ride in the
+        // action text itself) instead of relying on the caller.
+        foreach (var a in result.Actions)
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[fact-check] {actionTag}: {a}");
+        return result;
     }
+
+    // L72: the one-line OK summary — shared by FinishPrepAsync and the
+    // --rewrite-gate path so the demoted count cannot drift out of one of
+    // them again. (The old summaries printed reframed/dropped/source-fixed
+    // only, so visual→art demotions were invisible in the summary.)
+    internal static string OkSummary(RewriteResult result, int sceneCount) =>
+        $"[fact-check] OK after rewrite: {result.ReframedScenes.Count} scene(s) reframed as speculation, {result.DroppedScenes.Count} dropped, {result.SourceFixedScenes.Count} visual source(s) fixed, {result.DemotedScenes.Count} visual(s) demoted to art — re-check clean, {sceneCount} scenes.";
 
     // Descending scene order, so a dropped scene never shifts the index of
     // a finding still to process in this pass. Findings are always fresh

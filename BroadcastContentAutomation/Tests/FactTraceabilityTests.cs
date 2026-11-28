@@ -279,7 +279,7 @@ public class FactTraceabilityTests
         const string path =
             "/home/hatch/workspace/BroadcastContentAutomation/BroadcastContentAutomation/VideoGen/TrendResearch.cs";
         var text = File.ReadAllText(path);
-        Assert.Contains("FetchBackgroundForTopicAsync(news[0].Title)", text);
+        Assert.Contains("FetchBackgroundForTopicAsync(news[0].Title, null, context)", text);
         Assert.DoesNotContain("FetchSummaryAsync(news[0]", text);
     }
 

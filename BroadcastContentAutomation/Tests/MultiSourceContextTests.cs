@@ -76,7 +76,7 @@ public class MultiSourceContextTests
     {
         var json = ArticleJson.Replace("TEXT1", "Guardian text here").Replace("TEXT2", "BBC text here");
         var articles = ReflectionHelper.Invoke<System.Collections.IList>(
-            ReflectionHelper.VideoGen, "ParseArticles", json);
+            ReflectionHelper.VideoGen, "ParseArticles", json, null);
         Assert.Equal(2, articles.Count);
         var first = articles[0]!;
         var outlet = first.GetType().GetProperty("Outlet")!.GetValue(first) as string;
@@ -91,11 +91,42 @@ public class MultiSourceContextTests
     public void ParseArticles_MalformedJson_ReturnsEmptyInsteadOfThrowing()
     {
         var articles = ReflectionHelper.Invoke<System.Collections.IList>(
-            ReflectionHelper.VideoGen, "ParseArticles", "{not json");
+            ReflectionHelper.VideoGen, "ParseArticles", "{not json", null);
         Assert.Empty(articles);
         var noKey = ReflectionHelper.Invoke<System.Collections.IList>(
-            ReflectionHelper.VideoGen, "ParseArticles", "{\"feeds_checked\": []}");
+            ReflectionHelper.VideoGen, "ParseArticles", "{\"feeds_checked\": []}", null);
         Assert.Empty(noKey);
+    }
+
+    [Fact]
+    public void ArticleClient_MalformedJsonLogsAndReturnsPartial()
+    {
+        // L64: a truncated document (one valid article, then garbage) must
+        // return the valid article and log the parse error + the count —
+        // an exit-0 helper emitting garbage JSON used to be
+        // indistinguishable from "no articles".
+        const string json = "{\"articles\": [" +
+            "{\"outlet\": \"X\", \"url\": \"https://example.com/a\", \"title\": \"A\", \"text\": \"kept text\"}, broken";
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        System.Collections.IList articles;
+        try
+        {
+            articles = ReflectionHelper.Invoke<System.Collections.IList>(
+                ReflectionHelper.VideoGen, "ParseArticles", json, new PrepIdentity("job-20261126-test"));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.Single(articles);
+        var first = articles[0]!;
+        Assert.Equal("X", first.GetType().GetProperty("Outlet")!.GetValue(first) as string);
+        var log = sb.ToString();
+        Assert.Contains("malformed JSON", log);
+        Assert.Contains("job-20261126-test", log);
+        Assert.Contains("1 parsed article", log);
     }
 
     [Fact]
@@ -107,7 +138,7 @@ public class MultiSourceContextTests
             "{\"outlet\": \"Z\", \"url\": \"https://example.com/c\", \"title\": \"C\", \"text\": \"kept\"}" +
             "]}";
         var articles = ReflectionHelper.Invoke<System.Collections.IList>(
-            ReflectionHelper.VideoGen, "ParseArticles", json);
+            ReflectionHelper.VideoGen, "ParseArticles", json, null);
         Assert.Single(articles);
     }
 

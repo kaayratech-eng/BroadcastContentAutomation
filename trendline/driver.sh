@@ -170,6 +170,8 @@ launch() { # $1 = command string (run via setsid bash -c)
 # --- single-instance guard ---------------------------------------------------
 exec 9>"$LOCK"
 if ! flock -n 9; then
+  # L6: exit 0 is deliberate here — a concurrent tick is normal (the
+  # other tick is doing the work); this tick did nothing wrong.
   log "another driver tick is running; exiting"
   exit 0
 fi
@@ -183,20 +185,41 @@ fi
 # themselves keep doing so; this is the file-level stamp.
 save_state() { # $1 = jq filter (applied to state.json, atomic via tmp file)
   local tmp
-  tmp=$(mktemp "$STATE.tmp.XXXXXX") || return 1
+  # L4: a failed state write used to be silent — the next tick re-read
+  # stale state (failures, phase, auto-resets) with no trace. Log it as
+  # CRITICAL with job/phase/filter and fail, so callers can abort the tick
+  # instead of proceeding blind.
+  tmp=$(mktemp "$STATE.tmp.XXXXXX") || {
+    log "CRITICAL: state.json write failed (rc 1, mktemp failed) for ${JOB_ID:-none} phase ${PHASE:-unknown}: $1; state may be stale, not proceeding blind"
+    return 1
+  }
   jq "$1 | .updated_at = \"$(date -Is)\"" "$STATE" > "$tmp" && mv "$tmp" "$STATE"
   local rc=$?
-  [ $rc -ne 0 ] && rm -f "$tmp"
-  return $rc
+  if [ $rc -ne 0 ]; then
+    rm -f "$tmp"
+    log "CRITICAL: state.json write failed (rc $rc) for ${JOB_ID:-none} phase ${PHASE:-unknown}: $1; state may be stale, not proceeding blind"
+    return 1
+  fi
+  return 0
 }
 set_phase() { # $1 = phase, $2 = pid (or null), $3 = log path (or null)
   # The pid is a setsid group leader, so it is also the PGID (see launch()).
   local pgid="null"
   [ "$2" != "null" ] && pgid="$2"
-  save_state ".current.phase = \"$1\" | .current.pid = $2 | .current.pgid = $pgid | .current.log = $3 | .current.updated_at = \"$(date -Is)\""
+  # L4: a phase transition that cannot be recorded must abort the tick —
+  # continuing would run work under the wrong recorded phase.
+  save_state ".current.phase = \"$1\" | .current.pid = $2 | .current.pgid = $pgid | .current.log = $3 | .current.updated_at = \"$(date -Is)\"" || exit 1
 }
-bump_failure() {
-  save_state ".current.failures = (.current.failures // 0) + 1 | .current.updated_at = \"$(date -Is)\""
+bump_failure() { # $1 = reason for the failure
+  # L36: the failure count used to rise with no log line — callers were
+  # relied on to have logged something, and several did not name the
+  # reason. Log the job, phase, reason and the new count here, at the
+  # increment site, so every bump is greppable.
+  local reason="${1:-unspecified failure}"
+  save_state ".current.failures = (.current.failures // 0) + 1 | .current.updated_at = \"$(date -Is)\"" || return 1
+  local new_count
+  new_count=$(jq -r '.current.failures // 0' "$STATE" 2>/dev/null || echo "?")
+  log "failure ${JOB_ID:-none} (${PHASE:-unknown}): $reason — failures now $new_count/${MAX_FAILURES:-?}"
 }
 # progress_marker: a cheap fingerprint of how far the current job has got,
 # used by the failure-limit auto-reset guard. A chunk file only appears
@@ -362,14 +385,32 @@ kill_step_group() { # $1 = pid (group leader)
 # the kill_step_group comment). Only ever runs for a driver-owned step
 # (DRIVER_OWNED=true); a manual step's processes are never touched.
 # Scoped to the job id, so other jobs' steps are safe. $1 = job id.
+# L37: a successful kill used to log nothing (only the non-driver-owned
+# skip was logged), so the auto-reset could never say how many orphans
+# died. Counts the matching pids BEFORE killing and reports the outcome
+# in ORPHAN_KILLED_COUNT / ORPHAN_KILLED_PIDS for the caller to log.
 kill_job_orphans() { # $1 = job id
   local job="$1"
+  ORPHAN_KILLED_COUNT=0
+  ORPHAN_KILLED_PIDS="none"
   [ -n "$job" ] || return 0
   if [ "$DRIVER_OWNED" != "true" ]; then
     log "auto-reset: current step is not driver-owned — leaving any orphaned processes for $job alone"
+    ORPHAN_KILLED_PIDS="none (not driver-owned — left alone)"
     return 0
   fi
-  local pat
+  local pat pids all
+  all=""
+  for pat in "VideoGen.dll --assemble.*$job" "VideoGen.dll --prep.*$job" "VideoGen.dll --resume.*$job" "remotion render.*$job" "render-chunks.sh.*$job" "finish-chunks.py.*$job"; do
+    pids=$(pgrep -f "$pat" 2>/dev/null || true)
+    [ -n "$pids" ] && all="$all $pids"
+  done
+  # Deduplicate (one process can match several patterns) and count.
+  all=$(printf '%s\n' $all | sort -u | tr '\n' ' ' | sed 's/^ *//; s/ *$//')
+  if [ -n "$all" ]; then
+    ORPHAN_KILLED_COUNT=$(printf '%s' "$all" | wc -w | tr -d ' ')
+    ORPHAN_KILLED_PIDS=$(printf '%s' "$all" | tr ' ' ',')
+  fi
   for pat in "VideoGen.dll --assemble.*$job" "VideoGen.dll --prep.*$job" "VideoGen.dll --resume.*$job" "remotion render.*$job" "render-chunks.sh.*$job" "finish-chunks.py.*$job"; do
     pkill -f "$pat" 2>/dev/null || true
   done
@@ -377,7 +418,7 @@ kill_job_orphans() { # $1 = job id
   for pat in "VideoGen.dll --assemble.*$job" "VideoGen.dll --prep.*$job" "VideoGen.dll --resume.*$job" "remotion render.*$job" "render-chunks.sh.*$job" "finish-chunks.py.*$job"; do
     pkill -9 -f "$pat" 2>/dev/null || true
   done
-  log "auto-reset: killed orphaned pipeline processes for $job (if any were alive)"
+  log "auto-reset: killed $ORPHAN_KILLED_COUNT orphan processes ($ORPHAN_KILLED_PIDS) for $job"
 }
 # step_log_age_min: minutes since the current step log was last written.
 step_log_age_min() { # uses $STEP_LOG
@@ -478,6 +519,27 @@ last_render_frame() { # $1 = log
   local frame=""
   [ -n "$1" ] && [ -f "$1" ] && frame=$(grep -oE "Rendered [0-9]+/[0-9]+" "$1" 2>/dev/null | tail -1 | sed 's/Rendered //')
   echo "${frame:-none}"
+}
+# step_log_tail: last $2 (default 3) lines of a step log, joined with
+# " | " into one log line; "no step log" / "step log empty" when there
+# is nothing to show. L41: death lines must carry the underlying error,
+# not just a symptom ("final still invalid").
+step_log_tail() { # $1 = log, $2 = lines (default 3)
+  local n="${2:-3}"
+  if [ -z "${1:-}" ] || [ ! -f "$1" ]; then echo "no step log"; return 0; fi
+  local tail_out
+  tail_out=$(tail -n "$n" "$1" 2>/dev/null | awk '{printf "%s%s", (NR>1?" | ":""), $0} END{print ""}')
+  [ -n "$tail_out" ] && echo "$tail_out" || echo "step log empty"
+}
+# step_exit_code: the step's exit code as recorded in its own log
+# ("exit 137", "exit code 1", "ffmpeg failed (exit 1)"), or "unknown".
+# A detached step has no wait status for the driver to read — the log
+# is the only source, so "unknown" is honest when the log never says.
+step_exit_code() { # $1 = log -> digits or "unknown"
+  if [ -z "${1:-}" ] || [ ! -f "$1" ]; then echo "unknown"; return 0; fi
+  local code
+  code=$(grep -oE '\b(exit code|exit)[ :]*[0-9]+' "$1" 2>/dev/null | tail -1 | grep -oE '[0-9]+$' || true)
+  [ -n "$code" ] && echo "$code" || echo "unknown"
 }
 # B8: how many completed videos are waiting for review — a final mp4 in
 # the watch dir whose sidecar exists and is not Approved:true. A completed
@@ -599,8 +661,103 @@ preflight() {
   return 0
 }
 
+# --- reset-failures subcommand (L38) ---------------------------------------
+# Manual reset path: `driver.sh reset-failures --job <id> --reason <text>`
+# logs who reset, which job, the old counts, and writes both fields
+# atomically (failures + auto_resets). Previously a manual reset was a
+# bare external `jq '.current.failures=0' state.json` with no log line
+# at all — nothing said who reset, which job, the old count, or whether
+# auto_resets was also cleared. Handled here, before the healthcheck and
+# the tick dispatch, so it never runs a tick or launches work.
+if [ "${1:-}" = "reset-failures" ]; then
+  shift
+  RESET_JOB=""
+  RESET_REASON=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --job)
+        [ $# -ge 2 ] || { log "reset-failures: --job needs a value (usage: driver.sh reset-failures --job <id> --reason <text>)"; exit 1; }
+        RESET_JOB="$2"; shift 2 ;;
+      --reason)
+        [ $# -ge 2 ] || { log "reset-failures: --reason needs a value (usage: driver.sh reset-failures --job <id> --reason <text>)"; exit 1; }
+        RESET_REASON="$2"; shift 2 ;;
+      *)
+        log "reset-failures: unknown argument: $1 (usage: driver.sh reset-failures --job <id> --reason <text>)"
+        exit 1 ;;
+    esac
+  done
+  [ -n "$RESET_JOB" ] && [ -n "$RESET_REASON" ] || { log "reset-failures: --job and --reason are both required"; exit 1; }
+  [ -f "$STATE" ] || { log "reset-failures: state.json missing ($STATE); refusing to act"; exit 1; }
+  OLD_FAILURES=$(jq -r '.current.failures // 0' "$STATE" 2>/dev/null || echo 0)
+  OLD_RESETS=$(jq -r '.current.auto_resets // 0' "$STATE" 2>/dev/null || echo 0)
+  ACTOR="${USER:-$(whoami 2>/dev/null || echo unknown)}"
+  JOB_ID="$RESET_JOB"
+  PHASE=$(jq -r '.current.phase // "unknown"' "$STATE" 2>/dev/null || echo unknown)
+  save_state ".current.failures = 0 | .current.auto_resets = 0 | .current.updated_at = \"$(date -Is)\"" || exit 1
+  log "MANUAL RESET by $ACTOR: job $RESET_JOB failures $OLD_FAILURES→0 auto_resets $OLD_RESETS→0: $RESET_REASON"
+  exit 0
+fi
+
+# --- pause / unpause subcommands (L76) ---------------------------------------
+# Pausing used to be a bare external `jq '.paused=true' state.json` with
+# no log line and no reason update — so state.json carried a stale
+# pause_reason ("Unpaused 2026-11-25 ...") while paused=true, and an
+# unpause was invisible entirely. Handled here, before the healthcheck
+# and the tick dispatch, so it never runs a tick or launches work.
+# pause_reason always describes the current transition: while paused it
+# holds the pause reason; after an unpause it holds the "Unpaused <ts> —
+# <reason>" stamp, matching the existing convention.
+if [ "${1:-}" = "pause" ]; then
+  shift
+  PAUSE_REASON=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || { log "pause: --reason needs a value (usage: driver.sh pause --reason <text>)"; exit 1; }
+        PAUSE_REASON="$2"; shift 2 ;;
+      *)
+        log "pause: unknown argument: $1 (usage: driver.sh pause --reason <text>)"
+        exit 1 ;;
+    esac
+  done
+  [ -n "$PAUSE_REASON" ] || { log "pause: --reason is required"; exit 1; }
+  [ -f "$STATE" ] || { log "pause: state.json missing ($STATE); refusing to act"; exit 1; }
+  JOB_ID=$(jq -r '.current.job // empty' "$STATE" 2>/dev/null || echo "")
+  PHASE=$(jq -r '.current.phase // "unknown"' "$STATE" 2>/dev/null || echo unknown)
+  [ -n "$JOB_ID" ] || JOB_ID="none"
+  ESCAPED_REASON=$(jq -n --arg r "$PAUSE_REASON" '$r')
+  save_state ".paused = true | .pause_reason = $ESCAPED_REASON | .current.updated_at = \"$(date -Is)\"" || exit 1
+  log "driver paused: job $JOB_ID phase $PHASE, reason: $PAUSE_REASON"
+  exit 0
+fi
+
+if [ "${1:-}" = "unpause" ]; then
+  shift
+  UNPAUSE_REASON=""
+  while [ $# -gt 0 ]; do
+    case "$1" in
+      --reason)
+        [ $# -ge 2 ] || { log "unpause: --reason needs a value (usage: driver.sh unpause --reason <text>)"; exit 1; }
+        UNPAUSE_REASON="$2"; shift 2 ;;
+      *)
+        log "unpause: unknown argument: $1 (usage: driver.sh unpause --reason <text>)"
+        exit 1 ;;
+    esac
+  done
+  [ -n "$UNPAUSE_REASON" ] || { log "unpause: --reason is required"; exit 1; }
+  [ -f "$STATE" ] || { log "unpause: state.json missing ($STATE); refusing to act"; exit 1; }
+  ESCAPED_REASON=$(jq -n --arg r "Unpaused $(date '+%Y-%m-%d %H:%M %Z') — $UNPAUSE_REASON" '$r')
+  save_state ".paused = false | .pause_reason = $ESCAPED_REASON | .current.updated_at = \"$(date -Is)\"" || exit 1
+  log "driver unpaused: $UNPAUSE_REASON"
+  exit 0
+fi
+
 # --- health check (read-only; never acts) ------------------------------------
-"$TRENDLINE/healthcheck.sh" >> "$LOG" 2>&1 || true
+# L6: the healthcheck's exit 1 (critical) used to be masked by `|| true`,
+# so a critical system looked like a healthy tick. Record it in the log.
+"$TRENDLINE/healthcheck.sh" >> "$LOG" 2>&1
+HC_RC=$?
+[ $HC_RC -ne 0 ] && log "healthcheck critical (rc $HC_RC); see health.json"
 
 # --- load state ---------------------------------------------------------------
 if [ ! -f "$STATE" ]; then
@@ -610,6 +767,7 @@ fi
 PAUSED=$(jq -r '.paused // false' "$STATE")
 PAUSE_REASON=$(jq -r '.pause_reason // ""' "$STATE")
 if [ "$PAUSED" = "true" ]; then
+  # L6: exit 0 is deliberate — paused is a normal state, not a failure.
   log "PAUSED: $PAUSE_REASON"
   exit 0
 fi
@@ -664,7 +822,18 @@ if [ -z "$JOB_ID" ] && [ "$PHASE" = "prep" ] && [ -n "$STEP_LOG" ] && [ -f "$STE
     JOB_ID="$EXTRACTED_JOB"
     save_state ".current.job = \"$EXTRACTED_JOB\" | .current.profile = \"trendlinenow\""
     # Usage governor: count this video against the daily cap (idempotent).
-    "$TRENDLINE/governor-check.sh" video-started --job "$EXTRACTED_JOB" || log "governor: video-started recording failed for $EXTRACTED_JOB (continuing)"
+    # L40: the JSON result used to be discarded and stderr never reached
+    # the driver log, so a successful recording (and the prep-counting
+    # behaviour behind it) was invisible. Capture and log the result line.
+    GOV_STARTED_OUT=$("$TRENDLINE/governor-check.sh" video-started --job "$EXTRACTED_JOB" 2>&1)
+    GOV_STARTED_RC=$?
+    # Collapse to one log line (stdout JSON + stderr log line, if both).
+    GOV_STARTED_ONE_LINE=$(printf '%s' "$GOV_STARTED_OUT" | tr '\n' ' ' | sed 's/  */ /g')
+    if [ "$GOV_STARTED_RC" -ne 0 ]; then
+      log "governor: video-started recording failed for $EXTRACTED_JOB (rc $GOV_STARTED_RC, output: $GOV_STARTED_ONE_LINE) (continuing)"
+    else
+      log "governor: video-started result for $EXTRACTED_JOB: $GOV_STARTED_ONE_LINE"
+    fi
   fi
 fi
 
@@ -700,8 +869,12 @@ if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
   fi
   if [ "$AUTO_RESETS" -gt "$MAX_AUTO_RESETS" ]; then
     log "ESCALATED: job $JOB_ID hit the failure limit ($FAILURES >= $MAX_FAILURES) after $AUTO_RESETS auto-resets with no progress (marker unchanged: $MARKER) — driver is stopping for this job; Rishi to decide"
-    save_state ".current.auto_resets = $AUTO_RESETS | .current.auto_reset_progress = \"$MARKER\""
-    exit 0
+    # L4: if the escalation record cannot be written, abort the tick
+    # instead of falling through with stale counters.
+    save_state ".current.auto_resets = $AUTO_RESETS | .current.auto_reset_progress = \"$MARKER\"" || exit 1
+    # L6: an escalated stop is not a healthy tick — exit non-zero so a
+    # scheduler/monitor sees the driver stopped for this job.
+    exit 1
   fi
   # Full reset: kill orphaned pipeline processes for this job, record the
   # memory picture, clear all failure/retry counters, clear the stale
@@ -709,10 +882,28 @@ if [ "$FAILURES" -ge "$MAX_FAILURES" ]; then
   # stops the next tick double-counting the same death as a fresh retry),
   # and store the reset count + progress marker. The last step log is
   # KEPT: the prep phase reads it for the Azure 429 throttle check.
+  # L37: capture what is about to be cleared BEFORE the reset writes it
+  # away — the old line said only "cleared failure counters, killed
+  # orphans" with no phase, no last log tail, no cleared values, and no
+  # orphan-kill outcome.
+  RESET_FAILURES="$FAILURES"
+  RESET_CHUNK_RETRIES=$(jq -r '.current.chunk_retries // 0' "$STATE" 2>/dev/null || echo 0)
+  RESET_ASSEMBLE_RETRIES=$(jq -r '.current.assemble_retries // 0' "$STATE" 2>/dev/null || echo 0)
+  RESET_STALE_PID="${PID:-none}"
+  [ -n "$RESET_STALE_PID" ] && [ "$RESET_STALE_PID" != "null" ] || RESET_STALE_PID="none"
+  if [ -n "$STEP_LOG" ] && [ -f "$STEP_LOG" ]; then
+    RESET_LOG_TAIL=$(tail -n 2 "$STEP_LOG" 2>/dev/null | awk '{printf "%s%s", (NR>1?" | ":""), $0} END{print ""}')
+    [ -n "$RESET_LOG_TAIL" ] || RESET_LOG_TAIL="step log empty"
+  else
+    RESET_LOG_TAIL="no step log"
+  fi
   kill_job_orphans "$JOB_ID"
   log_memory_context "auto-reset $JOB_ID"
-  save_state ".current.failures = 0 | .current.chunk_retries = 0 | .current.assemble_retries = 0 | .current.auto_resets = $AUTO_RESETS | .current.auto_reset_progress = \"$MARKER\" | .current.pid = null | .current.pgid = null"
-  log "AUTO-RESET #$AUTO_RESETS: job $JOB_ID hit the failure limit ($FAILURES >= $MAX_FAILURES) — cleared failure counters, killed orphans, restarting from checkpoint (progress marker: $MARKER)"
+  # L4: if the reset itself cannot be written, abort the tick — falling
+  # through would run the phase dispatch with the failure counters still
+  # at the limit.
+  save_state ".current.failures = 0 | .current.chunk_retries = 0 | .current.assemble_retries = 0 | .current.auto_resets = $AUTO_RESETS | .current.auto_reset_progress = \"$MARKER\" | .current.pid = null | .current.pgid = null" || exit 1
+  log "AUTO-RESET #$AUTO_RESETS: job $JOB_ID hit the failure limit ($FAILURES >= $MAX_FAILURES) — failures were in phase $PHASE (last step log tail: $RESET_LOG_TAIL); cleared failures=$RESET_FAILURES chunk_retries=$RESET_CHUNK_RETRIES assemble_retries=$RESET_ASSEMBLE_RETRIES stale pid=$RESET_STALE_PID; killed $ORPHAN_KILLED_COUNT orphan processes ($ORPHAN_KILLED_PIDS); restarting from checkpoint (progress marker: $MARKER)"
   # fall through to the phase dispatch below (no exit here)
 fi
 
@@ -781,12 +972,27 @@ if [ "$PHASE" = "idle" ]; then
     log "idle: preflight failed — not starting a new prep this tick"
     exit 0
   fi
-  # Usage governor (2026-11-23): daily video cap (3/day) + cooled providers.
+  # Usage governor (2026-11-23): daily video cap (1 long-form/day, governor-config.json; fix #5) + cooled providers.
   # Refuses a new prep when the cap is hit or all legs are cooled — not a
   # failure, the driver just waits for the next window. Fail-open: a broken
   # governor exits 0 and never halts the channel.
-  if ! "$TRENDLINE/governor-check.sh" may-start; then
-    log "governor: daily cap hit or all legs cooled — not starting a new prep this tick"
+  # L39: the denial used to be logged generically ("daily cap hit or all
+  # legs cooled") — the governor's precise reason, count, cap and reset
+  # time never reached the driver log. Capture may-start's stdout JSON
+  # (+ its stderr reason line) and log them.
+  GOV_OUT=$("$TRENDLINE/governor-check.sh" may-start 2>&1)
+  GOV_RC=$?
+  if [ "$GOV_RC" -ne 0 ]; then
+    GOV_JSON=$(printf '%s\n' "$GOV_OUT" | grep -m1 '^{' || true)
+    GOV_REASON=$(printf '%s' "$GOV_JSON" | jq -r '.reason // empty' 2>/dev/null || true)
+    GOV_VIDEOS=$(printf '%s' "$GOV_JSON" | jq -r '.videos_today // empty' 2>/dev/null || true)
+    GOV_CAP=$(printf '%s' "$GOV_JSON" | jq -r '.cap // empty' 2>/dev/null || true)
+    GOV_RESETS=$(printf '%s' "$GOV_JSON" | jq -r '.resets_at // empty' 2>/dev/null || true)
+    [ -n "$GOV_REASON" ] || GOV_REASON=$(printf '%s\n' "$GOV_OUT" | grep -m1 'governor-check: ' | sed 's/.*governor-check: //' || true)
+    [ -n "$GOV_REASON" ] || GOV_REASON="daily cap hit or all legs cooled"
+    if [ -n "$GOV_VIDEOS" ] && [ -n "$GOV_CAP" ]; then GOV_COUNT="$GOV_VIDEOS/$GOV_CAP"; else GOV_COUNT="unknown"; fi
+    [ -n "$GOV_RESETS" ] || GOV_RESETS="unknown"
+    log "governor: denied — $GOV_REASON (videos $GOV_COUNT, resets $GOV_RESETS); not starting a new prep, will retry next tick"
     exit 0
   fi
   # Forced next topic (Rishi 2026-11-21): state.json .next_topic, when set,
@@ -818,7 +1024,7 @@ if [ -z "$JOB_ID" ] || [ ! -d "$JOB_DIR" ]; then
       log "prep still running (pid $PID); job id not yet known — waiting"
       exit 0
     fi
-    log "prep died before creating a job dir — relaunching a fresh --prep"
+    log "prep died before creating a job dir — relaunching a fresh --prep; exit code $(step_exit_code "$STEP_LOG") (captured from the step's exit, not the driver's); last log lines: $(step_log_tail "$STEP_LOG" 3)"
     # A forced next_topic must survive the relaunch (same as the prep-phase
     # relaunch below), or it auto-picks the top story and duplicates the
     # previous video (seen 2026-11-22).
@@ -826,7 +1032,7 @@ if [ -z "$JOB_ID" ] || [ ! -d "$JOB_DIR" ]; then
     RELAUNCH_TOPIC_ARG=""
     [ -n "$RELAUNCH_TOPIC" ] && RELAUNCH_TOPIC_ARG="--topic \"$RELAUNCH_TOPIC\""
     # Recovery after a death: count it toward the escalation gate.
-    bump_failure
+    bump_failure "prep died before creating a job dir"
     NEW_LOG="$TMPDIR/trendline-prep-driver-$(date +%Y%m%d-%H%M%S).log"
     launch "cd '$REPO/BroadcastContentAutomation/VideoGen' && dotnet bin/Release/net8.0/VideoGen.dll --prep --long --profile trendlinenow $RELAUNCH_TOPIC_ARG >> '$NEW_LOG' 2>&1"
     NEWPID=$LAUNCH_PID
@@ -917,7 +1123,7 @@ if [ "$PHASE" = "prep" ]; then
   # Resume (or relaunch) the prep. This is a recovery after a death, so it
   # counts toward the escalation gate (previously prep deaths never did,
   # so the gate could never trip from the most failure-prone phase).
-  bump_failure
+  bump_failure "prep died — resuming/relaunching prep"
   RESUME_LOG="$TMPDIR/trendline-prep-driver-$(date +%Y%m%d-%H%M%S).log"
   # A fresh relaunch (no checkpoint) must re-apply a forced next_topic, or it
   # auto-picks the top story and duplicates the previous video (seen 2026-11-22).
@@ -974,7 +1180,7 @@ if [ "$PHASE" = "prep_done" ]; then
       set_phase "render_chunks" "null" "null"
     else
       log "prep_done: --write-props FAILED (log $WRITE_PROPS_LOG) — counting a failure"
-      bump_failure
+      bump_failure "prep_done --write-props failed"
     fi
     exit 0
   fi
@@ -1026,7 +1232,7 @@ if [ "$PHASE" = "render_assemble" ]; then
       if [ "$LOG_AGE_MIN" -ge "$STALL_MIN" ]; then
         log "assemble pid $PID log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m) — killing the whole process group and chunk-recovering"
         kill_step_group "$PID"
-        bump_failure
+        bump_failure "assemble log silent, killed process group"
         set_phase "render_chunks" "null" "null"
         exit 0
       fi
@@ -1042,7 +1248,7 @@ if [ "$PHASE" = "render_assemble" ]; then
   # this line behind.
   log_memory_context "assemble-dead $JOB_ID"
   LAST_FRAME=$(last_render_frame "$STEP_LOG")
-  log "FATAL: --assemble for $JOB_ID (pid $PID) died; last render frame $LAST_FRAME; log $STEP_LOG"
+  log "FATAL: --assemble for $JOB_ID (pid $PID) died; last render frame $LAST_FRAME; log $STEP_LOG; exit code $(step_exit_code "$STEP_LOG") (captured from the step's exit, not the driver's); last log lines: $(step_log_tail "$STEP_LOG" 3)"
   if [ -f "$L_PROPS" ]; then
     log "assemble died but landscape props exist — switching to chunk recovery for both orientations"
     set_phase "render_chunks" "null" "null"
@@ -1067,12 +1273,12 @@ if [ "$PHASE" = "render_assemble" ]; then
   # Check the log tail for a fatal marker.
   if log_tail_has "$STEP_LOG" "FATAL\|Unhandled exception\|OutOfMemoryException"; then
     log "assemble died before writing props (fatal marker in log) — retrying --assemble (attempt $ASSEMBLE_RETRIES of $MAX_ASSEMBLE_RETRIES)"
-    bump_failure
+    bump_failure "assemble died before writing props (fatal marker in log)"
     set_phase "prep_done" "null" "null"
     exit 0
   fi
   log "assemble died before writing props (no fatal marker; possibly a VM reboot or the 180-min timeout) — retrying --assemble (attempt $ASSEMBLE_RETRIES of $MAX_ASSEMBLE_RETRIES)"
-  bump_failure
+  bump_failure "assemble died before writing props (no fatal marker)"
   set_phase "prep_done" "null" "null"
   exit 0
 fi
@@ -1112,7 +1318,7 @@ if [ "$PHASE" = "render_chunks" ]; then
         log "laptop: $ori unreachable or awaiting approval — waiting, not a failure"
       elif [ "$STEP_RC" -ne 0 ]; then
         log "laptop: step for $ori failed (rc $STEP_RC) — counting a failure"
-        bump_failure
+        bump_failure "laptop step for $ori failed (rc $STEP_RC)"
       else
         log "laptop: step for $ori OK (render running, waiting, or complete)"
       fi
@@ -1192,7 +1398,7 @@ if [ "$PHASE" = "render_chunks" ]; then
     # escalation gate and the render.max_chunk_retries cap (previously a
     # dead chunk render was silently relaunched forever).
     if [ "$PREV_DIED" = "true" ] && [ "$ori" = "$PREV_ORI" ]; then
-      bump_failure
+      bump_failure "chunk render for $ori died, retrying"
       CHUNK_RETRIES=$(jq -r '.current.chunk_retries // 0' "$STATE")
       CHUNK_RETRIES=$((CHUNK_RETRIES + 1))
       save_state ".current.chunk_retries = $CHUNK_RETRIES"
@@ -1240,13 +1446,21 @@ if [ "$PHASE" = "finish" ]; then
     log "finish still running for $ORI (pid $PID, $JOB_ID)"
     exit 0
   fi
-  if "$PROD/finish-chunks.py" --job "$JOB_DIR" --orientation "$ORI" --check-final-only >> "$LOG" 2>&1; then
+  # L41: capture the check's own output instead of appending it straight
+  # to the driver log — "final still invalid" is a symptom, not a reason,
+  # and the finish step's exit code / log tail were never on the line.
+  CHECK_OUT=$("$PROD/finish-chunks.py" --job "$JOB_DIR" --orientation "$ORI" --check-final-only 2>&1)
+  CHECK_RC=$?
+  [ -n "$CHECK_OUT" ] && printf '%s\n' "$CHECK_OUT" >> "$LOG"
+  if [ "$CHECK_RC" -eq 0 ]; then
     log "$ORI finished OK for $JOB_ID"
     set_phase "verify" "null" "null"
     exit 0
   fi
-  log "$ORI finish FAILED (final still invalid) — returning to chunk recovery"
-  bump_failure
+  CHECK_TAIL=$(printf '%s\n' "$CHECK_OUT" | tail -n 3 | awk '{printf "%s%s", (NR>1?" | ":""), $0} END{print ""}')
+  [ -n "$CHECK_TAIL" ] || CHECK_TAIL="no check-final-only output"
+  log "$ORI finish FAILED (final still invalid) — returning to chunk recovery; exit code $(step_exit_code "$STEP_LOG") (captured from the step's exit, not the driver's); last log lines: $(step_log_tail "$STEP_LOG" 3); check-final-only output (rc $CHECK_RC): $CHECK_TAIL"
+  bump_failure "finish FAILED for $ORI (final still invalid)"
   set_phase "render_chunks" "null" "null"
   exit 0
 fi

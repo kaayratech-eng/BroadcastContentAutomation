@@ -50,6 +50,7 @@ CURRENT_LOG=$(jq -r '.current.log // empty' "$STATE")
 CURRENT_PID=$(jq -r '.current.pid // empty' "$STATE")
 DRIVER_OWNED=$(jq -r '.current.driver_owned // false' "$STATE")
 FAILURES=$(jq -r '.current.failures // 0' "$STATE")
+AUTO_RESETS=$(jq -r '.current.auto_resets // 0' "$STATE")
 LAST_429=$(jq -r '.current.last_429_at // empty' "$STATE")
 PAUSED=$(jq -r '.paused // false' "$STATE")
 DISK_WARN=$(jq -r '.health.disk_warn_gb' "$CONFIG")
@@ -61,6 +62,14 @@ BACKOFF_MIN=$(jq -r '.tts.throttle_backoff_minutes' "$CONFIG")
 PROBLEMS=()
 WARNINGS=()
 STATUS=ok
+
+# L16: previous run's dead_since (health.json is the healthcheck's own
+# snapshot — the next run reads it to tell a first sighting of a dead step
+# from a repeat). Empty when health.json does not exist yet.
+PREV_DEAD_SINCE=""
+[ -f "$HEALTH" ] && PREV_DEAD_SINCE=$(jq -r '.dead_since // empty' "$HEALTH" 2>/dev/null || echo "")
+# L16: set by step_dead() below when this run sees a dead pid / silent log.
+STEP_DEAD=false
 
 problem() { PROBLEMS+=("$1"); STATUS=critical; note "CRITICAL: $1"; }
 warning() { WARNINGS+=("$1"); [ "$STATUS" = "ok" ] && STATUS=warning; note "WARNING: $1"; }
@@ -110,6 +119,14 @@ step_problem() { # $1 = message
     esac
   fi
 }
+# L16: a dead pid / silent log goes through step_dead() (not step_problem()
+# directly) so the escalation block below knows this run saw a death. A
+# fatal/crash marker in the log tail keeps using step_problem() — it is a
+# crash signal, not itself a dead pid / silent log.
+step_dead() { # $1 = message
+  STEP_DEAD=true
+  step_problem "$1"
+}
 if [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHASE" != "done" ]; then
   if [ -n "$CURRENT_PID" ] && [ "$CURRENT_PID" != "null" ]; then
     if kill -0 "$CURRENT_PID" 2>/dev/null; then
@@ -121,10 +138,10 @@ if [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHASE"
         *VideoGen.dll*|*render-chunks.sh*|*finish-chunks.py*|*remotion*)
           note "current step alive: pid $CURRENT_PID ($CURRENT_PHASE, $CURRENT_JOB)" ;;
         *)
-          step_problem "current step pid $CURRENT_PID is not a pipeline step (pid reused?) — treating as dead (phase $CURRENT_PHASE, job $CURRENT_JOB)" ;;
+          step_dead "current step pid $CURRENT_PID is not a pipeline step (pid reused?) — treating as dead (phase $CURRENT_PHASE, job $CURRENT_JOB)" ;;
       esac
     else
-      step_problem "current step process $CURRENT_PID is DEAD (phase $CURRENT_PHASE, job $CURRENT_JOB) — driver should recover (resume/relaunch)"
+      step_dead "current step process $CURRENT_PID is DEAD (phase $CURRENT_PHASE, job $CURRENT_JOB) — driver should recover (resume/relaunch)"
     fi
   else
     note "current step has no pid recorded (phase $CURRENT_PHASE, job $CURRENT_JOB) — monitor-only or not yet launched"
@@ -134,7 +151,7 @@ if [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHASE"
     LOG_AGE_MIN=$(( (TS - LOG_MTIME) / 60 ))
     if [ "$LOG_AGE_MIN" -ge "$STALL_MIN" ]; then
       if [ "$DRIVER_OWNED" = "true" ]; then
-        step_problem "current step log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m stall threshold) — driver should kill + retry the step"
+        step_dead "current step log silent ${LOG_AGE_MIN}m (>= ${STALL_MIN}m stall threshold) — driver should kill + retry the step"
       else
         warning "monitor-only step log silent ${LOG_AGE_MIN}m (job $CURRENT_JOB) — do NOT kill; it was not launched by the driver"
       fi
@@ -184,15 +201,28 @@ if [ -n "$CURRENT_JOB" ] && [ "$CURRENT_PHASE" != "idle" ] && [ "$CURRENT_PHASE"
 fi
 
 # --- (b) failure count -------------------------------------------------------
+# L16: failures >= 3 used to be a problem on the same tick the driver
+# auto-resets at 3 — healthcheck and driver disagreed about whether 3
+# failures is an escalation. The driver escalates only once auto-resets
+# are exhausted (auto_resets > MAX_AUTO_RESETS = 2); until then it
+# self-heals, so this is a warning, not a problem.
 if [ "$FAILURES" -ge 3 ]; then
-  problem "current job has $FAILURES failures (>= 3) — escalate to Rishi, do NOT keep retrying"
+  if [ "$AUTO_RESETS" -gt 2 ]; then
+    problem "current job has $FAILURES failures (>= 3) and auto-resets exhausted ($AUTO_RESETS > 2) — escalate to Rishi, do NOT keep retrying"
+  else
+    warning "current job has $FAILURES failures (>= 3) — driver will auto-reset (auto-resets used: $AUTO_RESETS/2)"
+  fi
 fi
 
 # --- (c) external services ---------------------------------------------------
 # Azure TTS: a real read-only probe (voices list). Expect HTTP 200.
 # This is the only probe that uses a stored key, and it is a harmless read.
 AZURE_HELPER=~/workspace/custom-connectors/custom.azure-speech/bin/azure_tts.py
+# L15: probe_auth records which probes carry auth (see the health.json
+# writer below) — Azure's probe uses the stored key, the four below do not.
+AZURE_PROBE_AUTH="unavailable"
 if [ -f "$AZURE_HELPER" ]; then
+  AZURE_PROBE_AUTH="authenticated"
   if python3 "$AZURE_HELPER" voices --region eastus >/dev/null 2>&1; then
     note "Azure TTS reachable (voices list OK)"
   else
@@ -202,25 +232,51 @@ else
   warning "azure_tts.py not found — cannot probe Azure TTS"
 fi
 # Groq / Cloudflare / Pexels / YouTube API: endpoint reachability only.
-# B22: only a genuine 2xx success counts as "reachable" — a 403 (dead key),
-# 429 (throttled) or 500 used to be reported as reachable, which hid the
-# two most likely prep killers until a prep died. The curl exit code is
+# B22: only a genuine 2xx success counts as "reachable" — a 429
+# (throttled) or 500 used to be reported as reachable, which hid the two
+# most likely prep killers until a prep died. The curl exit code is
 # checked separately: previously a failed curl printed "000" AND the
 # fallback echoed "000", producing the "HTTP 000000" artefact in the log.
-# Quota is NOT probed here: no YouTube/Cloudflare/Azure quota endpoint
-# reports remaining quota, and any authenticated probe would burn quota
-# and need a key plumbed into this shell script — the uploader's
-# per-run quota estimate (B31) is the quota signal instead.
+# L15 (corrects B22 for 401/403): this probe sends NO auth header, so a
+# 401/403 cannot mean "dead key" — it proves a live service answered, i.e.
+# the endpoint is reachable and auth is required. It is a note, not a
+# warning, or the permanent false positive drowns a real outage (a
+# connection failure or 5xx still warns). Quota is NOT probed here: no
+# YouTube/Cloudflare/Azure quota endpoint reports remaining quota, and any
+# authenticated probe would burn quota and need a key plumbed into this
+# shell script — the uploader's per-run quota estimate (B31) is the quota
+# signal instead.
+PROBE_AUTH_JSON="{\"azure\": \"$AZURE_PROBE_AUTH\""
 for svc in groq cloudflare pexels youtube_api; do
   url=$(jq -r ".services.$svc.ping_url" "$CONFIG")
   code=$(curl -s -o /dev/null -w "%{http_code}" --max-time 15 "$url" 2>/dev/null)
   if [ $? -ne 0 ] || [ -z "$code" ]; then code="000"; fi
   case "$code" in
     2*) note "$svc endpoint reachable (HTTP $code)" ;;
+    401|403) note "$svc endpoint reachable, auth required (HTTP $code) — unauthenticated probe, not a failure" ;;
     000) warning "$svc endpoint unreachable (curl failed) — prep may fail; renders unaffected" ;;
     *) warning "$svc endpoint returned HTTP $code (not a success) — treating as unreachable; prep may fail; renders unaffected" ;;
   esac
+  PROBE_AUTH_JSON+=", \"$svc\": \"unauthenticated\""
 done
+PROBE_AUTH_JSON+="}"
+
+# --- L16: dead-step escalation ---------------------------------------------
+# A dead pid / silent log is a warning on first sight (the driver recovers
+# it next tick) but critical if it is still dead on the next healthcheck —
+# the pipeline is dead and nobody recovered it. dead_since persists in
+# health.json so the next run can tell a first sighting from a repeat; it
+# clears the moment a run sees the step alive (or no step at all).
+if [ "$STEP_DEAD" = "true" ]; then
+  if [ -n "$PREV_DEAD_SINCE" ]; then
+    DEAD_SINCE="$PREV_DEAD_SINCE"
+    problem "step dead since $DEAD_SINCE (job $CURRENT_JOB, phase $CURRENT_PHASE) — still dead on 2nd consecutive healthcheck; driver has not recovered it"
+  else
+    DEAD_SINCE="$NOW"
+  fi
+else
+  DEAD_SINCE=""
+fi
 
 # --- write health.json -------------------------------------------------------
 PROBLEMS_JSON=$(printf '%s\n' "${PROBLEMS[@]}" | jq -R . | jq -s . 2>/dev/null || echo '[]')
@@ -229,10 +285,14 @@ WARNINGS_JSON=$(printf '%s\n' "${WARNINGS[@]}" | jq -R . | jq -s . 2>/dev/null |
 [ "${#WARNINGS[@]}" -eq 0 ] && WARNINGS_JSON='[]'
 jq -n --arg ts "$NOW" --arg status "$STATUS" \
   --arg job "$CURRENT_JOB" --arg phase "$CURRENT_PHASE" \
-  --argjson disk_free_gb "$DISK_FREE_GB" \
+  --arg current_log "$CURRENT_LOG" --arg dead_since "$DEAD_SINCE" \
+  --argjson disk_free_gb "$DISK_FREE_GB" --argjson failures "$FAILURES" \
   --argjson problems "$PROBLEMS_JSON" --argjson warnings "$WARNINGS_JSON" \
+  --argjson probe_auth "$PROBE_AUTH_JSON" \
   '{timestamp: $ts, status: $status, current_job: $job, current_phase: $phase,
-    disk_free_gb: $disk_free_gb, problems: $problems, warnings: $warnings}' > "$HEALTH"
+    disk_free_gb: $disk_free_gb, problems: $problems, warnings: $warnings,
+    probe_auth: $probe_auth, failures: $failures, current_log: $current_log,
+    dead_since: (if $dead_since == "" then null else $dead_since end)}' > "$HEALTH"
 
 note "healthcheck done: status=$STATUS problems=${#PROBLEMS[@]} warnings=${#WARNINGS[@]} disk_free=${DISK_FREE_GB}GB"
 [ "$STATUS" = "critical" ] && exit 1

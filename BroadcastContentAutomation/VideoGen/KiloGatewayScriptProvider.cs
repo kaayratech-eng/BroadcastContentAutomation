@@ -30,7 +30,7 @@ using GiggleGarden.Shared;
 
 class KiloGatewayScriptProvider : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -55,7 +55,7 @@ class KiloGatewayScriptProvider : IScriptProvider
         };
         var body = JsonSerializer.Serialize(payload);
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [kilo] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.PrefixFor(context)}[kilo] {m}")))
         {
             Timeout = TimeSpan.FromSeconds(180),
         };

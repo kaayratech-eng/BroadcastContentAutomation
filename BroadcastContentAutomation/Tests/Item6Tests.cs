@@ -512,6 +512,42 @@ public class Item6Tests
         Assert.Null(ParsePoolProvider(""));
     }
 
+    // ------------------------------------------------------------------
+    // Square-crop provenance (Drake 2026-11-27): art_pool.py prints
+    // "(raw WxH, crop top|centre)" on its success line; the gate
+    // judges the crop from it.
+    // ------------------------------------------------------------------
+
+    [Fact]
+    public void ArtProvenance_ParsesTopAnchor()
+    {
+        var p = ArtPoolClient.ParseProvenance(
+            "artpool: wikimedia -> /tmp/scene00-art-square.jpg (raw 1200x1804, crop top) (Commons: File:Drake 2010.jpg | CC BY-SA 4.0)");
+        Assert.NotNull(p);
+        Assert.Equal(1200, p!.RawWidth);
+        Assert.Equal(1804, p.RawHeight);
+        Assert.Equal(0.0, p.VerticalBias);
+    }
+
+    [Fact]
+    public void ArtProvenance_ParsesCentreAnchor()
+    {
+        var p = ArtPoolClient.ParseProvenance(
+            "artpool: pexels -> /tmp/x.jpg (raw 3056x4592, crop centre)");
+        Assert.NotNull(p);
+        Assert.Equal(3056, p!.RawWidth);
+        Assert.Equal(4592, p.RawHeight);
+        Assert.Equal(0.5, p.VerticalBias);
+    }
+
+    [Fact]
+    public void ArtProvenance_NullWhenNoProvenanceLine()
+    {
+        Assert.Null(ArtPoolClient.ParseProvenance("artpool: ovh -> /tmp/x.jpg"));
+        Assert.Null(ArtPoolClient.ParseProvenance("some other helper output"));
+        Assert.Null(ArtPoolClient.ParseProvenance(""));
+    }
+
     private static Type SceneType => ReflectionHelper.FindType(ReflectionHelper.VideoGen, "Scene");
     private static Type ScriptType => ReflectionHelper.FindType(ReflectionHelper.VideoGen, "VideoScript");
 
@@ -784,7 +820,9 @@ public class Item6Tests
     {
         var program = ReadRepoFile("BroadcastContentAutomation", "Uploader", "Program.cs");
         Assert.Contains("SingleInstanceLock.TryAcquire", program);
-        Assert.Contains("Another uploader run is already active", program);
+        // L1: the bounce log names the holder (pid + age), not a bare
+        // "another run is active".
+        Assert.Contains("uploader lock held by pid", program);
     }
 
     // ------------------------------------------------------------------

@@ -1337,7 +1337,10 @@ internal static class QualityGate
     // Decodes an image to a 256x256 grey buffer via ffmpeg (no
     // System.Drawing in this sandbox). Returns null when ffmpeg cannot
     // decode the file at all (corrupt image — the caller errors).
-    internal static byte[]? LoadGray256(string imagePath)
+    // L52: the failure reason travels with the null, so the caller's
+    // image-decode finding can name the ffmpeg cause instead of
+    // guessing "corrupt image".
+    internal static (byte[]? Gray, string? FailureReason) LoadGray256(string imagePath)
     {
         var tmp = Path.Combine(Path.GetTempPath(), $"qg-gray-{Guid.NewGuid():N}.raw");
         try
@@ -1349,13 +1352,16 @@ internal static class QualityGate
                 "-pix_fmt", "gray",
                 "-f", "rawvideo", tmp,
             ], timeoutSeconds: 60);
-            if (result.ExitCode != 0 || !File.Exists(tmp)) return null;
+            if (result.ExitCode != 0)
+                return (null, $"ffmpeg failed (exit {result.ExitCode})" +
+                    (string.IsNullOrWhiteSpace(result.Stderr) ? "" : $": {GiggleGarden.Shared.Text.Tail(result.Stderr.Trim(), 200)}"));
+            if (!File.Exists(tmp)) return (null, "ffmpeg produced no output file");
             var bytes = File.ReadAllBytes(tmp);
-            return bytes.Length == 256 * 256 ? bytes : null;
+            return bytes.Length == 256 * 256 ? (bytes, null) : (null, $"decoded {bytes.Length} bytes, expected {256 * 256}");
         }
-        catch
+        catch (Exception ex)
         {
-            return null;
+            return (null, $"{ex.GetType().Name}: {ex.Message}");
         }
         finally
         {
@@ -1398,11 +1404,13 @@ internal static class QualityGate
     // and the mid-frame is the least likely to be a fade or a cut.
     // Returns the temp PNG path (the caller deletes it) or null when
     // the clip cannot be probed or framed; a clip that cannot be framed
-    // is skipped by the check, never an error on its own.
-    internal static string? ExtractClipMidFrame(string clipPath)
+    // is skipped by the check, never an error on its own — but the
+    // failure reason travels with the null (L52) so the caller can warn
+    // with it instead of skipping silently.
+    internal static (string? Path, string? FailureReason) ExtractClipMidFrame(string clipPath)
     {
         var duration = ProbeMediaDuration(clipPath);
-        if (duration <= 0) return null;
+        if (duration <= 0) return (null, "could not probe duration (ffprobe returned no usable duration)");
         var tmp = Path.Combine(Path.GetTempPath(), $"qg-midframe-{Guid.NewGuid():N}.png");
         var result = RunProcessSync("ffmpeg",
         [
@@ -1411,8 +1419,10 @@ internal static class QualityGate
             "-i", clipPath,
             "-frames:v", "1", tmp,
         ], timeoutSeconds: 60);
-        if (result.ExitCode != 0 || !File.Exists(tmp)) return null;
-        return tmp;
+        if (result.ExitCode != 0 || !File.Exists(tmp))
+            return (null, $"ffmpeg failed (exit {result.ExitCode})" +
+                (string.IsNullOrWhiteSpace(result.Stderr) ? "" : $": {GiggleGarden.Shared.Text.Tail(result.Stderr.Trim(), 200)}"));
+        return (tmp, null);
     }
 
     // ------------------------------------------------------------------
@@ -1550,10 +1560,11 @@ internal static class QualityGate
         else if (!KnownArtSources.Contains(artSource))
             Error("image-source", $"Unknown ArtSource \"{artSource}\" for {fileName} — not a provider the pool recognises.");
 
-        var gray = LoadGray256(path);
+        var (gray, decodeReason) = LoadGray256(path);
         if (gray is null)
         {
-            Error("image-decode", $"Could not decode {fileName} to pixels — corrupt image.");
+            // L52: name the ffmpeg cause, not just "corrupt image".
+            Error("image-decode", $"Could not decode {fileName} to pixels — corrupt image ({decodeReason ?? "unknown ffmpeg error"}).");
             return findings;
         }
         var (stdDev, varLap) = AnalyzePixels(gray, 256, 256);
@@ -1566,6 +1577,60 @@ internal static class QualityGate
             artSource is not null && AiArtSources.Contains(artSource))
             Warn("image-photo-preference", $"Scene {sceneIndex} depicts a real-world subject ({Trunc(imagePrompt ?? "", 70)}) but the art is AI-generated ({artSource}) — a real Pexels photo would look like news, not an illustration. Pexels is the #2 leg for news scenes (query: topic/entity keywords); if it missed, check the query first.");
 
+        return findings;
+    }
+
+    // Square head-crop check (Drake 2026-11-27, Rishi: "add such to a
+    // quality check so that it does not happen in future"): a square
+    // cover crop of a portrait original discards the top region —
+    // exactly where the subject's head is — when the crop is centred.
+    // Commons "Drake 2010.jpg" (3056x4592) centre-cropped to 1024x1024
+    // lost the top 16.7% and the render opened on a headless Drake.
+    // Pure arithmetic on the derivation facts (original dimensions +
+    // crop anchor), so it runs at generation time — where the file is
+    // accepted or rejected — and at the batch gate, where the scene
+    // carries the recorded provenance.
+    //
+    // Severity: Error at >=10% of the height discarded from the top
+    // (Drake: 16.7%; a 3:4 portrait centre-cropped: 12.5%) — the head
+    // is gone, so re-derive top-anchored or swap the photo. Warning at
+    // >=5% (a mild portrait, e.g. 1024x1150: 5.5%) — the head may only
+    // be nicked, but the framing is suspect; check the frame before
+    // rendering. Below 5% the loss is a hairline; a landscape/square
+    // original has no vertical overflow at all, so the anchor is
+    // unobservable there and nothing is flagged. A top-anchored crop
+    // (bias 0) discards nothing from the top and never flags, whatever
+    // the aspect ratio.
+    internal static List<QualityFinding> CheckSquareCrop(
+        int sourceWidth, int sourceHeight, double verticalBias,
+        int sceneIndex, string sourceLabel, string? sourceFile = null)
+    {
+        const string gate = "images";
+        var label = $"scene{sceneIndex}";
+        var findings = new List<QualityFinding>();
+        if (sourceWidth <= 0 || sourceHeight <= 0) return findings;
+
+        // Cover scale to 1024x1024, then the crop window: the top rows
+        // lost are the vertical overflow times the anchor (0 = top,
+        // 0.5 = centre). The fraction is scale-invariant, so the raw
+        // thumb's dimensions (1200x1804) judge exactly like the
+        // original (3056x4592).
+        var scale = Math.Max(1024.0 / sourceWidth, 1024.0 / sourceHeight);
+        var scaledHeight = sourceHeight * scale;
+        var overflow = scaledHeight - 1024.0;
+        if (overflow <= 0) return findings;
+        var topDiscarded = overflow * verticalBias;
+        var topFraction = topDiscarded / scaledHeight;
+        if (topFraction < 0.05) return findings;
+
+        var anchor = verticalBias <= 0.0 ? "top-anchored"
+            : verticalBias >= 0.5 ? "centre-cropped"
+            : $"bias {verticalBias:0.##}";
+        var file = string.IsNullOrWhiteSpace(sourceFile) ? "the square art" : sourceFile;
+        var message = $"Scene {sceneIndex} square art came from a {sourceWidth}x{sourceHeight} portrait original ({sourceLabel}) {anchor} to square — the crop discards the top {topFraction * 100:0.0}% of the photo, where the subject's head is (Drake 2026-11-27: scene 0 opened headless). Re-derive the square top-anchored from the original, or swap the photo: {file}.";
+        findings.Add(new(gate, "square-head-crop",
+            topFraction >= 0.10 ? QualitySeverity.Error : QualitySeverity.Warning,
+            message, label));
         return findings;
     }
 
@@ -1634,6 +1699,18 @@ internal static class QualityGate
                 ? artPath
                 : Path.Combine(jobDir, artPath);
             findings.AddRange(CheckImageFile(fullPath, scene.ArtSource, scene.ImagePrompt, i));
+
+            // (1b) Square head-crop (Drake 2026-11-27): when the scene
+            // records the square-crop provenance, flag a portrait
+            // original whose square crop discarded the top region.
+            // Scenes without provenance (old jobs, hand-placed files,
+            // native-square generations) are skipped — no signal, no
+            // finding.
+            if (scene.ArtSourceWidth is { } srcW && scene.ArtSourceHeight is { } srcH
+                && scene.ArtCropAnchor is { } cropAnchor)
+                findings.AddRange(CheckSquareCrop(srcW, srcH,
+                    cropAnchor == "top" ? 0.0 : 0.5, i, scene.ArtSource ?? "unknown",
+                    Path.GetFileName(fullPath)));
 
             // (2) Duplicate art: the same image for two scenes (video #4
             // scenes 31 + 41 are byte-identical) breaks the one-distinct-
@@ -1773,12 +1850,22 @@ internal static class QualityGate
                 string framePath = fullPath;
                 if (isClip)
                 {
-                    var mid = ExtractClipMidFrame(fullPath);
-                    if (mid is null) continue;
+                    var (mid, midReason) = ExtractClipMidFrame(fullPath);
+                    if (mid is null)
+                    {
+                        // L52: a clip the check cannot mid-frame used to
+                        // be silently exempted from duplicate detection —
+                        // warn, naming the scene and the reason, so the
+                        // exemption is visible in the report.
+                        findings.Add(new(gate, "near-duplicate-check-skipped", QualitySeverity.Warning,
+                            $"near-duplicate check skipped for scene {i}: mid-frame extraction failed ({midReason ?? "unknown error"}) — this clip was not compared against the other scenes.",
+                            $"scene{i}"));
+                        continue;
+                    }
                     midFrameTemps.Add(mid);
                     framePath = mid;
                 }
-                var gray = LoadGray256(framePath);
+                var (gray, _) = LoadGray256(framePath);
                 if (gray is null) continue;
                 visuals.Add((i, isClip, fullPath, gray));
             }
@@ -2175,8 +2262,11 @@ internal static class QualityGate
                 report = existing ?? BuildReport(job, []);
                 report.Findings.RemoveAll(f => f.Gate == gate);
             }
-            catch
+            catch (Exception ex)
             {
+                // L79: a corrupt report used to lose its history silently.
+                // Log the rebuild so the loss is visible in the main log.
+                Console.WriteLine($"WARNING: quality-report.json {reportPath} unreadable ({ex.Message}) — rebuilding empty");
                 report = BuildReport(job, []);
             }
         }

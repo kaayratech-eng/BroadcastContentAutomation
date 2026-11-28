@@ -36,7 +36,9 @@
 // "openrouter-helper", "kilo" and "ovhcloud" do the same for the new legs.
 static class ScriptProviderFactory
 {
-    public static IScriptProvider Create(GenConfig cfg) => cfg.ScriptProvider.ToLowerInvariant() switch
+    // L21: the prep identity, when the caller knows it (Program.cs passes
+    // PrepContext.Current) — the pool's GovernorClient logs [jobId] with it.
+    public static IScriptProvider Create(GenConfig cfg, PrepIdentity? context = null) => cfg.ScriptProvider.ToLowerInvariant() switch
     {
         "groq" => new GroqScriptProvider(cfg),
         "gemini" => new GeminiScriptProvider(cfg),
@@ -59,9 +61,19 @@ static class ScriptProviderFactory
             new KiloGatewayScriptProvider(),
             new OvhCloudScriptProvider(),
             new PollinationsScriptProvider(),
-        ], GovernorClient.FromConfig(cfg)),
+        ], GovernorClient.FromConfig(cfg, context)),
         "hybrid" => new HybridScriptProvider(new GroqScriptProvider(cfg), new GeminiScriptProvider(cfg), firstProviderCalls: 2),
         "hybrid-helper" => new HybridScriptProvider(new GroqHelperScriptProvider(cfg), new GeminiHelperScriptProvider(cfg), firstProviderCalls: 2),
-        _ => new ClaudeScriptProvider(cfg),
+        _ => UnknownProviderFallback(cfg, context),
     };
+
+    // L66: a typo in GenConfig.ScriptProvider (or a stale value) used to
+    // silently select the paid Claude provider — no log line, a cost +
+    // correctness failure with zero evidence. Log the unknown value and
+    // the fallback; the selection itself is unchanged (logging only).
+    private static IScriptProvider UnknownProviderFallback(GenConfig cfg, PrepIdentity? context)
+    {
+        Console.WriteLine($"  {PrepContext.PrefixFor(context)}[script-pool] unknown ScriptProvider \"{cfg.ScriptProvider}\" — falling back to Claude (paid); check config");
+        return new ClaudeScriptProvider(cfg);
+    }
 }

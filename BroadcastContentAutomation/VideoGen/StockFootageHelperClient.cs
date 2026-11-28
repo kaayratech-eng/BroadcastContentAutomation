@@ -31,7 +31,12 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
         var json = await SearchAsync("search-video", query, orientation, perPage: 5);
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("videos", out var videos) || videos.GetArrayLength() == 0)
+        {
+            // L51: see StockFootageClient — name the query, the
+            // orientation and the reason at the null branch.
+            Console.WriteLine($"  {PrepContext.Prefix}Pexels {query} {orientation}: no video results — returning null");
             return null;
+        }
 
         string? bestLink = null;
         long? bestVideoId = null;
@@ -68,12 +73,19 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
                 }
             }
         }
-        if (bestLink is null) return null;
+        if (bestLink is null)
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}Pexels {query} {orientation}: no file matches orientation — returning null");
+            return null;
+        }
 
         await DownloadAsync(bestLink, outputPath);
-        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0
-            ? new StockDownload(outputPath, "video", bestVideoId, null, bestPageUrl, null)
-            : null;
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}Pexels {query} {orientation}: empty download — returning null");
+            return null;
+        }
+        return new StockDownload(outputPath, "video", bestVideoId, null, bestPageUrl, null);
     }
 
     private async Task<StockDownload?> TryDownloadPhotoAsync(string query, string outputPath, ImageClient.Orientation orientation)
@@ -81,11 +93,18 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
         var json = await SearchAsync("search-photo", query, orientation, perPage: 1);
         using var doc = JsonDocument.Parse(json);
         if (!doc.RootElement.TryGetProperty("photos", out var photos) || photos.GetArrayLength() == 0)
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}Pexels {query} {orientation}: no photo results — returning null");
             return null;
+        }
 
         var photo = photos[0];
         var link = photo.GetProperty("src").GetProperty("large2x").GetString();
-        if (string.IsNullOrEmpty(link)) return null;
+        if (string.IsNullOrEmpty(link))
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}Pexels {query} {orientation}: empty photo link — returning null");
+            return null;
+        }
         var photoId = photo.TryGetProperty("id", out var idEl) && idEl.ValueKind == JsonValueKind.Number
             ? idEl.GetInt64()
             : (long?)null;
@@ -97,9 +116,12 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
             : null;
 
         await DownloadAsync(link, outputPath);
-        return File.Exists(outputPath) && new FileInfo(outputPath).Length > 0
-            ? new StockDownload(outputPath, "photo", null, photoId, pageUrl, alt)
-            : null;
+        if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}Pexels {query} {orientation}: empty download — returning null");
+            return null;
+        }
+        return new StockDownload(outputPath, "photo", null, photoId, pageUrl, alt);
     }
 
     private async Task<string> SearchAsync(string command, string query, ImageClient.Orientation orientation, int perPage)
@@ -118,7 +140,7 @@ class StockFootageHelperClient(GenConfig cfg) : IStockFootageClient
 
     private static async Task DownloadAsync(string url, string outputPath)
     {
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [pexels] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.Prefix}[pexels] {m}")))
         {
             Timeout = TimeSpan.FromMinutes(2),
         };

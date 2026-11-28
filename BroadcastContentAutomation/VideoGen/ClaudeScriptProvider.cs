@@ -6,7 +6,7 @@ using GiggleGarden.Shared;
 // ScriptGenerator so the prompt-building/parsing logic there stays provider-agnostic.
 class ClaudeScriptProvider(GenConfig cfg) : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var body = JsonSerializer.Serialize(new
         {
@@ -15,7 +15,7 @@ class ClaudeScriptProvider(GenConfig cfg) : IScriptProvider
             messages = new[] { new { role = "user", content = prompt } },
         });
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [claude] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.PrefixFor(context)}[claude] {m}")))
         {
             Timeout = TimeSpan.FromMinutes(10),
         };

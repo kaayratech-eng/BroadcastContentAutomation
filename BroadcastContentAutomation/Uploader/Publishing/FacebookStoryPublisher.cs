@@ -85,7 +85,20 @@ sealed class FacebookStoryPublisher(FacebookConfig cfg, Logger log) : IPublisher
             // processing poll, so a VM restart while waiting cannot post a
             // second Story.
             if (request.OnPlatformIdAsync is not null)
-                await request.OnPlatformIdAsync(videoId);
+            {
+                try
+                {
+                    await request.OnPlatformIdAsync(videoId);
+                }
+                catch (Exception ex)
+                {
+                    // L13: the Story is live; only the id-save failed. The
+                    // callback already set the id in memory, and Program.cs
+                    // saves the sidecar again after PublishAsync returns —
+                    // log it and continue as a success.
+                    log.Error($"  [facebook_story] Story {videoId} is live but the id could not be recorded ({ex.GetType().Name}: {ex.Message}); continuing — the sidecar save after publish will persist it.");
+                }
+            }
 
             // 4. Poll until the story finishes processing — finish alone only
             // confirms the upload session closed, not that the story is live
@@ -116,6 +129,15 @@ sealed class FacebookStoryPublisher(FacebookConfig cfg, Logger log) : IPublisher
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return PublishResult.Retry($"Facebook Story transport error: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // L13: anything outside the known shapes used to escape to the
+            // per-video catch and burn a crash retry. Return a target-level
+            // Retry instead; a Story already live is re-verified via
+            // ExistingId on the next run.
+            return PublishResult.Retry(
+                $"Facebook Story unexpected error ({ex.GetType().Name}): {ex.Message}; target will retry, video already live will be re-verified via ExistingId");
         }
     }
 

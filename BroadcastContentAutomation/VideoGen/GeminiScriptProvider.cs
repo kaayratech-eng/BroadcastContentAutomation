@@ -10,7 +10,7 @@ using GiggleGarden.Shared;
 // GenConfig.ScriptProvider = "gemini" (see ScriptProviderFactory).
 class GeminiScriptProvider(GenConfig cfg) : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var payload = new
         {
@@ -31,7 +31,7 @@ class GeminiScriptProvider(GenConfig cfg) : IScriptProvider
 
         var body = JsonSerializer.Serialize(payload);
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [gemini] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.PrefixFor(context)}[gemini] {m}")))
         {
             Timeout = TimeSpan.FromMinutes(10),
         };

@@ -17,3 +17,7 @@
 - 2026-11-26: Cristiano Ronaldo Hangs Up Portugal Boots - A Legendary Farewell
 - 2026-11-26: Cristiano Ronaldo Hangs Up Portugal Boots - A Legendary Farewell
 - 2026-11-26: Lionel Messi’s MLS Playoff Chase: The Big Change That Could Define His Final Year
+- 2026-11-27: Lionel Messi’s MLS Playoff Chase: The Big Change That Could Define His Final Year
+- 2026-11-27: Drake’s Unauthorized Rice University Shoot – The Inside Story
+- 2026-11-27: Drake’s Unauthorized Rice University Shoot – The Inside Story
+- 2026-11-27: Drake’s Unauthorized Rice University Shoot – The Inside Story

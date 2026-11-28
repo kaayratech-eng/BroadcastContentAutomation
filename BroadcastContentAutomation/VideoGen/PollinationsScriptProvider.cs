@@ -17,7 +17,7 @@ using GiggleGarden.Shared;
 
 class PollinationsScriptProvider : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -35,7 +35,7 @@ class PollinationsScriptProvider : IScriptProvider
         };
         var body = JsonSerializer.Serialize(payload);
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [pollinations] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.PrefixFor(context)}[pollinations] {m}")))
         {
             Timeout = TimeSpan.FromSeconds(180),
         };
@@ -75,6 +75,10 @@ class PollinationsScriptProvider : IScriptProvider
         }
 
         text = text.Replace("```json", "").Replace("```", "").Trim();
+        // L3: like Kilo/OVH, an empty response is a hard failure, not an
+        // empty script — the pool must fall through to the next leg.
+        if (string.IsNullOrWhiteSpace(text))
+            throw new Exception("Pollinations returned no content (empty response) - try the next provider");
         var start = text.IndexOf('{');
         var end = text.LastIndexOf('}');
         return start >= 0 && end > start ? text[start..(end + 1)] : text;

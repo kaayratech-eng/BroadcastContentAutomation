@@ -14,9 +14,28 @@ using GiggleGarden.Shared;
 // wins, else the profile's fixed VoiceOverride style. Only styles verified
 // live against Azure for a given voice ever reach the helper, since an
 // unverified value fails the Azure call outright.
-class AzureHelperTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices) : ITtsProvider
+//
+// `runner` / `retryDelaysSeconds` (L44/L46) are test seams, same shape as
+// GovernorClient's runner: production passes neither, tests inject a fake
+// runner and zero delays so a throttle retry does not stall the suite on
+// the real 30/60/120/240s ladder.
+class AzureHelperTtsProvider(
+    GenConfig cfg,
+    IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices,
+    Func<string, IEnumerable<string>, Task<ProcessHelper.Result>>? runner = null,
+    int[]? retryDelaysSeconds = null) : ITtsProvider
 {
-    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
+    private readonly Func<string, IEnumerable<string>, Task<ProcessHelper.Result>> _runner =
+        runner ?? ((exe, args) => ProcessHelper.RunAsync(exe, args, timeoutMinutes: 5));
+    private readonly int[] _delays = retryDelaysSeconds ?? [30, 60, 120, 240];
+
+    // Explicit two-arg form: Activator.CreateInstance (used by the
+    // reflection-based PrepHardening tests) does not fill optional
+    // parameters, so the primary constructor alone is not enough.
+    public AzureHelperTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices)
+        : this(cfg, voices, null, null) { }
+
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
@@ -52,13 +71,20 @@ class AzureHelperTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string 
         // 34/43. A throttled call is not a failure: wait it out and retry with
         // backoff (30s, 60s, 120s, 240s) instead of failing the whole run.
         // Anything that is NOT a throttle throws immediately, as before.
-        var delays = new[] { 30, 60, 120, 240 };
+        // L42/L44/L45: every line names the scene (job id via PrepContext.Prefix);
+        // the throttle line carries the actual 429 detail, success after a
+        // throttle logs recovery, and the terminal failure names the scene,
+        // the attempt count, and the fall-through to the next provider.
+        var scene = PrepContext.ScenePhrase(sceneLabel);
+        var delays = _delays;
         for (var attempt = 0; ; attempt++)
         {
-            var result = await ProcessHelper.RunAsync("python3", args, timeoutMinutes: 5);
+            var result = await _runner("python3", args);
             if (result.ExitCode == 0)
             {
                 ProcessHelper.RequireFile(outputPath, "Azure TTS helper");
+                if (attempt > 0)
+                    Console.WriteLine($"  {PrepContext.Prefix}Azure TTS recovered after {attempt + 1} attempts, {scene}.");
                 return;
             }
 
@@ -66,11 +92,11 @@ class AzureHelperTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string 
             var throttled = detail.Contains("429", StringComparison.OrdinalIgnoreCase)
                 || detail.Contains("throttl", StringComparison.OrdinalIgnoreCase);
             if (!throttled || attempt >= delays.Length)
-                throw new Exception($"Azure TTS helper failed (exit {result.ExitCode}): {detail}");
+                throw new Exception($"Azure TTS helper failed {scene} after {attempt + 1} attempt{(attempt == 0 ? "" : "s")} (exit {result.ExitCode}): {detail} — falling through to next TTS provider");
 
             var wait = delays[attempt];
             Console.WriteLine(
-                $"  Azure TTS throttled (attempt {attempt + 1}/{delays.Length + 1}) - waiting {wait}s before retrying...");
+                $"  {PrepContext.Prefix}Azure TTS throttled {scene} (attempt {attempt + 1}/{delays.Length + 1}): {detail.Replace('\n', ' ').Replace('\r', ' ')} — waiting {wait}s before retrying...");
             await Task.Delay(TimeSpan.FromSeconds(wait));
         }
     }

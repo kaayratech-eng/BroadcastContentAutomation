@@ -8,7 +8,7 @@ using GiggleGarden.Shared;
 // GenConfig.ScriptProvider = "groq" (see ScriptProviderFactory).
 class GroqScriptProvider(GenConfig cfg) : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -36,7 +36,7 @@ class GroqScriptProvider(GenConfig cfg) : IScriptProvider
 
         var body = JsonSerializer.Serialize(payload);
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [groq] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.PrefixFor(context)}[groq] {m}")))
         {
             Timeout = TimeSpan.FromMinutes(10),
         };

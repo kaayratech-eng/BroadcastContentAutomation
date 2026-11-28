@@ -65,7 +65,7 @@ class VideoScript
     // so the words and the picture cannot drift apart within a video.
     //
     // Across videos, this is usually one of a small recurring cast (see
-    // CharacterSource.Resolve/CharacterPoolMaxSize in GiggleGardenProfile.cs) rather than
+    // CharacterSource.Resolve/CharacterPoolMaxSize in ContentProfile.cs) rather than
     // a fresh invention each time — a recognisable returning character is what the
     // research says drives loyalty in this genre, so the channel deliberately builds a
     // cast instead of a new stranger every video. CharacterCatchphrase is that cast
@@ -273,6 +273,21 @@ class Scene
     // generated art — a stock photo used to be silently indistinguishable.
     public string? ArtSource { get; set; }
 
+    // Square-crop provenance (Drake 2026-11-27): the raw photo's
+    // dimensions and the crop anchor the pool leg used to derive the
+    // 1024x1024 square. Commons "Drake 2010.jpg" is a 3056x4592
+    // portrait; the centre square crop discarded the top ~17% — the
+    // subject's head — and the render opened on a headless Drake. The
+    // quality gate's square-head-crop check reads these three fields:
+    // a portrait original centre-cropped ("centre") flags, a
+    // top-anchored one ("top") never does. Null on old scripts (the
+    // derivation is unauditable there) and on legs that generate
+    // square art natively, where no crop happens. Recorded by
+    // RunVisualLoopAsync from the pool leg's provenance line.
+    public int? ArtSourceWidth { get; set; }
+    public int? ArtSourceHeight { get; set; }
+    public string? ArtCropAnchor { get; set; }
+
     // Pexels provenance for a "context" scene (Ronaldo 2026-11-25: scene 4's
     // hockey clip was unauditable — script.json recorded no query or clip
     // id, so nobody could tell what Pexels returned or why). Recorded by
@@ -385,7 +400,7 @@ static class ScriptGenerator
         bool longForm = false, IReadOnlyList<string>? avoidTopics = null,
         Func<VideoScript, int, Task>? onActComplete = null,
         string? topicCategory = null, IReadOnlyList<TrendResearch.NewsItem>? newsItems = null,
-        ScriptResume? resumeFrom = null)
+        ScriptResume? resumeFrom = null, PrepIdentity? context = null)
     {
         // Faceless profiles (Trendline Now) never invent a character - the news
         // explainer path builds its own prompt (statement-driven beats,
@@ -393,7 +408,7 @@ static class ScriptGenerator
         // The character-anchored flow below is only for profiles with a mascot.
         if (!profile.UsesCharacterMascot)
             return await GenerateNewsAsync(profile, topic, language, provider, trendContext,
-                topicCategory, newsItems, formatOverride, longForm, avoidTopics, onActComplete, resumeFrom);
+                topicCategory, newsItems, formatOverride, longForm, avoidTopics, onActComplete, resumeFrom, context);
 
         var formatDef = PickFormat(profile, formatOverride);
         var (contentRules, colourGuidance, thumbnailGuidance, introThird, musicMenu, hashtagExamples, longFormContentRules) =
@@ -545,7 +560,7 @@ Language for ALL narration: {{langName}}.
 
 This video's content format is {{formatDef.Id}}. Its requirements are given below and
 DIVERGE from other formats on purpose - follow THIS format's rules, not a
-generic "kids video" template.
+generic template.
 
 {{characterLine}}
 
@@ -659,11 +674,11 @@ Respond ONLY with JSON, no markdown fences:
         }
         else
         {
-            Console.WriteLine($"  [{DateTime.UtcNow:HH:mm:ss}Z] Generating act 1/4 ...");
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{DateTime.UtcNow:HH:mm:ss}Z] Generating act 1/4 ...");
             script = await CompleteAndParseAsync<VideoScript>(provider, prompt, "script",
-                validate: s => ValidateScenes(s.Scenes, profile));
+                validate: s => ValidateScenes(s.Scenes, profile), context: context);
 
-            if (script.Scenes.Count == 0) throw new Exception("Claude returned a script with no scenes.");
+            if (script.Scenes.Count == 0) throw new Exception("Claude returned a script with no scenes." + ZeroSceneSuffix(provider, context));
             if (string.IsNullOrWhiteSpace(script.Title)) throw new Exception("Claude returned a script with no title.");
         }
 
@@ -694,10 +709,10 @@ Respond ONLY with JSON, no markdown fences:
             string[] actRoles = ["the rising complication", "the turning point", "the climax and resolution"];
             for (var act = startAct; act <= 4; act++)
             {
-                Console.WriteLine($"  [{DateTime.UtcNow:HH:mm:ss}Z] Generating act {act}/4 ({actRoles[act - 2]}) ...");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{DateTime.UtcNow:HH:mm:ss}Z] Generating act {act}/4 ({actRoles[act - 2]}) ...");
                 var scenes = await GenerateContinuationActAsync(
                     profile, formatDef, effectiveContentRules, sceneKindGuidance, colourGuidance,
-                    langName, provider, script, act, actRoles[act - 2], moodStyles);
+                    langName, provider, script, act, actRoles[act - 2], moodStyles, context);
                 script.Scenes.AddRange(scenes);
                 if (onActComplete is not null)
                     await onActComplete(script, act);
@@ -723,7 +738,7 @@ Respond ONLY with JSON, no markdown fences:
             throw new Exception(
                 "Claude returned a long-form script where every scene shares the same " +
                 "visualGroup (or omitted it) - that would reuse a single image for the whole " +
-                "video. Expected roughly 12-18 distinct groups.");
+                "video. Expected roughly 12-18 distinct groups." + JobTopicSuffix(context, topic));
 
         // A pooled character is not the model's to change - it describes a picture that
         // already exists - so the sidecar wins over whatever came back.
@@ -739,7 +754,7 @@ Respond ONLY with JSON, no markdown fences:
         if (string.IsNullOrWhiteSpace(script.CharacterName) || string.IsNullOrWhiteSpace(script.CharacterDescription))
             throw new Exception(
                 "Claude returned a script without a character name and appearance description. " +
-                "Both are required - the description is what this video's character is drawn from.");
+                "Both are required - the description is what this video's character is drawn from." + JobTopicSuffix(context, topic));
 
         // Fixed brand/audience block first, then whatever is specific to this video,
         // de-duplicated in case the model volunteered one of the fixed ones anyway.
@@ -765,7 +780,7 @@ Respond ONLY with JSON, no markdown fences:
             if (badContextScene is not null)
                 throw new Exception(
                     "Claude tagged a scene sceneKind: \"context\" but returned no stockQuery - " +
-                    "that scene has nothing for StockFootageClient to search for.");
+                    "that scene has nothing for StockFootageClient to search for." + JobTopicSuffix(context, topic));
         }
 
         NormalizeSceneMoods(script.Scenes, moodStyles);
@@ -805,7 +820,8 @@ Respond ONLY with JSON, no markdown fences:
     static async Task<List<Scene>> GenerateContinuationActAsync(
         ContentProfile profile, ContentFormatDef formatDef, string effectiveContentRules,
         string sceneKindGuidance, string colourGuidance, string langName, IScriptProvider provider,
-        VideoScript scriptSoFar, int actNumber, string actRole, IReadOnlyList<string> moodStyles)
+        VideoScript scriptSoFar, int actNumber, string actRole, IReadOnlyList<string> moodStyles,
+        PrepIdentity? context = null)
     {
         var nextVisualGroup = scriptSoFar.Scenes.Max(s => s.VisualGroup) + 1;
 
@@ -885,10 +901,10 @@ Respond ONLY with JSON, no markdown fences:
 """;
 
         var result = await CompleteAndParseAsync<ScenesOnly>(provider, prompt, $"act {actNumber}",
-            validate: r => ValidateScenes(r.Scenes, profile));
+            validate: r => ValidateScenes(r.Scenes, profile), context: context);
 
         if (result.Scenes.Count == 0)
-            throw new Exception($"The script provider returned an act {actNumber} with no scenes.");
+            throw new Exception($"The script provider returned an act {actNumber} with no scenes." + ZeroSceneSuffix(provider, context));
 
         return result.Scenes;
     }
@@ -1058,7 +1074,21 @@ Respond ONLY with JSON, no markdown fences:
     internal const int LongFormWarnChars = 7500;
     internal const string FloorFailurePrefix = "Long-form script is far too short";
 
-    internal static void ValidateLongFormFloors(int sceneCount, int totalChars)
+    // L70: a failure line that cannot be tied to a job is unactionable in
+    // a driver log with several sequential preps. The top-level FATAL line
+    // (Program.cs) already carries the job id (L21) but not the topic, so
+    // these throws name both: "(job <id>, topic "<topic>")". Empty when
+    // neither is known (a bare unit-test call).
+    internal static string JobTopicSuffix(PrepIdentity? context, string? topic = null)
+    {
+        var id = context ?? PrepContext.Current;
+        var job = id?.JobId;
+        var t = topic ?? id?.Topic;
+        if (job is null && t is null) return "";
+        return $" (job {job ?? "unknown"}{(t is null ? "" : $", topic \"{t}\"")})";
+    }
+
+    internal static void ValidateLongFormFloors(int sceneCount, int totalChars, PrepIdentity? context = null)
     {
         var estSeconds = totalChars / 5.9 / 2.83; // ~5.9 chars/word, ~170 wpm
         if (sceneCount < LongFormMinScenes)
@@ -1066,12 +1096,13 @@ Respond ONLY with JSON, no markdown fences:
                 $"{FloorFailurePrefix}: {sceneCount} scenes, {totalChars} chars " +
                 $"of narration (~{estSeconds:0}s estimated) - below the {LongFormMinScenes}-scene floor " +
                 $"(target 50-60 scenes, ~{LongFormWarnChars}+ chars). " +
-                "An act was probably truncated and salvaged thin. Re-run --prep from a fresh partial.");
+                $"An act was probably truncated and salvaged thin. Re-run --prep from a fresh partial.{JobTopicSuffix(context)}");
         if (totalChars < LongFormHardFailChars)
             throw new Exception(
                 $"{FloorFailurePrefix}: {sceneCount} scenes, {totalChars} chars " +
                 $"of narration (~{estSeconds:0}s estimated) - below the 8-minute / ~{LongFormWarnChars}-char bar. " +
-                "An act was probably truncated and salvaged thin. Re-run --prep.");
+                "An act was probably truncated and salvaged thin. Re-run --prep." +
+                JobTopicSuffix(context));
     }
 
     internal static bool IsFloorFailure(Exception ex) =>
@@ -1082,7 +1113,8 @@ Respond ONLY with JSON, no markdown fences:
         string? trendContext, string? topicCategory,
         IReadOnlyList<TrendResearch.NewsItem>? newsItems,
         string? formatOverride, bool longForm, IReadOnlyList<string>? avoidTopics,
-        Func<VideoScript, int, Task>? onActComplete, ScriptResume? resumeFrom = null)
+        Func<VideoScript, int, Task>? onActComplete, ScriptResume? resumeFrom = null,
+        PrepIdentity? context = null)
     {
         var formatDef = PickFormat(profile, formatOverride);
         var (contentRules, colourGuidance, thumbnailGuidance, introThird, musicMenu, hashtagExamples, longFormContentRules) =
@@ -1310,11 +1342,11 @@ Respond ONLY with JSON, no markdown fences:
         }
         else
         {
-            Console.WriteLine($"  [{DateTime.UtcNow:HH:mm:ss}Z] Generating news act 1/3 ...");
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{DateTime.UtcNow:HH:mm:ss}Z] Generating news act 1/3 ...");
             script = await CompleteAndParseAsync<VideoScript>(provider, prompt, "news script",
-                validate: s => ValidateNewsScenes(s.Scenes, factsBlock));
+                validate: s => ValidateNewsScenes(s.Scenes, factsBlock, context), context: context);
 
-            if (script.Scenes.Count == 0) throw new Exception("The script provider returned a news script with no scenes.");
+            if (script.Scenes.Count == 0) throw new Exception("The script provider returned a news script with no scenes." + ZeroSceneSuffix(provider, context));
             if (string.IsNullOrWhiteSpace(script.Title)) throw new Exception("The script provider returned a news script with no title.");
         }
 
@@ -1335,7 +1367,7 @@ Respond ONLY with JSON, no markdown fences:
                     profile, formatDef, effectiveContentRules, style, langName, provider,
                     new VideoScript(), script.Scenes, 1,
                     "the hook and what happened - the opening of the story",
-                    factsBlock, missing, nextGroup));
+                    factsBlock, missing, nextGroup, context));
         }
 
         // Run-level fields, set here (not only at the end) so the per-act
@@ -1364,10 +1396,10 @@ Respond ONLY with JSON, no markdown fences:
             ];
             for (var act = startAct; act <= 3; act++)
             {
-                Console.WriteLine($"  [{DateTime.UtcNow:HH:mm:ss}Z] Generating news act {act}/3 ({actRoles[act - 2]}) ...");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{DateTime.UtcNow:HH:mm:ss}Z] Generating news act {act}/3 ({actRoles[act - 2]}) ...");
                 var scenes = await GenerateNewsContinuationActAsync(
                     profile, formatDef, effectiveContentRules, style,
-                    langName, provider, script, act, actRoles[act - 2], factsBlock);
+                    langName, provider, script, act, actRoles[act - 2], factsBlock, context);
                 script.Scenes.AddRange(scenes);
                 if (onActComplete is not null)
                     await onActComplete(script, act);
@@ -1406,7 +1438,7 @@ Respond ONLY with JSON, no markdown fences:
         if (longForm)
         {
             var totalChars = script.Scenes.Sum(s => s.Narration.Length);
-            ValidateLongFormFloors(script.Scenes.Count, totalChars);
+            ValidateLongFormFloors(script.Scenes.Count, totalChars, context);
             var totalWords = script.Scenes.Sum(s => s.Narration.Split(
                 [' ', '\t', '\n', '\r'], StringSplitOptions.RemoveEmptyEntries).Length);
             var estSeconds = totalWords / 2.83; // ~170 wpm at the +10% TTS rate
@@ -1428,7 +1460,7 @@ Respond ONLY with JSON, no markdown fences:
             throw new Exception(
                 "The script provider returned a long-form news script where every scene shares " +
                 "the same visualGroup (or omitted it) - that would reuse a single image for the " +
-                "whole video. Expected roughly 9-15 distinct groups.");
+                "whole video. Expected roughly 9-15 distinct groups." + JobTopicSuffix(context, topic));
 
         // Fixed brand/audience block first, then whatever is specific to this video,
         // de-duplicated in case the model volunteered one of the fixed ones anyway.
@@ -1512,17 +1544,18 @@ Respond ONLY with JSON, no markdown fences:
     internal static async Task<List<Scene>> GenerateNewsContinuationActAsync(
         ContentProfile profile, ContentFormatDef formatDef, string effectiveContentRules,
         TopicStyleProfile style, string langName, IScriptProvider provider,
-        VideoScript scriptSoFar, int actNumber, string actRole, string? sourceFacts = null)
+        VideoScript scriptSoFar, int actNumber, string actRole, string? sourceFacts = null,
+        PrepIdentity? context = null)
     {
         var minScenes = NewsActMinScenes(actNumber);
         var scenes = await GenerateNewsContinuationActScenesAsync(
             profile, formatDef, effectiveContentRules, style, langName, provider,
             scriptSoFar, [], actNumber, actRole, sourceFacts,
-            NewsActAskHigh(actNumber), scriptSoFar.Scenes.Max(s => s.VisualGroup) + 1);
+            NewsActAskHigh(actNumber), scriptSoFar.Scenes.Max(s => s.VisualGroup) + 1, context);
         await RepairThinActAsync(scenes, minScenes, $"news act {actNumber}",
             async (missing, nextGroup) => await GenerateNewsContinuationActScenesAsync(
                 profile, formatDef, effectiveContentRules, style, langName, provider,
-                scriptSoFar, scenes, actNumber, actRole, sourceFacts, missing, nextGroup));
+                scriptSoFar, scenes, actNumber, actRole, sourceFacts, missing, nextGroup, context));
         return scenes;
     }
 
@@ -1540,7 +1573,7 @@ Respond ONLY with JSON, no markdown fences:
         TopicStyleProfile style, string langName, IScriptProvider provider,
         VideoScript scriptSoFar, IReadOnlyList<Scene> actScenesSoFar,
         int actNumber, string actRole, string? sourceFacts,
-        int scenesToWrite, int nextVisualGroup)
+        int scenesToWrite, int nextVisualGroup, PrepIdentity? context = null)
     {
         // Feed the FULL script so far - every prior scene's narration, numbered, in
         // order - plus this act's already-accepted scenes on a repair call, so the
@@ -1662,10 +1695,10 @@ Respond ONLY with JSON, no markdown fences:
 """;
 
         var result = await CompleteAndParseAsync<ScenesOnly>(provider, prompt, $"news act {actNumber}",
-            validate: r => ValidateNewsScenes(r.Scenes, actSourceFacts));
+            validate: r => ValidateNewsScenes(r.Scenes, actSourceFacts, context), context: context);
 
         if (result.Scenes.Count == 0)
-            throw new Exception($"The script provider returned a news act {actNumber} with no scenes.");
+            throw new Exception($"The script provider returned a news act {actNumber} with no scenes." + ZeroSceneSuffix(provider, context));
 
         return result.Scenes;
     }
@@ -1749,7 +1782,7 @@ Respond ONLY with JSON, no markdown fences:
     // sourceFacts is the exact facts text the model was given (the Act 1 facts
     // block, plus the recap for continuation acts). When it is null - a
     // hand-written manual script - the provenance check below is skipped.
-    internal static void ValidateNewsScenes(IReadOnlyList<Scene> scenes, string? sourceFacts = null)
+    internal static void ValidateNewsScenes(IReadOnlyList<Scene> scenes, string? sourceFacts = null, PrepIdentity? context = null)
     {
         for (var i = 0; i < scenes.Count; i++)
         {
@@ -1778,8 +1811,12 @@ Respond ONLY with JSON, no markdown fences:
                     scene.VisualSpec is { } spec &&
                     !VisualNumbersComeFromSource(spec, sourceFacts))
                 {
+                    // L69: the old line named the scene but not the numbers
+                    // that failed, so the demotion could not be audited.
+                    var missing = VisualNumbersMissingFromSource(spec, sourceFacts);
+                    var jobId = (context ?? PrepContext.Current)?.JobId ?? "unknown";
                     Console.WriteLine(
-                        $"  [script] {label}: visual demoted to art - its numbers do not appear in the source facts.");
+                        $"  {PrepContext.PrefixFor(context)}[script] {label}: visual demoted to art — numbers {string.Join(", ", missing)} not in source facts (scene {i + 1}, job {jobId}) — continuing as art");
                     scene.SceneKind = "art";
                     scene.VisualSpec = null;
                     if (string.IsNullOrWhiteSpace(scene.ImagePrompt))
@@ -1817,7 +1854,9 @@ Respond ONLY with JSON, no markdown fences:
     // match "300" and "2024" does not match "20240". Commas are stripped on
     // both sides ("1,000" matches "1000"); a "%" is ignored on both sides, so
     // a "30%" callout matches a source that says "30" and vice versa.
-    static bool VisualNumbersComeFromSource(VisualSpec spec, string sourceFacts)
+    // L69: the missing numbers are exposed separately so the demotion log
+    // can name the offending values.
+    internal static List<string> VisualNumbersMissingFromSource(VisualSpec spec, string sourceFacts)
     {
         var source = sourceFacts.Replace(",", "");
         var numbers = new List<string>();
@@ -1834,9 +1873,12 @@ Respond ONLY with JSON, no markdown fences:
             numbers.AddRange(NumberTokenRegex.Matches(text.Replace(",", ""))
                 .Select(m => m.Value.TrimEnd('%')));
         }
-        return numbers.All(n =>
-            Regex.IsMatch(source, $@"(?<![\d.]){Regex.Escape(n)}(?![\d.])"));
+        return numbers.Where(n =>
+            !Regex.IsMatch(source, $@"(?<![\d.]){Regex.Escape(n)}(?![\d.])")).ToList();
     }
+
+    static bool VisualNumbersComeFromSource(VisualSpec spec, string sourceFacts) =>
+        VisualNumbersMissingFromSource(spec, sourceFacts).Count == 0;
 
     // "context" and "visual" are the only kinds that change what a scene needs;
     // anything else - "art", "character", a typo, or a missing value - is an art
@@ -2144,29 +2186,46 @@ Respond ONLY with JSON, no markdown fences:
     // the identical line-chart defect (3 labels, 1 value). When an attempt fails,
     // the next attempt names the exact defect so the model can fix it instead of
     // repeating it. Only the latest defect is named, never accumulated.
+    // L68: char count of the most recent provider response returned by
+    // CompleteAndParseAsync — the 0-scene guards below run immediately
+    // after it returns, so this is the count of the response that produced
+    // the empty script. Set on every successful return (plain, salvaged,
+    // strict retry).
+    internal static int LastResponseChars { get; private set; }
+
     internal static async Task<T> CompleteAndParseAsync<T>(
-        IScriptProvider provider, string prompt, string label, Action<T>? validate = null, int maxAttempts = 3)
+        IScriptProvider provider, string prompt, string label, Action<T>? validate = null, int maxAttempts = 3,
+        PrepIdentity? context = null)
         where T : class
     {
         var jsonOpts = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+        // L21: the act label rides with the job identity into the leg, so
+        // the leg's own lines can name job + act.
+        var actContext = (context ?? PrepContext.Current)?.WithAct(label);
+        var topic = (context ?? PrepContext.Current)?.Topic;
+        // L68: the char count of the last provider response, for the
+        // final-failure log and the 0-scene guards.
+        var lastResponseChars = 0;
         string? lastDefect = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
-            Console.WriteLine($"  [{label}] requesting completion (attempt {attempt}/{maxAttempts}) ...");
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{label}] requesting completion (attempt {attempt}/{maxAttempts}) ...");
             var started = DateTime.UtcNow;
             var effectivePrompt = lastDefect is null ? prompt :
                 prompt + "\n\nPREVIOUS ATTEMPT FAILED - fix exactly this defect and nothing else: " + lastDefect;
             if (lastDefect is not null)
-                Console.WriteLine($"  [{label}] retrying with the previous defect named: {TruncateFacts(lastDefect, 200)}");
-            var text = await provider.CompleteAsync(effectivePrompt);
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{label}] retrying with the previous defect named: {TruncateFacts(lastDefect, 200)}");
+            var text = await provider.CompleteAsync(effectivePrompt, actContext);
+            lastResponseChars = text.Length;
             Console.WriteLine(
-                $"  [{label}] provider returned {text.Length} chars in " +
+                $"  {PrepContext.PrefixFor(context)}[{label}] provider returned {text.Length} chars in " +
                 $"{(DateTime.UtcNow - started).TotalSeconds:0}s (attempt {attempt}/{maxAttempts})");
             try
             {
                 var result = JsonSerializer.Deserialize<T>(text, jsonOpts)
                     ?? throw new JsonException("response body was \"null\"");
                 validate?.Invoke(result);
+                LastResponseChars = lastResponseChars;
                 return result;
             }
             catch (Exception ex) when (ex is JsonException or InvalidDataException)
@@ -2194,13 +2253,14 @@ Respond ONLY with JSON, no markdown fences:
                             _ => -1,
                         };
                         Console.WriteLine(
-                            $"  [{label}] WARNING: salvaged a truncated provider response - " +
+                            $"  {PrepContext.PrefixFor(context)}[{label}] WARNING: salvaged a truncated provider response - " +
                             $"kept {scenes} complete scenes, dropped the cut-off tail (attempt {attempt}/{maxAttempts})");
+                        LastResponseChars = lastResponseChars;
                         return repaired;
                     }
                     catch (Exception rex) when (rex is JsonException or InvalidDataException)
                     {
-                        Console.WriteLine($"  [{label}] salvage failed ({rex.Message}) - retrying");
+                        Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{label}] salvage failed ({rex.Message}) - retrying");
                     }
                 }
                 if (attempt == maxAttempts)
@@ -2214,28 +2274,53 @@ Respond ONLY with JSON, no markdown fences:
                         "text. Keep the scenes list short (at most 10 scenes) so the " +
                         "response completes.";
                     Console.WriteLine(
-                        $"  [{label}] final attempt failed ({ex.Message}) - one strict retry with a shorter ask");
+                        $"  {PrepContext.PrefixFor(context)}[{label}] final attempt failed ({ex.Message}) - one strict retry with a shorter ask");
                     try
                     {
-                        var strictText = await provider.CompleteAsync(strictPrompt);
+                        var strictText = await provider.CompleteAsync(strictPrompt, actContext);
+                        lastResponseChars = strictText.Length;
                         var strictResult = JsonSerializer.Deserialize<T>(strictText, jsonOpts)
                             ?? throw new JsonException("response body was \"null\"");
                         validate?.Invoke(strictResult);
-                        Console.WriteLine($"  [{label}] strict retry returned usable JSON");
+                        Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{label}] strict retry returned usable JSON");
+                        LastResponseChars = lastResponseChars;
                         return strictResult;
                     }
                     catch (Exception sex)
                     {
+                        // L68: the final failure used to throw with no log
+                        // line at all — log label + both errors + the last
+                        // response length + topic before aborting the prep.
+                        Console.WriteLine(
+                            $"  {PrepContext.PrefixFor(context)}[{label}] no usable JSON after {maxAttempts} attempts + strict retry ({ex.Message} / {sex.Message}, last response {lastResponseChars} chars{(topic is null ? "" : $", topic \"{topic}\"")}) — aborting prep, no further retry");
                         throw new Exception(
                             $"The script provider returned no usable {label} JSON after " +
                             $"{maxAttempts} attempts plus a strict retry: {ex.Message} (strict retry: {sex.Message})");
                     }
                 }
-                Console.WriteLine($"  [{label}] {ex.Message} (attempt {attempt}/{maxAttempts}) - retrying");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[{label}] {ex.Message} (attempt {attempt}/{maxAttempts}) - retrying");
             }
         }
 
         throw new Exception("unreachable");
+    }
+
+    // L68: a 0-scene result names the leg that produced it (the pool
+    // reports its winner via LastWinningLegName — added in L59, since the
+    // pool did NOT report the winner before this work; a lone provider
+    // names itself), the returned char count, and the job/topic. A bare
+    // "no scenes" could not be attributed in a driver log with several
+    // sequential preps, and the 0-scene guards below sit outside
+    // CompleteAndParseAsync's retry catch, so the leg was never retried
+    // and never named.
+    internal static string ZeroSceneSuffix(IScriptProvider provider, PrepIdentity? context)
+    {
+        var leg = (provider as FallbackScriptProvider)?.LastWinningLegName ?? provider.GetType().Name;
+        var id = context ?? PrepContext.Current;
+        var parts = new List<string> { $"winning leg {leg}", $"returned {LastResponseChars} chars" };
+        if (id?.JobId is not null) parts.Add($"job {id.JobId}");
+        if (id?.Topic is not null) parts.Add($"topic \"{id.Topic}\"");
+        return $" ({string.Join(", ", parts)})";
     }
 
     // Fail fast at script time, not mid-TTS: a model slip that leaves a scene's
@@ -2280,11 +2365,22 @@ Respond ONLY with JSON, no markdown fences:
     // that scene's whole TTS call. Nulled rather than thrown/retried: an occasional off-menu
     // tag is not worth burning a script-generation attempt over, it just falls back to the
     // same neutral read every scene had before this feature existed.
-    static void NormalizeSceneMoods(IEnumerable<Scene> scenes, IReadOnlyList<string> moodStyles)
+    // L83: an off-menu mood used to be nulled with no log entry at all,
+    // so a scene silently falling back to the default style was invisible.
+    // Log the drop with the scene number and the dropped value.
+    internal static void NormalizeSceneMoods(IEnumerable<Scene> scenes, IReadOnlyList<string> moodStyles)
     {
+        var i = 0;
         foreach (var scene in scenes)
+        {
+            i++;
             if (scene.Mood is not null &&
                 !moodStyles.Any(m => m.Equals(scene.Mood, StringComparison.OrdinalIgnoreCase)))
+            {
+                Console.WriteLine(
+                    $"  [script] mood \"{scene.Mood}\" not in profile menu — mood null for scene {i} — using default style");
                 scene.Mood = null;
+            }
+        }
     }
 }

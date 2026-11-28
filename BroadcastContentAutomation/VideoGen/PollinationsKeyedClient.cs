@@ -22,8 +22,11 @@ using GiggleGarden.Shared;
 // back 768x1280), but a 1024x1024 request IS honoured (verified live
 // 2026-11-11: 1024x1024 JPEG in 10.5s). The pipeline therefore generates
 // ONE square image per scene and derives both orientations from it with
-// VideoAssembler.CropScaleToExactAsync — a plain centre cover crop, not a
-// blur-pad — so portrait and landscape show the identical scene. This
+// VideoAssembler.CropScaleToSquareAsync — a cover crop that
+// top-anchors portrait downloads so the subject's head survives
+// (Drake 2026-11-27: a centre square crop of a tall portrait cut
+// the head off), not a blur-pad — so portrait and landscape show
+// the identical scene. This
 // replaced the 2026-11-10 separate-orientation rule (two diffusion runs
 // per scene), which the user found produced different images per
 // orientation in the first test videos.
@@ -40,6 +43,11 @@ static class PollinationsKeyedClient
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
         if (ProcessHelper.AlreadyOnDisk(outputPath)) return outputPath;
 
+        // L50: the final attempt is caught too (see ArtPoolClient) — the
+        // old summary throw was dead code. A key-blocked failure still
+        // propagates untouched (neither catch matches it) so the chain
+        // logs the leg dormant instead of retrying a dead key.
+        Exception? lastError = null;
         var seed = ProcessHelper.SeedFor(outputPath);
         var temp = outputPath + ".raw";
 
@@ -69,7 +77,7 @@ static class PollinationsKeyedClient
                 }
                 else
                 {
-                    await VideoAssembler.CropScaleToExactAsync(cfg, temp, outputPath, 1024, 1024);
+                    await VideoAssembler.CropScaleToSquareAsync(cfg, temp, outputPath);
                     try { File.Delete(temp); } catch { }
                 }
                 var bytes = new FileInfo(outputPath).Length;
@@ -80,7 +88,12 @@ static class PollinationsKeyedClient
             {
                 Console.WriteLine($"  Keyed Pollinations square art attempt {attempt} failed ({ex.Message}), retrying...");
             }
+            catch (Exception ex) when (!ImagePool.IsKeyBlockedError(ex.Message))
+            {
+                lastError = ex;
+            }
         }
-        throw new Exception($"Pollinations keyed square art generation failed after {maxAttempts} attempts for {outputPath}.");
+        Console.WriteLine($"  art leg pollinations-keyed scene {Path.GetFileName(outputPath)} failed after {maxAttempts} attempts, last error: {lastError?.Message}");
+        throw new Exception($"Pollinations keyed square art generation failed after {maxAttempts} attempts for {outputPath} (leg pollinations-keyed, scene {Path.GetFileName(outputPath)}): last error: {lastError?.Message}");
     }
 }

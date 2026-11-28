@@ -111,6 +111,40 @@ public class WritePropsTests
         Assert.Equal("scene00-art.png", first.GetProperty("path").GetString());
     }
 
+    // L54 — the visual-missing reuse line must name the scene: with 55
+    // scenes, "a scene has no visual" was unactionable.
+    [Fact]
+    public async Task BuildAndWriteProps_VisualMissingLogNamesScene()
+    {
+        var (workDir, scenes) = Fixture();
+        scenes.Add(new Scene
+        {
+            Narration = "Third scene narration.",
+            DurationSeconds = 6.0,
+            SceneKind = "character",
+            VisualMissing = true,
+        });
+
+        var sb = new System.Text.StringBuilder();
+        var oldOut = Console.Out;
+        try
+        {
+            Console.SetOut(new StringWriter(sb));
+            await VideoAssembler.BuildAndWritePropsAsync(
+                NoMusicProfile(), new GenConfig(), scenes, workDir, 1080, 1920, "tense atmospheric",
+                outroLines: null, outroAudioPath: null, isCalm: false,
+                outroHandles: null);
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+
+        var log = sb.ToString();
+        Assert.Contains("[visual-missing]", log);
+        Assert.Contains("scene 3", log);
+    }
+
     [Fact]
     public void WriteProps_ModeWritesBothPropsFilesWithoutRendering()
     {

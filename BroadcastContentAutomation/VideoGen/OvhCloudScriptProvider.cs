@@ -20,7 +20,7 @@ using GiggleGarden.Shared;
 
 class OvhCloudScriptProvider : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var payload = new Dictionary<string, object?>
         {
@@ -39,7 +39,7 @@ class OvhCloudScriptProvider : IScriptProvider
         };
         var body = JsonSerializer.Serialize(payload);
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [ovhcloud] {m}")))
+        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.PrefixFor(context)}[ovhcloud] {m}")))
         {
             Timeout = TimeSpan.FromSeconds(180),
         };

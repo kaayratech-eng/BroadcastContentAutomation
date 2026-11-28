@@ -59,20 +59,43 @@ public sealed class Sidecar
     public string Aspect { get; set; } = "landscape";      // landscape | vertical
     public List<string> Targets { get; set; } = [];
 
-    // Which ContentProfile/channel this video belongs to (e.g. "gigglegarden",
+    // Which ContentProfile/channel this video belongs to (e.g. "trendlinenow",
     // "chronicleandchaos") — drives which channel's credentials the Uploader
     // publishes with. Empty on sidecars written before multi-channel support
-    // existed; LoadAsync below defaults those to "gigglegarden" rather than
+    // existed; LoadAsync below defaults those to "trendlinenow" rather than
     // silently routing them through whichever channel happens to be default.
     public string Channel { get; set; } = "";
 
     // Drives YouTube's required self-declared audience flag (VideoStatus.MadeForKids /
-    // SelfDeclaredMadeForKids in YouTubePublisher). Defaults true - the platform's own
-    // safe default, and what every sidecar written before this field existed already
-    // behaved as - so an old/hand-edited sidecar with no MadeForKids key keeps rendering
-    // as kids content rather than silently flipping to a misdeclared adult upload.
-    public bool MadeForKids { get; set; } = true;
+    // SelfDeclaredMadeForKids in YouTubePublisher). Defaults false: this codebase
+    // publishes general-audience entertainment only (Spotlight Now), and no
+    // kids channel remains — so an old/hand-edited sidecar with no MadeForKids
+    // key must never silently upload as made-for-kids content.
+    public bool MadeForKids { get; set; } = false;
     public Dictionary<string, Publication> Publications { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+
+    // Fix #2 (Rishi 2026-11-26, Shorts→long-form bridge): the "Full story
+    // here →" comment has been posted on this Short's YouTube video. Set
+    // only after a successful commentThreads.insert, so a later run never
+    // posts a duplicate comment for the same Short. False on every old
+    // sidecar (the field did not exist), which is exactly right — a Short
+    // published before this flag gets its comment on the next reconciling
+    // run while it is still in the watch dir.
+    public bool PinnedCommentPosted { get; set; } = false;
+
+    // 2nd-Short rule (Rishi 2026-11-27, replacing the fix-#5 tail cut):
+    // the second Short is a different moment with its own title/thumbnail
+    // and is posted ~12h after the main Short goes live, never the same
+    // day. Earliest instant the uploader may publish this asset. Null =
+    // no hold — every old sidecar and every long-form / main-Short sidecar
+    // has null, so only a 2nd-Short sidecar ever carries a value. The
+    // finish step writes a provisional hold, finish time + 12h
+    // (ShortRules.SecondShortHoldUntilFromFinish); when the main Short goes
+    // live the hold is re-anchored to its publication time + 12h
+    // (ShortRules.SecondShortHoldUntil) — the 12h is measured from the main
+    // Short going live, not from the finish (cadence, Rishi 2026-11-27
+    // 18:19 EST: upload something every 12h).
+    public DateTimeOffset? PublishAfterUtc { get; set; }
 
     // Optional per-platform caption override. Absent means "derive from Description".
     public Dictionary<string, string> CaptionOverrides { get; set; } = new(StringComparer.OrdinalIgnoreCase);
@@ -153,13 +176,34 @@ public sealed class Sidecar
 
     public static string PathFor(string videoPath) => Path.ChangeExtension(videoPath, ".json");
 
-    public static async Task<Sidecar?> LoadAsync(string videoPath)
+    // L82 (RetryHandler pattern): an optional log sink so the helper can
+    // report a corrupt file instead of leaving the caller to guess.
+    public static async Task<Sidecar?> LoadAsync(string videoPath, Action<string>? log = null)
     {
         var path = PathFor(videoPath);
         if (!File.Exists(path)) return null;
 
-        var sidecar = JsonSerializer.Deserialize<Sidecar>(await File.ReadAllTextAsync(path), Options)
-                      ?? throw new InvalidDataException($"{Path.GetFileName(path)} is not valid sidecar JSON.");
+        Sidecar? sidecar;
+        try
+        {
+            sidecar = JsonSerializer.Deserialize<Sidecar>(await File.ReadAllTextAsync(path), Options);
+        }
+        catch (JsonException ex)
+        {
+            // L11: a corrupt sidecar is permanent, not a transient crash.
+            // Name the file and the reason (SIDECAR_CORRUPT marker lets the
+            // per-video catch fail fast, mirroring SIDECAR_REQUIRED) instead
+            // of burning 3 crash retries before landing in failed/.
+            log?.Invoke($"sidecar load failed for {path}: corrupt sidecar JSON: {ex.Message}; move to failed/, do not retry");
+            throw new InvalidDataException(
+                $"SIDECAR_CORRUPT: {Path.GetFileName(path)}: corrupt sidecar JSON: {ex.Message}; move to failed/, do not retry", ex);
+        }
+        if (sidecar is null)
+        {
+            log?.Invoke($"sidecar load failed for {path}: corrupt sidecar JSON: deserialized to null; move to failed/, do not retry");
+            throw new InvalidDataException(
+                $"SIDECAR_CORRUPT: {Path.GetFileName(path)}: corrupt sidecar JSON: deserialized to null; move to failed/, do not retry");
+        }
 
         // Backward compatibility with v1 sidecars (title/description/tags/approved only):
         // an absent Targets list means the file predates multi-platform support, so it
@@ -167,22 +211,32 @@ public sealed class Sidecar
         if (sidecar.Targets.Count == 0) sidecar.Targets.Add(Platforms.YouTube);
 
         // Same backward-compat reasoning as Targets above: a sidecar written
-        // before multi-channel support existed belongs to the one channel
-        // that existed at the time.
-        if (string.IsNullOrWhiteSpace(sidecar.Channel)) sidecar.Channel = "gigglegarden";
+        // before multi-channel support existed belongs to the channel that
+        // exists today.
+        if (string.IsNullOrWhiteSpace(sidecar.Channel)) sidecar.Channel = "trendlinenow";
 
         return sidecar;
     }
 
-    public async Task SaveAsync(string videoPath)
+    // L82: optional log sink (RetryHandler pattern) — a save failure
+    // used to surface only as a bare exception with no file context.
+    public async Task SaveAsync(string videoPath, Action<string>? log = null)
     {
         var path = PathFor(videoPath);
         var temp = path + ".tmp";
 
-        // Write-then-replace: a crash mid-write must not destroy the record of what
-        // has already been published, which would cause duplicate posts on the retry.
-        await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(this, Options));
-        File.Move(temp, path, overwrite: true);
+        try
+        {
+            // Write-then-replace: a crash mid-write must not destroy the record of what
+            // has already been published, which would cause duplicate posts on the retry.
+            await File.WriteAllTextAsync(temp, JsonSerializer.Serialize(this, Options));
+            File.Move(temp, path, overwrite: true);
+        }
+        catch (Exception ex)
+        {
+            log?.Invoke($"sidecar save failed for {path}: {ex.GetType().Name}: {ex.Message}; sidecar unchanged, publish state kept in memory");
+            throw;
+        }
     }
 
     public Publication PublicationFor(string platform)

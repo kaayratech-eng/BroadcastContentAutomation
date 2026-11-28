@@ -2,6 +2,7 @@ using System.Text;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using System.Xml.Linq;
+using GiggleGarden.Shared;
 
 // Trend lookup for topic inspiration - uses the YouTube Data API's public
 // search.list endpoint with a simple API key (no OAuth needed, unlike the
@@ -61,20 +62,27 @@ static class TrendResearch
     // headline list the script's facts come from.
     public sealed record TrendReport(string Text, string Category, IReadOnlyList<NewsItem> News);
 
-    public static async Task<string?> FetchAsync(ContentProfile profile, GenConfig cfg)
+    // L65: seam for tests — the default builds a fresh client per call,
+    // as before; tests replace it with a client backed by a stub handler
+    // (the live URLs are hardcoded googleapis / news.google.com, so there
+    // is no other way to drive a failure in-process).
+    internal static Func<HttpClient> HttpClientFactory = () => new HttpClient();
+
+    public static async Task<string?> FetchAsync(ContentProfile profile, GenConfig cfg, PrepIdentity? context = null)
     {
-        var report = await FetchReportAsync(profile, cfg);
+        var report = await FetchReportAsync(profile, cfg, context);
         return report.Text.Length > 0 ? report.Text : null;
     }
 
-    public static async Task<TrendReport> FetchReportAsync(ContentProfile profile, GenConfig cfg)
+    public static async Task<TrendReport> FetchReportAsync(ContentProfile profile, GenConfig cfg, PrepIdentity? context = null)
     {
         var items = new List<TrendItem>();
         if (!string.IsNullOrWhiteSpace(cfg.YouTubeApiKey) && !cfg.YouTubeApiKey.StartsWith("PUT-") && profile.TrendQueries.Length > 0)
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(20) };
+                using var http = HttpClientFactory();
+                http.Timeout = TimeSpan.FromSeconds(20);
                 var allIds = new List<string>();
                 var snippets = new Dictionary<string, (string Title, string Channel, DateTime PublishedAt)>();
                 foreach (var query in profile.TrendQueries)
@@ -84,7 +92,14 @@ static class TrendResearch
                                $"&publishedAfter={Uri.EscapeDataString(DateTime.UtcNow.AddDays(-7).ToString("O"))}" +
                                $"&q={Uri.EscapeDataString(query)}&key={Uri.EscapeDataString(cfg.YouTubeApiKey)}";
                     var resp = await http.GetAsync(url);
-                    if (!resp.IsSuccessStatusCode) continue;
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        // L65: the bare `continue` hid the query, the
+                        // status, and any quota hint in the body.
+                        var body = await resp.Content.ReadAsStringAsync();
+                        Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] YouTube search failed for query \"{query}\" (HTTP {(int)resp.StatusCode}): {Text.Tail(body, 300)} — skipping this query, continuing with the others");
+                        continue;
+                    }
                     using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
                     if (!doc.RootElement.TryGetProperty("items", out var arr)) continue;
                     foreach (var item in arr.EnumerateArray())
@@ -103,7 +118,14 @@ static class TrendResearch
                     var url = "https://www.googleapis.com/youtube/v3/videos?part=statistics,snippet" +
                               $"&id={Uri.EscapeDataString(string.Join(",", batch))}&key={Uri.EscapeDataString(cfg.YouTubeApiKey)}";
                     var resp = await http.GetAsync(url);
-                    if (!resp.IsSuccessStatusCode) continue;
+                    if (!resp.IsSuccessStatusCode)
+                    {
+                        // L65: same silent `continue` as the search above —
+                        // log the batch + status + body tail.
+                        var body = await resp.Content.ReadAsStringAsync();
+                        Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] YouTube videos.list failed for batch of {batch.Length} video(s) ({batch[0]}…{batch[^1]}) (HTTP {(int)resp.StatusCode}): {Text.Tail(body, 300)} — skipping this batch, continuing with the others");
+                        continue;
+                    }
                     using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
                     if (!doc.RootElement.TryGetProperty("items", out var arr)) continue;
                     foreach (var item in arr.EnumerateArray())
@@ -118,14 +140,14 @@ static class TrendResearch
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"  [trends] YouTube lookup failed, continuing without it: {ex.Message}");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] YouTube lookup failed, continuing without it: {ex.Message}");
             }
         }
 
         // Google News is the trending-entertainment signal for every profile, but only
         // the news profile turns its headlines into script facts - for the other
         // profiles the block is inspiration only, same as the YouTube titles.
-        var news = await FetchGoogleNewsAsync();
+        var news = await FetchGoogleNewsAsync(context);
         // Global topic strategy (2026-11-22): rank the merged multi-edition
         // list by global views potential before anything else reads it, so
         // the category, the report text, and the facts block all follow the
@@ -134,6 +156,13 @@ static class TrendResearch
         var category = news.Count > 0
             ? TopicCategoryStyles.Classify(news[0].Title + " " + (news.Count > 1 ? news[1].Title : ""))
             : "general";
+
+        // L65: when every source failed, the merge silently yields an
+        // empty facts block and generation proceeds on nothing — one
+        // aggregate line so the thin prep is visible as a whole, not just
+        // as scattered per-feed failures.
+        if (news.Count == 0 && items.Count == 0)
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] all trend sources failed (YouTube + all Google News feeds) — proceeding with no headlines, the fact gate will judge the script against an empty facts block");
 
         var sb = new StringBuilder();
         if (items.Count > 0)
@@ -168,11 +197,11 @@ static class TrendResearch
         // story — the trend fetch cannot know it in advance.
         if (profile.CategoryStyles is not null && news.Count > 0)
         {
-            var background = await WikipediaClient.FetchBackgroundForTopicAsync(news[0].Title);
+            var background = await WikipediaClient.FetchBackgroundForTopicAsync(news[0].Title, null, context);
             if (background is not null)
                 sb.AppendLine($"Background facts (Wikipedia) for the top story \"{news[0].Title}\":\n{background.Value.Extract}");
             else
-                Console.WriteLine($"  [trends] No verified Wikipedia background for the top story \"{news[0].Title}\" — headlines only.");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] No verified Wikipedia background for the top story \"{news[0].Title}\" — headlines only.");
         }
 
         // Multi-source context (2026-11-23): full article text for the top
@@ -185,7 +214,7 @@ static class TrendResearch
         // just means headlines + Wikipedia, never a failed lookup).
         if (profile.CategoryStyles is not null && news.Count > 0)
         {
-            var articleSection = await FetchTopStoryArticlesAsync(news.Take(3).ToList(), cfg);
+            var articleSection = await FetchTopStoryArticlesAsync(news.Take(3).ToList(), cfg, context);
             if (articleSection.Length > 0)
                 sb.AppendLine(articleSection);
         }
@@ -207,7 +236,7 @@ static class TrendResearch
     // Wikipedia backgrounds instead of stopping at the first — a broad
     // topic grounds itself in several related articles, and the gate
     // checks the script against all of them.
-    public static async Task<PickedTopicBackground> FetchBackgroundForPickedTopicAsync(string pickedTopic, IReadOnlyList<NewsItem>? news)
+    public static async Task<PickedTopicBackground> FetchBackgroundForPickedTopicAsync(string pickedTopic, IReadOnlyList<NewsItem>? news, PrepIdentity? context = null)
     {
         var matched = news is { Count: > 0 } ? FindMatchingNewsItem(pickedTopic, news) : null;
         var queries = new List<string>();
@@ -219,7 +248,7 @@ static class TrendResearch
         foreach (var q in queries)
         {
             if (backgrounds.Count >= 3) break;
-            foreach (var bg in await WikipediaClient.FetchBackgroundsForTopicAsync(q, pickedTopic, maxArticles: 3))
+            foreach (var bg in await WikipediaClient.FetchBackgroundsForTopicAsync(q, pickedTopic, maxArticles: 3, context))
             {
                 if (backgrounds.Count >= 3) break;
                 if (backgrounds.Any(b => b.Title.Equals(bg.Title, StringComparison.OrdinalIgnoreCase))) continue;
@@ -227,7 +256,7 @@ static class TrendResearch
             }
         }
         if (backgrounds.Count == 0)
-            Console.WriteLine($"  [trends] No verified Wikipedia background for the picked story \"{pickedTopic}\" — the script will be checked against the trend headlines only.");
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] No verified Wikipedia background for the picked story \"{pickedTopic}\" — the script will be checked against the trend headlines only.");
         return new PickedTopicBackground(pickedTopic, matched, backgrounds);
     }
 
@@ -239,15 +268,15 @@ static class TrendResearch
     // combined context stays near ~12,000 chars. Returns "" when nothing
     // was fetched — the caller appends nothing and the pipeline continues
     // on headlines + Wikipedia.
-    internal static async Task<string> FetchTopStoryArticlesAsync(IReadOnlyList<NewsItem> topStories, GenConfig cfg)
+    internal static async Task<string> FetchTopStoryArticlesAsync(IReadOnlyList<NewsItem> topStories, GenConfig cfg, PrepIdentity? context = null)
     {
         if (topStories is null || topStories.Count == 0) return "";
         var tasks = topStories.Select(async item =>
         {
-            try { return await ArticleClient.FetchForTopicAsync(item.Title, cfg); }
+            try { return await ArticleClient.FetchForTopicAsync(item.Title, cfg, context: context); }
             catch (Exception ex)
             {
-                Console.WriteLine($"  [articles] fetch failed for \"{item.Title}\": {ex.Message}");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[articles] fetch failed for \"{item.Title}\": {ex.Message}");
                 return (IReadOnlyList<ArticleClient.Article>)[];
             }
         });
@@ -354,13 +383,14 @@ static class TrendResearch
     internal static string NormaliseTitle(string title) =>
         Regex.Replace(title.ToLowerInvariant(), @"[^a-z0-9]+", " ").Trim();
 
-    private static async Task<List<NewsItem>> FetchGoogleNewsAsync()
+    private static async Task<List<NewsItem>> FetchGoogleNewsAsync(PrepIdentity? context = null)
     {
         var tasks = NewsFeeds.Select(async feed =>
         {
             try
             {
-                using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
+                using var http = HttpClientFactory();
+                http.Timeout = TimeSpan.FromSeconds(15);
                 http.DefaultRequestHeaders.Add("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36");
                 var xml = await http.GetStringAsync(feed.Url);
                 var doc = XDocument.Parse(xml);
@@ -368,7 +398,7 @@ static class TrendResearch
             }
             catch (Exception ex)
             {
-                Console.WriteLine($"  [trends] Google News feed failed ({feed.Url}): {ex.Message}");
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[trends] Google News feed failed ({feed.Url}): {ex.Message}");
                 return new List<NewsItem>();
             }
         });

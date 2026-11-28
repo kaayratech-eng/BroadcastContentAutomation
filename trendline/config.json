@@ -67,7 +67,7 @@
   "scene_art_provider_env": "cloudflare",
   "script_provider_env": "pool-helper",
   "services": {
-    "_comment": "Reachability probes (healthcheck.sh requires a 2xx success — a 403/429/500 is reported as unreachable, not reachable). No quota is burned and no quota is checked: no quota endpoint reports remaining quota (see B31 note in the uploader).",
+    "_comment": "Reachability probes (L15: a 401/403 from the unauthenticated probe means the endpoint is reachable and auth is required — a note, not a warning; a 429/500 or connection failure is still reported as unreachable). No quota is burned and no quota is checked: no quota endpoint reports remaining quota (see B31 note in the uploader).",
     "azure_tts": {
       "ping_url": "https://eastus.api.cognitive.microsoft.com/sts/v1.0/issueToken"
     },

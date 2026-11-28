@@ -8,7 +8,12 @@
 // optional so every pre-existing call site (outro line, --test-tts) keeps compiling
 // unchanged. AzureTtsProvider applies it as an express-as style when given; GoogleTtsProvider
 // has no equivalent and ignores it.
+//
+// sceneLabel (L42) is the "{i+1}/{n}" scene label for the call, so every
+// provider log line can be tied to a scene in a 55-scene prep; the job id
+// comes from the ambient PrepContext.Prefix. Optional so unlabeled call
+// sites (outro, --test-tts) keep compiling unchanged.
 interface ITtsProvider
 {
-    Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null);
+    Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null);
 }

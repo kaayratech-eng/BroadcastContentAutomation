@@ -44,12 +44,12 @@ public class FactGateRewriteTests
 
     // --- reflection seams ---------------------------------------------------
 
-    private static object RewriteScript(object script, List<string> findings, string context, DateTime prepDate)
+    private static object RewriteScript(object script, List<string> findings, string context, DateTime prepDate, PrepIdentity? identity = null)
     {
         var type = ReflectionHelper.FindType(ReflectionHelper.VideoGen, "FactGateRewrite");
         var method = type.GetMethod("Rewrite", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)
             ?? throw new MissingMethodException("FactGateRewrite.Rewrite");
-        return method.Invoke(null, [script, findings, context, prepDate])!;
+        return method.Invoke(null, [script, findings, context, prepDate, identity, "rewrite"])!;
     }
 
     private static T ResultProp<T>(object result, string name) =>
@@ -328,6 +328,44 @@ public class FactGateRewriteTests
         Assert.Equal("art", scene.GetProperty("SceneKind").GetString());
         Assert.Equal(JsonValueKind.Null, scene.GetProperty("VisualSpec").ValueKind);
         Assert.Contains("several ships", scene.GetProperty("Narration").GetString()!);
+    }
+
+    [Fact]
+    public void FactGateRewrite_SummaryIncludesDemotedCount()
+    {
+        // L72: a script with one untraceable visual number must demote the
+        // visual, log the demotion with job + scene inside Rewrite() (no
+        // caller loop needed), and carry the demoted count in the OK
+        // summary line.
+        const string context = "The market kept growing through the year.";
+        var json = ScriptJson(false,
+            TraceableFiller(1),
+            SceneJson("The market kept growing through the year, with more buyers joining every month.",
+                "visual", CalloutSpec("30% growth", "")));
+        var script = DeserializeScript(json);
+        var findings = CheckScript(script, context);
+        Assert.NotEmpty(findings);
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        object result;
+        try
+        {
+            result = RewriteScript(script, findings, context, PrepDate,
+                new PrepIdentity("job-20261126-test", "Test topic"));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.Contains(2, ResultProp<List<int>>(result, "DemotedScenes"));
+        var log = sb.ToString();
+        Assert.Contains("scene 2", log);
+        Assert.Contains("demoted", log);
+        Assert.Contains("job-20261126-test", log);
+        var summary = ReflectionHelper.Invoke<string>(ReflectionHelper.VideoGen, "OkSummary",
+            result, ResultProp<int>(result, "SceneCount"));
+        Assert.Contains("1 visual(s) demoted to art", summary);
     }
 
     // --- (e) re-check exemption ----------------------------------------------

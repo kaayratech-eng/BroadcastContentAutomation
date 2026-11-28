@@ -23,62 +23,89 @@ using System.Text.RegularExpressions;
 // own facts instead of grounding the script in an unrelated article.
 static class WikipediaClient
 {
-    public static async Task<string?> FetchSummaryAsync(string query)
+    public static async Task<string?> FetchSummaryAsync(string query, PrepIdentity? context = null)
     {
-        var result = await FetchSummaryWithTitleAsync(query);
+        var result = await FetchSummaryWithTitleAsync(query, null, context);
         return result?.Extract;
     }
 
     // Same fetch as FetchSummaryAsync, but also returns the article title
     // actually fetched — the entity guard needs it, and the title is what
     // the search fallback chose (first result), not the query string.
-    public static async Task<(string Title, string Extract)?> FetchSummaryWithTitleAsync(string query)
+    public static async Task<(string Title, string Extract)?> FetchSummaryWithTitleAsync(string query, HttpClient? http = null, PrepIdentity? context = null)
     {
         if (string.IsNullOrWhiteSpace(query)) return null;
-        var direct = await FetchSummaryForTitleAsync(query.Trim().Replace(' ', '_'));
+        var direct = await FetchSummaryForTitleAsync(query.Trim().Replace(' ', '_'), http, context);
         if (direct is not null) return direct;
         try
         {
-            var titles = await SearchTitlesAsync(query, maxResults: 1);
+            var titles = await SearchTitlesAsync(query, maxResults: 1, http, context);
             if (titles.Count == 0) return null;
-            return await FetchSummaryForTitleAsync(titles[0].Replace(' ', '_'));
+            return await FetchSummaryForTitleAsync(titles[0].Replace(' ', '_'), http, context);
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            // L17: a failed search fallback used to vanish silently — the
+            // prep then grounded on headlines only with no record that
+            // Wikipedia failed.
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[wikipedia] search fallback failed for \"{query}\": {ex.GetType().Name}: {ex.Message} — returning null, continuing headlines-only");
+            return null;
+        }
     }
 
     // Direct REST summary fetch for a known article title (no search).
     // Null on any failure — the caller tries the next title, never throws.
-    internal static async Task<(string Title, string Extract)?> FetchSummaryForTitleAsync(string titleSlug)
+    internal static async Task<(string Title, string Extract)?> FetchSummaryForTitleAsync(string titleSlug, HttpClient? http = null, PrepIdentity? context = null)
     {
+        // L17: an injectable client is the test seam (mock a 500/timeout);
+        // production passes none and gets a fresh 15s client as before.
+        using var owned = http is null ? new HttpClient { Timeout = TimeSpan.FromSeconds(15) } : null;
+        var client = http ?? owned!;
+        if (!client.DefaultRequestHeaders.Contains("User-Agent"))
+            client.DefaultRequestHeaders.Add("User-Agent", "BroadcastContentAutomation/1.0 (free fact-check)");
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            http.DefaultRequestHeaders.Add("User-Agent", "BroadcastContentAutomation/1.0 (free fact-check)");
             var title = Uri.EscapeDataString(titleSlug);
-            var resp = await http.GetAsync($"https://en.wikipedia.org/api/rest_v1/page/summary/{title}");
-            if (!resp.IsSuccessStatusCode) return null;
+            var resp = await client.GetAsync($"https://en.wikipedia.org/api/rest_v1/page/summary/{title}");
+            if (!resp.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[wikipedia] summary fetch failed for \"{titleSlug}\": HTTP {(int)resp.StatusCode} — returning null, trying next title / continuing headlines-only");
+                return null;
+            }
             using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
             var articleTitle = doc.RootElement.TryGetProperty("title", out var rt) ? rt.GetString() : null;
             var extract = doc.RootElement.TryGetProperty("extract", out var extractEl) ? extractEl.GetString() : null;
             if (string.IsNullOrWhiteSpace(extract) || string.IsNullOrWhiteSpace(articleTitle)) return null;
             return (articleTitle, extract);
         }
-        catch { return null; }
+        catch (Exception ex)
+        {
+            var status = ex is HttpRequestException hre && hre.StatusCode.HasValue ? $" (HTTP {(int)hre.StatusCode.Value})" : "";
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[wikipedia] summary fetch failed for \"{titleSlug}\": {ex.GetType().Name}: {ex.Message}{status} — returning null, trying next title / continuing headlines-only");
+            return null;
+        }
     }
 
     // Wikipedia search result titles for a query, best first. The plural
     // background fetch walks these (rather than taking only the first) so
     // a topic can ground itself in 2-3 related articles instead of one.
-    internal static async Task<IReadOnlyList<string>> SearchTitlesAsync(string query, int maxResults = 8)
+    internal static async Task<IReadOnlyList<string>> SearchTitlesAsync(string query, int maxResults = 8, HttpClient? http = null, PrepIdentity? context = null)
     {
         var titles = new List<string>();
         if (string.IsNullOrWhiteSpace(query)) return titles;
+        // L17: same injectable-client seam as FetchSummaryForTitleAsync.
+        using var owned = http is null ? new HttpClient { Timeout = TimeSpan.FromSeconds(15) } : null;
+        var client = http ?? owned!;
+        if (!client.DefaultRequestHeaders.Contains("User-Agent"))
+            client.DefaultRequestHeaders.Add("User-Agent", "BroadcastContentAutomation/1.0 (free fact-check)");
         try
         {
-            using var http = new HttpClient { Timeout = TimeSpan.FromSeconds(15) };
-            http.DefaultRequestHeaders.Add("User-Agent", "BroadcastContentAutomation/1.0 (free fact-check)");
-            var search = await http.GetAsync($"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={Uri.EscapeDataString(query)}&format=json");
-            if (!search.IsSuccessStatusCode) return titles;
+            var search = await client.GetAsync($"https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch={Uri.EscapeDataString(query)}&format=json");
+            if (!search.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"  {PrepContext.PrefixFor(context)}[wikipedia] search failed for \"{query}\": HTTP {(int)search.StatusCode} — returning no titles, continuing headlines-only");
+                return titles;
+            }
             using var sdoc = JsonDocument.Parse(await search.Content.ReadAsStringAsync());
             if (!sdoc.RootElement.TryGetProperty("query", out var q) || !q.TryGetProperty("search", out var arr)) return titles;
             foreach (var item in arr.EnumerateArray())
@@ -88,7 +115,11 @@ static class WikipediaClient
                     titles.Add(t.GetString()!);
             }
         }
-        catch { /* search failure yields no titles, never a throw */ }
+        catch (Exception ex)
+        {
+            var status = ex is HttpRequestException hre && hre.StatusCode.HasValue ? $" (HTTP {(int)hre.StatusCode.Value})" : "";
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[wikipedia] search failed for \"{query}\": {ex.GetType().Name}: {ex.Message}{status} — returning no titles, continuing headlines-only");
+        }
         return titles;
     }
 
@@ -100,21 +131,21 @@ static class WikipediaClient
     // article, the framework convention, and the agreement, not just one
     // of them. A topic with no matching article returns [] (the caller
     // falls back to the trend item's own facts).
-    public static async Task<IReadOnlyList<(string Title, string Extract)>> FetchBackgroundsForTopicAsync(string query, string? guardTopic = null, int maxArticles = 3)
+    public static async Task<IReadOnlyList<(string Title, string Extract)>> FetchBackgroundsForTopicAsync(string query, string? guardTopic = null, int maxArticles = 3, PrepIdentity? context = null)
     {
         var results = new List<(string Title, string Extract)>();
         if (string.IsNullOrWhiteSpace(query) || maxArticles <= 0) return results;
         var topic = guardTopic ?? query;
-        foreach (var title in await SearchTitlesAsync(query))
+        foreach (var title in await SearchTitlesAsync(query, context: context))
         {
             if (results.Count >= maxArticles) break;
-            var summary = await FetchSummaryForTitleAsync(title.Replace(' ', '_'));
+            var summary = await FetchSummaryForTitleAsync(title.Replace(' ', '_'), null, context);
             if (summary is null) continue;
             if (results.Any(r => r.Title.Equals(summary.Value.Title, StringComparison.OrdinalIgnoreCase))) continue;
             if (!BackgroundMatchesTopic(summary.Value.Title, summary.Value.Extract, topic))
             {
                 Console.WriteLine(
-                    $"  [wikipedia] Background for \"{topic}\" rejected: fetched article \"{summary.Value.Title}\" " +
+                    $"  {PrepContext.PrefixFor(context)}[wikipedia] Background for \"{topic}\" rejected: fetched article \"{summary.Value.Title}\" " +
                     "does not match the topic — skipping, never grounding in an unrelated summary.");
                 continue;
             }
@@ -128,15 +159,15 @@ static class WikipediaClient
     // topic defaults to the query; pass the picked story explicitly when
     // the query is a derived search string (key terms, a headline) so the
     // guard checks the story, not the query wording.
-    public static async Task<(string Title, string Extract)?> FetchBackgroundForTopicAsync(string query, string? guardTopic = null)
+    public static async Task<(string Title, string Extract)?> FetchBackgroundForTopicAsync(string query, string? guardTopic = null, PrepIdentity? context = null)
     {
-        var result = await FetchSummaryWithTitleAsync(query);
+        var result = await FetchSummaryWithTitleAsync(query, null, context);
         if (result is null) return null;
         var topic = guardTopic ?? query;
         if (!BackgroundMatchesTopic(result.Value.Title, result.Value.Extract, topic))
         {
             Console.WriteLine(
-                $"  [wikipedia] Background for \"{topic}\" rejected: fetched article \"{result.Value.Title}\" " +
+                $"  {PrepContext.PrefixFor(context)}[wikipedia] Background for \"{topic}\" rejected: fetched article \"{result.Value.Title}\" " +
                 "does not match the topic — falling back to the trend item's own facts, never an unrelated summary.");
             return null;
         }

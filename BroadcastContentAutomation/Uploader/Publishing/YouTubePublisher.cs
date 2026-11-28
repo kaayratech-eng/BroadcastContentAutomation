@@ -20,6 +20,7 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
     // Authorization refreshes silently (no browser) once TokenCapture has run once;
     // built lazily and reused across every video in a run rather than per upload.
     private YouTubeService? _service;
+    private UserCredential? _credential;
 
     public bool Accepts(Sidecar sidecar, string videoPath, out string? reason)
     {
@@ -92,7 +93,7 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
                 result = await insert.UploadAsync(ct);
                 if (result.Status == UploadStatus.Completed) break;
                 uploadError = result.Exception?.Message ?? uploadError;
-                log.Info($"  [youtube] upload attempt {attempt}/4 stalled ({uploadError}); resuming from last confirmed chunk.");
+                log.Warn($"  [youtube] upload attempt {attempt}/4 for {Path.GetFileName(request.VideoPath)} stalled ({uploadError}); resuming from last confirmed chunk.");
             }
             if (result is null || result.Status != UploadStatus.Completed)
                 return PublishResult.Retry($"Upload did not complete: {uploadError ?? result?.Exception?.Message}");
@@ -111,7 +112,21 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
             // window cannot re-upload a second copy — those steps are
             // post-publish niceties, not part of the publish itself.
             if (request.OnPlatformIdAsync is not null)
-                await request.OnPlatformIdAsync(id);
+            {
+                try
+                {
+                    await request.OnPlatformIdAsync(id);
+                }
+                catch (Exception ex)
+                {
+                    // L13: the video is live; only the id-save failed. The
+                    // callback already set the id in memory, and Program.cs
+                    // saves the sidecar again after PublishAsync returns —
+                    // so log it and continue as a success instead of
+                    // reporting a live video as a publish failure.
+                    log.Error($"  [youtube] video {id} is live but the id could not be recorded ({ex.GetType().Name}: {ex.Message}); continuing — the sidecar save after publish will persist it.");
+                }
+            }
 
             log.Info($"  [youtube] uploaded https://youtu.be/{id} ({cfg.PrivacyStatus})");
             if (!string.IsNullOrWhiteSpace(cfg.PlaylistId))
@@ -125,12 +140,18 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
                     await youtube.PlaylistItems.Insert(item, "snippet").ExecuteAsync(ct);
                     log.Info("  [youtube] added to playlist");
                 }
-                catch (Exception ex) { log.Error($"  [youtube] playlist add failed (video still published): {ex.Message}"); }
+                catch (Exception ex) { log.Error($"  [youtube] playlist add failed for {id} (video still published): {ex.Message}"); }
             }
 
             await TrySetThumbnailAsync(youtube, id, request.VideoPath, request.Sidecar, ct);
             await TryUploadCaptionsAsync(youtube, id, request.VideoPath, request.Sidecar.Language, ct);
             await TryAddShortLinkToLongFormAsync(youtube, id, request, ct);
+            // Fix #2: the Short's "Full story here →" comment. Best-effort
+            // like the steps above — a failure here never fails the publish.
+            // The reconciler re-attempts it on later runs while the Short is
+            // still in the watch dir (long-form not published yet, or the
+            // token predating the force-ssl scope).
+            await EnsurePinnedCommentAsync(youtube, request.VideoPath, request.Sidecar, ct, justPublishedShortId: id);
 
             return PublishResult.Ok(id, $"https://youtu.be/{id}");
         }
@@ -144,6 +165,17 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return PublishResult.Retry($"YouTube transport error: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // L13: anything outside the two known shapes (an
+            // InvalidOperationException from credential setup, a
+            // NullReferenceException, a JsonException) used to escape to the
+            // per-video catch and burn a crash retry. Return a target-level
+            // Retry instead; a video already live is re-verified via
+            // ExistingId on the next run.
+            return PublishResult.Retry(
+                $"YouTube unexpected error ({ex.GetType().Name}): {ex.Message}; target will retry, video already live will be re-verified via ExistingId");
         }
     }
 
@@ -208,12 +240,84 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
                 $"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={Uri.EscapeDataString(videoId)}&uploadType=media",
                 content, ct);
             response.EnsureSuccessStatusCode();
-            log.Info("  [youtube] custom thumbnail set");
+            // Name the thumbnail file, not just the fact one was set: the
+            // run log is the proof a second Short used its OWN thumbnail
+            // (<slug>-en-short2.thumb.jpg) rather than YouTube's auto frame.
+            log.Info($"  [youtube] custom thumbnail set ({thumbPath})");
         }
         catch (Exception ex)
         {
-            log.Error($"  [youtube] thumbnail upload failed (video still published): {ex.Message}");
+            log.Error($"  [youtube] thumbnail upload failed for {videoId} (video still published): {ex.Message}");
         }
+    }
+
+    // One-off live re-thumbnailing (fix #3): set a chosen thumbnail
+    // variant on an already-live video, e.g. after Rishi picks one of
+    // the three variants the --make-thumbnails run produced. Unlike the
+    // private TrySetThumbnailAsync above (best-effort inside a publish,
+    // errors swallowed, thumbnail resolved from a video path), this one
+    // takes the thumbnail file directly and reports success/failure so
+    // the --set-thumbnail CLI mode can exit non-zero on failure. The
+    // video is verified to exist first — setting a thumbnail on a wrong
+    // or deleted id must fail loudly, never silently no-op.
+    public async Task<(bool Ok, string? Error)> SetThumbnailAsync(string videoId, string thumbPath, CancellationToken ct)
+    {
+        if (!File.Exists(thumbPath))
+        {
+            var missingError = $"thumbnail file not found: {thumbPath}";
+            log.Error($"  [youtube] {missingError}");
+            return (false, missingError);
+        }
+
+        try
+        {
+            var youtube = await GetServiceAsync();
+            return await SetThumbnailWithServiceAsync(youtube, videoId, thumbPath, ct);
+        }
+        catch (Exception ex)
+        {
+            var error = $"{ex.GetType().Name}: {ex.Message}";
+            log.Error($"  [youtube] thumbnail set failed for {videoId}: {error}");
+            return (false, error);
+        }
+    }
+
+    // L26: the lookup + thumbnails.set POST, taking the service so tests
+    // can drive it with a canned HttpClient. Returns the API reason on
+    // failure instead of a bare bool, so the --set-thumbnail call site
+    // can log it at Error level (the old bool lost the reason entirely).
+    internal async Task<(bool Ok, string? Error)> SetThumbnailWithServiceAsync(
+        YouTubeService youtube, string videoId, string thumbPath, CancellationToken ct)
+    {
+        if (await TryFindVideoAsync(youtube, videoId, ct) != VideoLookup.Found)
+        {
+            var error = $"video {videoId} not found on YouTube — thumbnail not set.";
+            log.Error($"  [youtube] {error}");
+            return (false, error);
+        }
+
+        var bytes = await File.ReadAllBytesAsync(thumbPath, ct);
+        using var content = new ByteArrayContent(bytes);
+        content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
+        // Same plain-media upload as TrySetThumbnailAsync above: the
+        // client library's resumable initiation POST carries an empty
+        // body and Google answers HTTP 411; uploadType=media sets
+        // Content-Length and reaches the real authorization check.
+        using var response = await youtube.HttpClient.PostAsync(
+            $"https://www.googleapis.com/upload/youtube/v3/thumbnails/set?videoId={Uri.EscapeDataString(videoId)}&uploadType=media",
+            content, ct);
+        if (!response.IsSuccessStatusCode)
+        {
+            // Read the API error body instead of EnsureSuccessStatusCode's
+            // generic message, so the caller logs the real reason (e.g.
+            // a 403 quota/authorization message), not just the status.
+            var body = await response.Content.ReadAsStringAsync(ct);
+            var error = $"YouTube thumbnails.set returned {(int)response.StatusCode} for {videoId}: {Text.Tail(body, 300)}";
+            log.Error($"  [youtube] thumbnail set failed for {videoId}: {error}");
+            return (false, error);
+        }
+        log.Info($"  [youtube] custom thumbnail set for https://youtu.be/{videoId}");
+        return (true, null);
     }
 
     // VideoGen writes .thumb.jpg only for the landscape render, so a Short has
@@ -223,6 +327,11 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
     // landscape sibling ("<base>-short.mp4" -> "<base>.thumb.jpg", including the
     // done/<base>/ copy after the long-form has moved), then any
     // .thumb.jpg in the folder sharing the video's base-name prefix.
+    //
+    // The direct check below already covers a second Short's OWN thumbnail:
+    // finish writes "<slug>-en-short2.thumb.jpg" next to the short2 mp4, and
+    // Path.ChangeExtension maps "-short2.mp4" to exactly that file — so no
+    // special-casing is needed here. Pinned by SecondShortUploadTests.
     private static string? ResolveThumbnailPath(string videoPath, Sidecar sidecar)
     {
         var direct = Path.ChangeExtension(videoPath, ".thumb.jpg");
@@ -306,7 +415,7 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         }
         catch (Exception ex)
         {
-            log.Error($"  [youtube] caption upload failed (video still published): {ex.Message}");
+            log.Error($"  [youtube] caption upload failed for {videoId} (video still published): {ex.Message}");
         }
     }
 
@@ -348,7 +457,8 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
             Path.Combine(channelDir, longFormSlug + ".mp4"),
         })
         {
-            longForm = await Sidecar.LoadAsync(candidate);
+            // L82: wire the helper's log sink into the run log.
+            longForm = await Sidecar.LoadAsync(candidate, msg => log.Warn(msg));
             if (longForm is not null) { longFormVideoPath = candidate; break; }
         }
         if (longForm is null || longFormVideoPath is null)
@@ -380,6 +490,148 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
     internal static string FullVideoLinkLine(string longFormId) => $"🎬 Watch the full video: https://youtu.be/{longFormId}";
     internal static string ShortVersionLinkLine(string shortId) => $"⚡ Watch the 60-second version: https://youtu.be/{shortId}";
 
+    // Fix #2 (Rishi 2026-11-26, Shorts→long-form bridge): the Short's
+    // top-level comment. Exact wording, single source of truth — the
+    // uploader posts this verbatim, never a generated variant.
+    internal static string FullStoryCommentText(string longFormId) => $"Full story here → https://youtu.be/{longFormId}";
+
+    // Fix #2: post the "Full story here →" comment on a Short, best-effort.
+    // The Short's description link is not clickable in the Shorts feed and
+    // the end card has no tap target there, so the comment is the second
+    // clickable route to the long-form (the first is the Related Video link,
+    // set in Studio — the API has no endpoint for it).
+    //
+    // PINNING VERDICT (verified 2026-11-26, do not re-litigate by guessing):
+    // the YouTube Data API v3 has NO endpoint that pins a comment. The
+    // comments resource exposes only list/insert/update/delete/
+    // setModerationStatus and commentThreads only list/insert — confirmed
+    // against the installed Google.Apis.YouTube.v3 1.68.0 client library and
+    // the API reference. Pinning is a Studio-only action (video → Comments
+    // → ⋮ → Pin, ~30s per Short). What the API CAN do is post the comment
+    // as the channel owner, which carries the owner badge and typically
+    // bubbles near the top of the comment list — so this posts it and logs
+    // the Studio pin step as the remaining manual action. Do NOT attempt
+    // to "pin" via setModerationStatus: that only sets heldForReview /
+    // published / rejected, it does not pin anything.
+    //
+    // Runs at Short publish time AND from the reconciler on every later run
+    // while the Short is still in the watch dir, so a first attempt missed
+    // (long-form not published yet, or the token predating the force-ssl
+    // scope) heals itself on a later run. One call per Short ever:
+    // Sidecar.PinnedCommentPosted is set only after a successful insert, so
+    // retries never spam duplicate comments. A failure here NEVER fails the
+    // publish or the reconciliation — it logs and returns false.
+    internal async Task<bool> EnsurePinnedCommentAsync(YouTubeService youtube, string videoPath, Sidecar sidecar, CancellationToken ct,
+        string? justPublishedShortId = null)
+    {
+        // L33: the Short id, declared outside the try so the catch lines
+        // can name it too. At publish time PublishAsync passes it
+        // directly: the sidecar's Publication status is only set to
+        // Published by Program.cs AFTER PublishAsync returns, so reading
+        // the sidecar here would always no-op at publish time. The
+        // reconciler path (later runs) reads it from the sidecar.
+        string? shortId = justPublishedShortId;
+        try
+        {
+            // L33: the early returns below used to be silent — the caller
+            // could not distinguish "not a Short" from "already posted".
+            // One Info line each, naming the video file + Short id (when
+            // known) + reason + next action.
+            if (!sidecar.Channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+            {
+                log.Info($"  [youtube] skipping Short comment for {Path.GetFileName(videoPath)}: channel is '{sidecar.Channel}', not trendlinenow; never applicable");
+                return false;
+            }
+            if (!sidecar.IsVertical)
+            {
+                log.Info($"  [youtube] skipping Short comment for {Path.GetFileName(videoPath)}: not a vertical Short; never applicable");
+                return false;
+            }
+            if (sidecar.PinnedCommentPosted)
+            {
+                var postedId = sidecar.Publications.TryGetValue(Platforms.YouTube, out var postedPub) ? postedPub.Id : null;
+                log.Info($"  [youtube] skipping Short comment for {Path.GetFileName(videoPath)} (Short {postedId ?? "unknown id"}): comment already posted; will not re-post");
+                return false;
+            }
+
+            // The Short's own YouTube id (see above): the reconciler path
+            // reads it from the sidecar when PublishAsync did not pass it.
+            if (shortId is null)
+            {
+                if (!sidecar.Publications.TryGetValue(Platforms.YouTube, out var pub)
+                    || pub.Status != PublishStatus.Published
+                    || string.IsNullOrWhiteSpace(pub.Id))
+                {
+                    log.Info($"  [youtube] skipping Short comment for {Path.GetFileName(videoPath)}: Short is not published on YouTube yet; will retry on reconciler runs");
+                    return false;
+                }
+                shortId = pub.Id;
+            }
+
+            var fileName = Path.GetFileNameWithoutExtension(videoPath);
+            if (!fileName.EndsWith("-short", StringComparison.OrdinalIgnoreCase))
+            {
+                log.Info($"  [youtube] skipping Short comment for {Path.GetFileName(videoPath)} (Short {shortId}): not a Short filename; never applicable");
+                return false;
+            }
+
+            var sibling = await FindSiblingSidecarAsync(videoPath, wantShort: false, msg => log.Warn(msg));
+            if (sibling is null)
+            {
+                log.Info("  [youtube] no long-form sidecar found; skipping the Short comment.");
+                return false;
+            }
+            var (longForm, _) = sibling.Value;
+            if (!longForm.Publications.TryGetValue(Platforms.YouTube, out var lfPub)
+                || lfPub.Status != PublishStatus.Published
+                || string.IsNullOrWhiteSpace(lfPub.Id))
+            {
+                log.Info("  [youtube] long-form is not published on YouTube yet; skipping the Short comment.");
+                return false;
+            }
+
+            var thread = new CommentThread
+            {
+                Snippet = new CommentThreadSnippet
+                {
+                    VideoId = shortId,
+                    TopLevelComment = new Comment
+                    {
+                        Snippet = new CommentSnippet { TextOriginal = FullStoryCommentText(lfPub.Id) },
+                    },
+                },
+            };
+            // commentThreads.insert costs ~50 quota units. One call per
+            // Short ever (see PinnedCommentPosted above).
+            await youtube.CommentThreads.Insert(thread, "snippet").ExecuteAsync(ct);
+
+            // Record success only after the insert returned, so a failure
+            // above leaves the flag false and a later run retries instead of
+            // believing the comment is posted.
+            sidecar.PinnedCommentPosted = true;
+            // L82: wire the helper's log sink into the run log.
+            await sidecar.SaveAsync(videoPath, msg => log.Warn(msg));
+            log.Info($"  [youtube] posted the \"Full story here\" comment on the Short {shortId} " +
+                     "(pin it in YouTube Studio → Comments → ⋮ → Pin; the API cannot pin).");
+            return true;
+        }
+        catch (Google.GoogleApiException ex) when ((int)ex.HttpStatusCode == 403)
+        {
+            // The usual cause: the stored token was captured before the
+            // youtube.force-ssl scope was added (fix #2). Re-capture the
+            // token via TokenCapture; the next run then posts the comment.
+            // Never a publish failure — the video is already live.
+            log.Error($"  [youtube] Short comment not posted for {shortId} (HTTP 403 — the YouTube token lacks the " +
+                      "youtube.force-ssl scope; re-authorize via TokenCapture and the next run will post it).");
+            return false;
+        }
+        catch (Exception ex)
+        {
+            log.Error($"  [youtube] Short comment failed for {shortId} (video still published): {ex.Message}");
+            return false;
+        }
+    }
+
     // R3 (fix sequence #2, ITEM 5): reconcile the Short<->long-form
     // cross-link on EVERY uploader run instead of once. The one-shot paths
     // (footer at resolve time, TryAddShortLinkToLongFormAsync at Short
@@ -391,12 +643,20 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
     // or re-publishes anything, and is a no-op when both links are live.
     public async Task ReconcileCrossLinksAsync(string videoPath, Sidecar sidecar, CancellationToken ct)
     {
+        // L34: the early returns below used to be silent — a reconcile
+        // that no-ops every run left no trace of why.
         if (!sidecar.Channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+        {
+            log.Info($"  [youtube] cross-link skipped for {Path.GetFileName(videoPath)}: channel is '{sidecar.Channel}', not trendlinenow; never applicable");
             return;
+        }
         if (!sidecar.Publications.TryGetValue(Platforms.YouTube, out var pub)
             || pub.Status != PublishStatus.Published
             || string.IsNullOrWhiteSpace(pub.Id))
+        {
+            log.Info($"  [youtube] cross-link skipped for {Path.GetFileName(videoPath)}: not published on YouTube yet; will retry next run");
             return;
+        }
 
         YouTubeService youtube;
         try
@@ -405,7 +665,7 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         }
         catch (Exception ex)
         {
-            log.Warn($"  [youtube] cross-link reconciliation skipped (could not authorize YouTube: {ex.Message}).");
+            log.Warn($"  [youtube] cross-link reconciliation skipped for {Path.GetFileName(videoPath)} (could not authorize YouTube: {ex.Message}); descriptions unchanged, will retry next run");
             return;
         }
 
@@ -417,7 +677,7 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         {
             // Best-effort: a reconciliation failure must never fail the
             // video's run or move it to failed/.
-            log.Warn($"  [youtube] cross-link reconciliation failed (descriptions unchanged): {ex.Message}");
+            log.Warn($"  [youtube] cross-link reconciliation failed for {Path.GetFileName(videoPath)} ({pub.Id}) (descriptions unchanged): {ex.Message}; will retry next run");
         }
     }
 
@@ -429,17 +689,26 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
     // the other way round. Either side publishing later heals the pair.
     internal async Task ReconcileCrossLinksWithServiceAsync(YouTubeService youtube, string videoPath, Sidecar sidecar, CancellationToken ct)
     {
+        // L34: same silent early returns as ReconcileCrossLinksAsync above
+        // (this overload is the testable core; the same skip must be
+        // visible whichever entry point runs).
         if (!sidecar.Channel.Equals("trendlinenow", StringComparison.OrdinalIgnoreCase))
+        {
+            log.Info($"  [youtube] cross-link skipped for {Path.GetFileName(videoPath)}: channel is '{sidecar.Channel}', not trendlinenow; never applicable");
             return;
+        }
         if (!sidecar.Publications.TryGetValue(Platforms.YouTube, out var pub)
             || pub.Status != PublishStatus.Published
             || string.IsNullOrWhiteSpace(pub.Id))
+        {
+            log.Info($"  [youtube] cross-link skipped for {Path.GetFileName(videoPath)}: not published on YouTube yet; will retry next run");
             return;
+        }
         var thisId = pub.Id;
 
         if (sidecar.IsVertical)
         {
-            var sibling = await FindSiblingSidecarAsync(videoPath, wantShort: false);
+            var sibling = await FindSiblingSidecarAsync(videoPath, wantShort: false, msg => log.Warn(msg));
             if (sibling is null)
             {
                 log.Info("  [youtube] no long-form sidecar found; cross-link reconciliation skipped for now.");
@@ -457,10 +726,15 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
                 FullVideoLinkLine(lfPub.Id), $"https://youtu.be/{lfPub.Id}", ct);
             await EnsureLinkInDescriptionAsync(youtube, longFormPath, longForm,
                 ShortVersionLinkLine(thisId), $"https://youtu.be/{thisId}", ct);
+            // Fix #2: the Short's "Full story here →" comment, retried on
+            // every run until posted (first attempt may have missed because
+            // the long-form was not published yet, or the token predated the
+            // force-ssl scope). Best-effort; never fails the reconciliation.
+            await EnsurePinnedCommentAsync(youtube, videoPath, sidecar, ct);
         }
         else
         {
-            var sibling = await FindSiblingSidecarAsync(videoPath, wantShort: true);
+            var sibling = await FindSiblingSidecarAsync(videoPath, wantShort: true, msg => log.Warn(msg));
             if (sibling is null)
             {
                 log.Info("  [youtube] no Short sidecar found; cross-link reconciliation skipped for now.");
@@ -481,10 +755,11 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         }
     }
 
-    // The sibling sidecar of a video: "<slug>-en.mp4" <-> "<slug>-en-short.mp4",
-    // in the watch dir or already moved to done/<slug>/. Returns null when
-    // the sibling video has not been rendered/published yet.
-    private static async Task<(Sidecar Sidecar, string VideoPath)?> FindSiblingSidecarAsync(string videoPath, bool wantShort)
+    // The sibling sidecar of a video: "<slug>-en.mp4" <-> "<slug>-en-short.mp4"
+    // (or "<slug>-en-short2.mp4" for the fix-#5 second Short), in the watch
+    // dir or already moved to done/<slug>/. Returns null when the sibling
+    // video has not been rendered/published yet.
+    private static async Task<(Sidecar Sidecar, string VideoPath)?> FindSiblingSidecarAsync(string videoPath, bool wantShort, Action<string>? log = null)
     {
         var fileName = Path.GetFileNameWithoutExtension(videoPath);
         var channelDir = Path.GetDirectoryName(videoPath);
@@ -494,15 +769,19 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         string siblingSlug;
         if (wantShort)
         {
-            if (fileName.EndsWith("-short", StringComparison.OrdinalIgnoreCase))
+            // A Short (main or second) has no Short sibling to find.
+            if (ShortVideo.IsShort(videoPath))
                 return null;
-            siblingSlug = fileName + "-short";
+            siblingSlug = fileName + ShortVideo.Suffix;
         }
         else
         {
-            if (!fileName.EndsWith("-short", StringComparison.OrdinalIgnoreCase))
+            // Fix #5: a second Short ("-short2") is also a Short — its
+            // long-form sibling is the same "<slug>-en".
+            var longFormSlug = ShortVideo.LongFormSlug(fileName);
+            if (longFormSlug is null)
                 return null;
-            siblingSlug = fileName[..^"-short".Length];
+            siblingSlug = longFormSlug;
         }
 
         foreach (var candidate in new[]
@@ -511,7 +790,8 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
             Path.Combine(channelDir, "done", siblingSlug, siblingSlug + ".mp4"),
         })
         {
-            var sibling = await Sidecar.LoadAsync(candidate);
+            // L82: wire the helper's log sink into the run log.
+            var sibling = await Sidecar.LoadAsync(candidate, log);
             if (sibling is not null)
                 return (sibling, candidate);
         }
@@ -553,14 +833,22 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
     internal async Task<bool> EnsureLinkInDescriptionAsync(YouTubeService youtube, string videoPath, Sidecar sidecar,
         string linkLine, string linkUrl, CancellationToken ct)
     {
+        // L34: the false returns below used to be silent — a reconcile
+        // that no-ops every run left no trace of why.
         if (!sidecar.Publications.TryGetValue(Platforms.YouTube, out var pub)
             || pub.Status != PublishStatus.Published
             || string.IsNullOrWhiteSpace(pub.Id))
+        {
+            log.Info($"  [youtube] cross-link skipped for {Path.GetFileName(videoPath)}: not published on YouTube yet; will retry next run");
             return false;
+        }
 
         var live = await FetchLiveSnippetAsync(youtube, pub.Id, ct);
         if (live is null)
+        {
+            log.Info($"  [youtube] cross-link skipped for {Path.GetFileName(videoPath)} ({pub.Id}): could not read the live description; descriptions unchanged, will retry next run");
             return false;
+        }
         var liveDescription = live.Description ?? "";
 
         if (liveDescription.Contains(linkUrl, StringComparison.Ordinal))
@@ -569,7 +857,8 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
             if (!sidecar.Description.Contains(linkUrl, StringComparison.Ordinal))
             {
                 sidecar.Description = liveDescription;
-                await sidecar.SaveAsync(videoPath);
+                // L82: wire the helper's log sink into the run log.
+                await sidecar.SaveAsync(videoPath, msg => log.Warn(msg));
                 log.Info($"  [youtube] synced the sidecar description for {Path.GetFileName(videoPath)} (cross-link already live).");
             }
             return false;
@@ -603,56 +892,17 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         // failure above leaves the sidecar without the link and a later run
         // retries instead of believing it is done.
         sidecar.Description = newDescription;
-        await sidecar.SaveAsync(videoPath);
+        // L82: wire the helper's log sink into the run log.
+        await sidecar.SaveAsync(videoPath, msg => log.Warn(msg));
         log.Info($"  [youtube] added the cross-link to the description of {pub.Id} ({linkUrl}).");
         return true;
-    }
-
-    // Trend research (legit, via the Data API; no scraping) used by Program.cs
-    // to seed Claude's metadata prompt when a video has no sidecar. Kept here
-    // rather than in Program.cs so it reuses the same authorized service
-    // instead of creating a second one.
-    public async Task<string> FetchTrendingDataAsync(IReadOnlyList<string> queries, Logger log, CancellationToken ct)
-    {
-        var youtube = await GetServiceAsync();
-        var sb = new StringBuilder();
-        try
-        {
-            foreach (var q in queries)
-            {
-                var search = youtube.Search.List("snippet");
-                search.Q = q;
-                search.Type = "video";
-                search.Order = SearchResource.ListRequest.OrderEnum.ViewCount;
-                search.SafeSearch = SearchResource.ListRequest.SafeSearchEnum.Strict;
-                search.PublishedAfterDateTimeOffset = DateTimeOffset.UtcNow.AddDays(-30);
-                search.MaxResults = 5;
-                var res = await search.ExecuteAsync(ct);   // 100 quota units per call
-
-                foreach (var item in res.Items)
-                    sb.AppendLine($"- \"{item.Snippet.Title}\" | channel: {item.Snippet.ChannelTitle}");
-            }
-        }
-        catch (Exception ex)
-        {
-            log.Error($"Trend fetch failed (continuing with generic prompt): {ex.Message}");
-        }
-        return sb.ToString();
     }
 
     private async Task<YouTubeService> GetServiceAsync()
     {
         if (_service is not null) return _service;
 
-        using var stream = new FileStream(cfg.ClientSecretPath, FileMode.Open, FileAccess.Read);
-        var credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
-            GoogleClientSecrets.FromStream(stream).Secrets,
-            // yt-analytics.readonly must match TokenCapture so a token
-            // captured with analytics scope is not downgraded on refresh.
-            new[] { YouTubeService.Scope.YoutubeUpload, YouTubeService.Scope.YoutubeReadonly, "https://www.googleapis.com/auth/yt-analytics.readonly" },
-            "gigglegarden-channel-owner",                        // must match TokenCapture
-            CancellationToken.None,
-            new FileDataStore(cfg.TokenStorePath, fullPath: true));
+        var credential = await GetCredentialAsync();
 
         _service = new YouTubeService(new Google.Apis.Services.BaseClientService.Initializer
         {
@@ -666,5 +916,36 @@ sealed class YouTubePublisher(YouTubeConfig cfg, Logger log) : IPublisher
         // recovers if a chunk still fails.
         _service.HttpClient.Timeout = TimeSpan.FromMinutes(10);
         return _service;
+    }
+
+    // The one credential for this channel, shared by the Data API service
+    // above and the Analytics API service below (fix #4). Extracted from
+    // GetServiceAsync so the scope list lives in exactly one place.
+    public async Task<UserCredential> GetCredentialAsync()
+    {
+        if (_credential is not null) return _credential;
+
+        using var stream = new FileStream(cfg.ClientSecretPath, FileMode.Open, FileAccess.Read);
+        _credential = await GoogleWebAuthorizationBroker.AuthorizeAsync(
+            GoogleClientSecrets.FromStream(stream).Secrets,
+            // yt-analytics.readonly must match TokenCapture so a token
+            // captured with analytics scope is not downgraded on refresh.
+            // youtube.force-ssl (fix #2, 2026-11-26) is the scope
+            // commentThreads.insert needs for the Short's "Full story here"
+            // comment. A token captured before this scope was added 403s on
+            // the comment call until it is re-captured — the comment step
+            // degrades gracefully to a log line in that case (see
+            // EnsurePinnedCommentAsync); it never fails the publish.
+            // Full `youtube` scope added 2026-11-26 (fix #4 follow-up from
+            // fix #3): TokenCapture already lists it, and this array had
+            // only four scopes — a fresh capture through the Uploader path
+            // would have silently downgraded the token and broken playlist
+            // linking (playlists.insert needs the full scope). A stored
+            // token is reused as-is, so this changes no live behaviour.
+            new[] { YouTubeService.Scope.YoutubeUpload, YouTubeService.Scope.YoutubeReadonly, "https://www.googleapis.com/auth/yt-analytics.readonly", "https://www.googleapis.com/auth/youtube.force-ssl", "https://www.googleapis.com/auth/youtube" },
+            "gigglegarden-channel-owner",                        // must match TokenCapture
+            CancellationToken.None,
+            new FileDataStore(cfg.TokenStorePath, fullPath: true));
+        return _credential;
     }
 }

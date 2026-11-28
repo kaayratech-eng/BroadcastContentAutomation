@@ -129,7 +129,20 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
             // (sidecar.SaveAsync) so a VM restart mid-upload can resume/check
             // this publish instead of starting a second one.
             if (request.OnPlatformIdAsync is not null)
-                await request.OnPlatformIdAsync(publishId);
+            {
+                try
+                {
+                    await request.OnPlatformIdAsync(publishId);
+                }
+                catch (Exception ex)
+                {
+                    // L13: the publish exists; only the id-save failed. The
+                    // callback already set the id in memory, and Program.cs
+                    // saves the sidecar again after PublishAsync returns —
+                    // log it and continue as a success.
+                    log.Error($"  [tiktok] publish {publishId} was created but the id could not be recorded ({ex.GetType().Name}: {ex.Message}); continuing — the sidecar save after publish will persist it.");
+                }
+            }
 
             log.Info($"  [tiktok] publish {publishId}, uploading {Text.Bytes(info.Length)} in {totalChunks} chunks");
             log.Info($"  [tiktok] caption (also saved to {Path.GetFileName(captionFile)}) - copy-paste into the draft:\n{caption}");
@@ -199,6 +212,15 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
         {
             return ex.Permanent ? PublishResult.Fatal(ex.Message) : PublishResult.Retry(ex.Message);
         }
+        catch (InvalidDataException ex)
+        {
+            // L12: a corrupt token file is permanent — the stored token is
+            // dead and every later run fails auth the same way until a human
+            // re-authorizes. Fail the target with the instruction; do not
+            // burn crash retries on it as a transient error.
+            return PublishResult.Fatal(
+                $"TikTok token file corrupt/invalid JSON at {cfg.TokenStorePath}: {ex.Message}; re-authorize via OAuth consent flow, target abandoned");
+        }
         catch (Exception ex) when (ex is HttpRequestException or IOException or TaskCanceledException && !ct.IsCancellationRequested)
         {
             return PublishResult.Retry($"TikTok transport error: {ex.Message}");
@@ -212,6 +234,15 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException)
         {
             return PublishResult.Retry($"TikTok returned an unexpected response shape: {ex.Message}");
+        }
+        catch (Exception ex)
+        {
+            // L13: anything outside the known shapes used to escape to the
+            // per-video catch and burn a crash retry. Return a target-level
+            // Retry instead; a publish already created is re-verified via
+            // ExistingId on the next run.
+            return PublishResult.Retry(
+                $"TikTok unexpected error ({ex.GetType().Name}): {ex.Message}; target will retry, video already live will be re-verified via ExistingId");
         }
     }
 
@@ -247,7 +278,10 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
                 // must not be terminal: Retry, so the next run re-checks
                 // (and re-inits if the publish is still FAILED).
                 var reason = data.TryGetProperty("fail_reason", out var fr) ? fr.GetString() : "unknown";
-                log.Info($"  [tiktok] processing failed ({reason}); retrying next run instead of abandoning.");
+                // L75: a platform-side rejection is an error, not info —
+                // the target retries next run (B20), but the rejection
+                // itself must stand out in the log.
+                log.Error($"  [tiktok] processing failed ({reason}); retrying next run instead of abandoning.");
                 return PublishResult.Retry($"TikTok processing failed: {reason}");
             }
 
@@ -304,10 +338,23 @@ sealed class TikTokPublisher(TikTokConfig cfg, Logger log) : IPublisher
     // one must be persisted immediately — losing it means redoing consent.
     private async Task<string> RefreshAccessTokenAsync(HttpClient http, CancellationToken ct)
     {
-        var stored = JsonSerializer.Deserialize<TikTokTokenFile>(
-            await File.ReadAllTextAsync(cfg.TokenStorePath, ct),
-            new JsonSerializerOptions { PropertyNameCaseInsensitive = true })
-            ?? throw new InvalidDataException($"{cfg.TokenStorePath} is not valid TikTok token JSON.");
+        TikTokTokenFile? stored;
+        try
+        {
+            stored = JsonSerializer.Deserialize<TikTokTokenFile>(
+                await File.ReadAllTextAsync(cfg.TokenStorePath, ct),
+                new JsonSerializerOptions { PropertyNameCaseInsensitive = true });
+        }
+        catch (JsonException ex)
+        {
+            // L12: malformed token JSON must surface as InvalidDataException
+            // (a corrupt token file), not as the "unexpected response shape"
+            // retry the JsonException catch below would give it.
+            throw new InvalidDataException(
+                $"{cfg.TokenStorePath} is not valid TikTok token JSON: {ex.Message}", ex);
+        }
+        if (stored is null)
+            throw new InvalidDataException($"{cfg.TokenStorePath} is not valid TikTok token JSON.");
 
         using var body = new FormUrlEncodedContent(new Dictionary<string, string>
         {

@@ -61,7 +61,7 @@ static partial class VideoAssembler
             var clip = Path.Combine(workDir, $"clip{i:D2}-{tag}.mp4");
             await RunFfmpegAsync(cfg,
                 $"-y -i \"{videoOnly}\" -i \"{s.AudioPath}\" -af \"apad\" -t {Text.Invariant(duration)} " +
-                $"-c:v copy -c:a aac -b:a 128k \"{clip}\"");
+                $"-c:v copy -c:a aac -b:a 128k \"{clip}\"", "clip mux", clip);
 
             sceneClips.Add(clip);
             durations.Add(duration);
@@ -137,7 +137,10 @@ static partial class VideoAssembler
         // flagged scene whose visual is missing entirely (B12): it is
         // passed in because the `assets` list itself is declared after
         // this local function and cannot be captured from inside it.
-        async Task<RemotionSceneAsset> BuildAssetAsync(Scene s, RemotionSceneAsset? previousAsset)
+        // L54: BuildAssetAsync takes the 0-based scene index so the
+        // visual-missing reuse (and the no-visual throw below) can name
+        // the scene — with 55 scenes the old lines were unactionable.
+        async Task<RemotionSceneAsset> BuildAssetAsync(Scene s, RemotionSceneAsset? previousAsset, int sceneIndex)
         {
             // A "visual" scene has no image or clip - its data visual is drawn
             // natively by Remotion's VisualScene component from the spec, so it
@@ -190,11 +193,11 @@ static partial class VideoAssembler
                 pathIsAlreadyRelative = true;
                 fallbackVideoDuration = previousAsset.VideoDurationInSeconds;
                 Console.WriteLine(
-                    $"  [visual-missing] scene has no visual - reusing previous scene's asset for the render (flagged in script.json).");
+                    $"  [visual-missing] scene {sceneIndex + 1} has no visual - reusing previous scene's asset for the render (flagged in script.json).");
             }
             if (path is null)
                 throw new InvalidOperationException(
-                    "A scene has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
+                    $"scene {sceneIndex + 1} has neither a ClipPath nor an ImagePath to render - its visual was never resolved during --prep.");
 
             // A Pexels clip is whatever length Pexels had, and a scene lasts its
             // narration plus 0.5s - so a clip can be shorter than its scene. The
@@ -225,8 +228,8 @@ static partial class VideoAssembler
         }
 
         var assets = new List<RemotionSceneAsset>();
-        foreach (var s in scenes)
-            assets.Add(await BuildAssetAsync(s, assets.Count > 0 ? assets[^1] : null));
+        for (var i = 0; i < scenes.Count; i++)
+            assets.Add(await BuildAssetAsync(scenes[i], assets.Count > 0 ? assets[^1] : null, i));
 
         // The one asset that does NOT already live under workDir - copied in rather than
         // pointed at directly, so it lands under the same --public-dir root as everything
@@ -636,7 +639,7 @@ static partial class VideoAssembler
     {
         if (LoudnessCache.TryGetValue(path, out var cached)) return cached;
 
-        var stderr = await RunFfmpegAsync(cfg, $"-hide_banner -i \"{path}\" -af ebur128=framelog=quiet -f null -");
+        var stderr = await RunFfmpegAsync(cfg, $"-hide_banner -i \"{path}\" -af ebur128=framelog=quiet -f null -", "loudness measure", path);
 
         // The summary block prints as "  I:         -8.6 LUFS".
         var match = IntegratedLoudness().Match(stderr);
@@ -709,7 +712,7 @@ static partial class VideoAssembler
         await RunFfmpegAsync(cfg,
             $"-y -i \"{concatPath}\" -stream_loop -1 -i \"{musicPath}\" " +
             $"-filter_complex \"{filter}\" " +
-            $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"");
+            $"-map 0:v -map \"[a]\" -c:v copy -c:a aac -b:a 160k -ar 44100 \"{outputPath}\"", "music mix", outputPath);
     }
 
     // Fits a generated clip to its scene's exact duration and burns in the subtitle.
@@ -732,7 +735,7 @@ static partial class VideoAssembler
         await RunFfmpegAsync(cfg,
             $"-y -i \"{sourceClip}\" -t {Text.Invariant(duration)} " +
             $"-filter_complex \"[0:v]{vf}[v]\" -map \"[v]\" -r 30 -pix_fmt yuv420p -color_range tv " +
-            $"-an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"");
+            $"-an -c:v libx264 -preset medium -crf 20 \"{outputPath}\"", "video clip build", outputPath);
     }
 
     // "LIKE, FOLLOW & SUBSCRIBE" outro card for the ffmpeg pipeline (GiggleGarden has no
@@ -773,7 +776,7 @@ static partial class VideoAssembler
             $"-y -f lavfi -i \"color=c=black:s={w}x{h}:d={Text.Invariant(duration)}\" {audioInput} " +
             $"-filter_complex \"[0:v]{sb}[v]\" -map \"[v]\" -map 1:a " +
             $"-t {Text.Invariant(duration)} -r 30 -pix_fmt yuv420p -color_range tv " +
-            $"-c:v libx264 -preset medium -crf 20 -c:a aac -b:a 128k -ar 44100 -shortest \"{outputPath}\"");
+            $"-c:v libx264 -preset medium -crf 20 -c:a aac -b:a 128k -ar 44100 -shortest \"{outputPath}\"", "outro clip build", outputPath);
 
         return (outputPath, duration);
     }
@@ -783,7 +786,7 @@ static partial class VideoAssembler
     public static async Task ExtractThumbnailFrameAsync(GenConfig cfg, string videoPath, double atSeconds, string outputPath)
     {
         await RunFfmpegAsync(cfg,
-            $"-y -ss {Text.Invariant(atSeconds)} -i \"{videoPath}\" -update 1 -frames:v 1 -q:v 2 \"{outputPath}\"");
+            $"-y -ss {Text.Invariant(atSeconds)} -i \"{videoPath}\" -update 1 -frames:v 1 -q:v 2 \"{outputPath}\"", "thumbnail frame extract", outputPath);
 
         if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
             throw new Exception($"Could not extract a thumbnail frame from {Path.GetFileName(videoPath)}.");
@@ -793,13 +796,66 @@ static partial class VideoAssembler
     // canonical size, no overlay text. Every thumbnail sampled from the researched
     // channels carried none - the enormous face and oversized object the image prompt
     // already asks for are what get the click, and the audience can't read anyway.
+    //
+    // Kept as the FALLBACK only (fix #3, audit 2026-11-26): the default path is
+    // BuildThumbnailVariantAsync below (real star face + 1-3 words), which
+    // reverses this no-text rule. This method survives so a failed variant
+    // build in RunAssembleAsync still leaves the video with a thumbnail
+    // instead of failing the finish.
     public static async Task BuildThumbnailAsync(GenConfig cfg, string baseImagePath, string outputPath)
     {
         const int w = 1280, h = 720; // YouTube's canonical thumbnail size
 
         await RunFfmpegAsync(cfg,
             $"-y -i \"{baseImagePath}\" -vf \"scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}\" " +
-            $"-frames:v 1 -q:v 2 \"{outputPath}\"");
+            $"-frames:v 1 -q:v 2 \"{outputPath}\"", "thumbnail build", outputPath);
+    }
+
+    // Purpose-built thumbnail variant (fix #3, audit 2026-11-26): a
+    // face-forward crop of the base image with 1-3 words of large bold
+    // text burned in at the bottom. The words arrive via textfile (not
+    // text=) so no escaping is needed for apostrophes or punctuation.
+    // The crop zooms the source by `zoom` (never below cover), then cuts
+    // a 1280x720 window positioned by the anchors (0..1 fractions of the
+    // spare room after the crop). Text sits on a semi-transparent black
+    // box so it stays readable over any background. The generated art
+    // itself stays text-free — the words are an overlay, never part of
+    // the image prompt (FLUX bakes gibberish text into signage).
+    public static async Task BuildThumbnailVariantAsync(
+        GenConfig cfg, string baseImagePath, string overlayWords, int fontSizePx, string fontPath,
+        double zoom, double anchorX, double anchorY, string outputPath)
+    {
+        var wordsFile = outputPath + ".words.txt";
+        try
+        {
+            File.WriteAllText(wordsFile, overlayWords, new UTF8Encoding(false));
+            var filter =
+                $"scale='max(1280,iw*{ThumbnailBuilder.Invariant(zoom)})':'max(720,ih*{ThumbnailBuilder.Invariant(zoom)})'," +
+                $"crop=1280:720:(iw-1280)*{ThumbnailBuilder.Invariant(anchorX)}:(ih-720)*{ThumbnailBuilder.Invariant(anchorY)}," +
+                $"drawtext=textfile='{FilterPath(wordsFile)}':fontfile='{FilterPath(fontPath)}':" +
+                $"fontsize={fontSizePx}:fontcolor=white:borderw=3:bordercolor=black:" +
+                $"box=1:boxcolor=black@0.55:boxborderw=20:x=40:y=h-th-40";
+            await RunFfmpegAsync(cfg,
+                $"-y -i \"{baseImagePath}\" -vf \"{filter}\" -frames:v 1 -q:v 2 \"{outputPath}\"", "thumbnail variant", outputPath);
+
+            if (!File.Exists(outputPath) || new FileInfo(outputPath).Length == 0)
+                throw new Exception($"Could not build thumbnail variant {Path.GetFileName(outputPath)}.");
+        }
+        finally
+        {
+            try { if (File.Exists(wordsFile)) File.Delete(wordsFile); } catch { /* best effort */ }
+        }
+    }
+
+    // 320px mobile preview of a thumbnail (fix #3): the legibility check
+    // in ThumbnailBuilder is verified against this real scaled render.
+    public static async Task RenderMobilePreviewAsync(GenConfig cfg, string thumbPath, string previewPath)
+    {
+        await RunFfmpegAsync(cfg,
+            $"-y -i \"{thumbPath}\" -vf \"scale=320:180\" -frames:v 1 -q:v 2 \"{previewPath}\"", "mobile preview render", previewPath);
+
+        if (!File.Exists(previewPath) || new FileInfo(previewPath).Length == 0)
+            throw new Exception($"Could not render mobile preview {Path.GetFileName(previewPath)}.");
     }
 
     // Shared crossfade length between consecutive segments in the Remotion
@@ -978,7 +1034,7 @@ static partial class VideoAssembler
             $"-y {inputs} -filter_complex \"{string.Join(";", filters)}\" " +
             $"-map \"[{vLabel}]\" -map \"[{aLabel}]\" " +
             $"-r 30 -pix_fmt yuv420p -color_range tv -c:v libx264 -preset medium -crf 23 -maxrate 2200k -bufsize 4400k " +
-            $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"");
+            $"-c:a aac -b:a 128k -ar 44100 \"{outputPath}\"", "crossfaded concat", outputPath);
 
         return cumulative;
     }
@@ -1001,7 +1057,7 @@ static partial class VideoAssembler
             "[fg]scale=1080:1920:force_original_aspect_ratio=decrease[fgs];" +
             "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
 
-        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"", "portrait fit", outputPath);
     }
 
     // Landscape mirror of FitToPortraitAsync: fits a square (or otherwise
@@ -1018,7 +1074,7 @@ static partial class VideoAssembler
             "[fg]scale=1920:1080:force_original_aspect_ratio=decrease[fgs];" +
             "[bgb][fgs]overlay=(W-w)/2:(H-h)/2";
 
-        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"");
+        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -filter_complex \"{filter}\" -frames:v 1 \"{outputPath}\"", "landscape fit", outputPath);
     }
 
     // Plain placeholder frame for a scene whose visual could not be
@@ -1040,7 +1096,7 @@ static partial class VideoAssembler
         var temp = Path.Combine(dir,
             Path.GetFileNameWithoutExtension(outputPath) + ".tmp" + Path.GetExtension(outputPath));
         await RunFfmpegAsync(cfg,
-            $"-y -f lavfi -i \"color=c=0x0b1e3a:s=1080x1920\" -frames:v 1 \"{temp}\"");
+            $"-y -f lavfi -i \"color=c=0x0b1e3a:s=1080x1920\" -frames:v 1 \"{temp}\"", "placeholder image", outputPath);
         File.Move(temp, outputPath, overwrite: true);
         return outputPath;
     }
@@ -1063,6 +1119,33 @@ static partial class VideoAssembler
     // trade; heads matter more). Horizontal centring is unchanged, and a
     // target that already matches the scaled height is unaffected
     // (the vertical term is zero there).
+    // Square-crop anchor for provider downloads (Drake 2026-11-27):
+    // a centre square crop of a tall portrait discards the top ~17% —
+    // exactly where the subject's head is. Commons "Drake 2010.jpg"
+    // (3056x4592) centre-cropped to 1024x1024 lost the top ~768px and
+    // the render opened on a headless Drake. Portrait originals are
+    // therefore top-anchored (bias 0); landscape/square sources keep
+    // the centre crop (the vertical overflow is zero there, so the bias
+    // is unobservable). This is the same accepted trade as the
+    // landscape derivation above: head in frame, feet cut instead.
+    // It does NOT reintroduce the 2026-11-13 top-biased 16:9 pre-crop
+    // (which cut full-body figures off at the waist): that was a
+    // landscape pre-crop, and landscape is still the square itself,
+    // contain-fit by Remotion — this only anchors the SQUARE that the
+    // pre-crop used to be cut from.
+    internal static double SquareCropBias(int sourceWidth, int sourceHeight) =>
+        sourceHeight > sourceWidth ? 0.0 : 0.5;
+
+    // Derives the 1024x1024 square source from a provider download,
+    // top-anchoring portrait originals so the subject's head survives
+    // (see SquareCropBias). All square legs go through here instead of
+    // calling CropScaleToExactAsync with the centre default.
+    public static async Task CropScaleToSquareAsync(GenConfig cfg, string sourcePath, string outputPath)
+    {
+        var (w, h) = await GetImageDimensionsAsync(cfg, sourcePath);
+        await CropScaleToExactAsync(cfg, sourcePath, outputPath, 1024, 1024, SquareCropBias(w, h));
+    }
+
     public static async Task CropScaleToExactAsync(GenConfig cfg, string sourcePath, string outputPath, int width, int height, double verticalBias = 0.5)
     {
         var filter =
@@ -1078,7 +1161,7 @@ static partial class VideoAssembler
         var temp = Path.Combine(
             Path.GetDirectoryName(outputPath) ?? ".",
             Path.GetFileNameWithoutExtension(outputPath) + ".tmp" + Path.GetExtension(outputPath));
-        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -vf \"{filter}\" -frames:v 1 \"{temp}\"");
+        await RunFfmpegAsync(cfg, $"-y -i \"{sourcePath}\" -vf \"{filter}\" -frames:v 1 \"{temp}\"", "crop/scale", outputPath);
         File.Move(temp, outputPath, overwrite: true);
     }
 
@@ -1090,10 +1173,17 @@ static partial class VideoAssembler
         var temp = audioPath + ".trim.mp3";
         try
         {
-            await RunFfmpegAsync(cfg, $"-y -i \"{audioPath}\" -af \"silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse\" -c:a libmp3lame \"{temp}\"");
+            await RunFfmpegAsync(cfg, $"-y -i \"{audioPath}\" -af \"silenceremove=start_periods=1:start_threshold=-50dB,areverse,silenceremove=start_periods=1:start_threshold=-50dB,areverse\" -c:a libmp3lame \"{temp}\"", "silence trim", audioPath);
             File.Move(temp, audioPath, overwrite: true);
         }
-        catch { try { if (File.Exists(temp)) File.Delete(temp); } catch { } }
+        catch (Exception ex)
+        {
+            // L19: a failed trim used to vanish — every scene shipped with
+            // dead air and nothing said so. The original is kept (best-
+            // effort), and the failure is now named in the log.
+            Console.WriteLine($"  WARNING: silence trim failed for {audioPath} ({ex.Message}) — keeping untrimmed audio");
+            try { if (File.Exists(temp)) File.Delete(temp); } catch { }
+        }
     }
 
     // NormalizeLoudness re-encodes a finished render's audio to -14 LUFS
@@ -1122,7 +1212,7 @@ static partial class VideoAssembler
         var videoArgs = pixFmt == "yuv420p" && colorRange == "tv"
             ? "-c:v copy"
             : "-vf \"scale=in_range=pc:out_range=tv,format=yuv420p\" -c:v libx264 -preset medium -crf 20";
-        await RunFfmpegAsync(cfg, $"-y -i \"{videoPath}\" -af \"loudnorm=I=-14:TP=-1.5:LRA=11:linear=true\" {videoArgs} -c:a aac -b:a 128k -ar 48000 \"{temp}\"");
+        await RunFfmpegAsync(cfg, $"-y -i \"{videoPath}\" -af \"loudnorm=I=-14:TP=-1.5:LRA=11:linear=true\" {videoArgs} -c:a aac -b:a 128k -ar 48000 \"{temp}\"", "loudness normalize", videoPath);
         File.Move(temp, videoPath, overwrite: true);
     }
 
@@ -1140,7 +1230,14 @@ static partial class VideoAssembler
         await p.StandardError.ReadToEndAsync();
         await p.WaitForExitAsync();
 
-        if (p.ExitCode != 0) return ("", "");
+        if (p.ExitCode != 0)
+        {
+            // L53: the delivery gate used to swallow this — the caller
+            // then re-encodes (safe fallback), but nothing recorded that
+            // ffprobe failed on this file.
+            Console.WriteLine($"WARNING: ffprobe failed (exit {p.ExitCode}) on {videoPath} — re-encoding to limited-range yuv420p");
+            return ("", "");
+        }
         var parts = stdout.Trim().Split(',');
         return parts.Length >= 2 ? (parts[0].Trim(), parts[1].Trim()) : ("", "");
     }
@@ -1203,7 +1300,10 @@ static partial class VideoAssembler
 
     // Returns stderr, which is where ffmpeg puts everything interesting - including the
     // ebur128 loudness summary the music mix reads back.
-    private static async Task<string> RunFfmpegAsync(GenConfig cfg, string arguments)
+    // L55: every call names its operation + the output file, so a failure
+    // says WHICH step died (thumbnail build vs clip build vs loudnorm...)
+    // instead of one shared "ffmpeg failed" for all sixteen call sites.
+    private static async Task<string> RunFfmpegAsync(GenConfig cfg, string arguments, string operation, string? outputPath = null)
     {
         var ffmpeg = string.IsNullOrEmpty(cfg.FfmpegPath) ? "ffmpeg" : cfg.FfmpegPath;
         var psi = new ProcessStartInfo(ffmpeg, arguments) { RedirectStandardError = true, UseShellExecute = false };
@@ -1213,7 +1313,10 @@ static partial class VideoAssembler
         await p.WaitForExitAsync();
 
         if (p.ExitCode != 0)
-            throw new Exception($"ffmpeg failed (exit {p.ExitCode}):\n{Text.Tail(err, 2000)}");
+        {
+            var target = string.IsNullOrWhiteSpace(outputPath) ? "" : $" on {outputPath}";
+            throw new Exception($"ffmpeg failed (exit {p.ExitCode}) during {operation}{target}:\n{Text.Tail(err, 2000)}");
+        }
 
         return err;
     }

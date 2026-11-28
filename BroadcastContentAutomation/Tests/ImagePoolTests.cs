@@ -62,7 +62,7 @@ public class ImagePoolTests
     public void ChainSourceGuard_ProgramAttemptsInOrder_AndNoSdxlOrDiscardedAttempt()
     {
         var program = ReadRepoFile("BroadcastContentAutomation", "VideoGen", "Program.cs");
-        var start = program.IndexOf("static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync", StringComparison.Ordinal);
+        var start = program.IndexOf("static async Task<(string Path, string? ArtSource, ArtProvenance? Provenance)> GenerateSquareArtAsync", StringComparison.Ordinal);
         Assert.True(start >= 0, "GenerateSquareArtAsync not found in Program.cs");
         var region = program[start..];
         var end = region.IndexOf("Exception? lastError = null;", StringComparison.Ordinal);
@@ -516,7 +516,7 @@ public class ImagePoolTests
         }
     }
 
-    private static Task<(string Path, string? Source)> GenerateSquareArt(
+    private static Task<(string Path, string? Source, ArtProvenance? Provenance)> GenerateSquareArt(
         GenConfig cfg, string prompt, string squareBase, int sceneIndex = -1,
         string? rawPrompt = null, string? title = null,
         IReadOnlyList<string>? tags = null, string? narration = null)
@@ -526,7 +526,7 @@ public class ImagePoolTests
             .FirstOrDefault(m => m.Name.Contains("GenerateSquareArtAsync", StringComparison.Ordinal)
                 && m.GetParameters().Length == 8)
             ?? throw new MissingMethodException("GenerateSquareArtAsync (8-param) not found in VideoGen.dll.");
-        return (Task<(string, string?)>)method.Invoke(null,
+        return (Task<(string, string?, ArtProvenance?)>)method.Invoke(null,
             new object?[] { cfg, prompt, squareBase, sceneIndex, rawPrompt, title, tags, narration })!;
     }
 
@@ -541,7 +541,7 @@ public class ImagePoolTests
         h.WritePoolOk("ovh");
         ImagePool.ResetForTests();
         var squareBase = Path.Combine(h.Dir, "scene00-art-square");
-        var (path, source) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
+        var (path, source, _) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
             "COP31 Climate Summit Reaches a Historic Deal", ["COP31", "climate"], "Delegates in Belém agreed a pact.");
         Assert.Equal("cloudflare-flux", source);
         Assert.True(File.Exists(path));
@@ -561,7 +561,7 @@ public class ImagePoolTests
         h.WritePoolOk("pexels");
         ImagePool.ResetForTests();
         var squareBase = Path.Combine(h.Dir, "scene00-art-square");
-        var (path, source) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
+        var (path, source, _) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
             "COP31 Climate Summit Reaches a Historic Deal", ["COP31", "climate"], "Delegates in Belém agreed a pact.");
         Assert.Equal("pexels-stock", source);
         Assert.True(File.Exists(path));
@@ -584,7 +584,7 @@ public class ImagePoolTests
         h.WritePoolFailPexelsOkOvh();
         ImagePool.ResetForTests();
         var squareBase = Path.Combine(h.Dir, "scene00-art-square");
-        var (path, source) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
+        var (path, source, _) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
             "COP31 Climate Summit Reaches a Historic Deal", ["COP31", "climate"], "Delegates in Belém agreed a pact.");
         Assert.Equal("ovhcloud", source);
         Assert.True(File.Exists(path));
@@ -636,13 +636,13 @@ public class ImagePoolTests
         h.WritePoolOk("ovh");
         ImagePool.ResetForTests();
         var squareBase = Path.Combine(h.Dir, "scene00-art-square");
-        var (path, source) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
+        var (path, source, _) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
             "COP31 Climate Summit Reaches a Historic Deal", ["COP31"], "Delegates met.");
         Assert.Equal("cloudflare-flux", source);
         var linesAfterFirst = h.LogLines().Length;
         // A resume finds the square already on disk: no provider, no
         // governor call, no regeneration.
-        var (path2, source2) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
+        var (path2, source2, _) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 0, TestPrompt,
             "COP31 Climate Summit Reaches a Historic Deal", ["COP31"], "Delegates met.");
         Assert.Equal(path, path2);
         Assert.Null(source2);
@@ -668,5 +668,108 @@ public class ImagePoolTests
         Assert.Contains("All scene-art providers failed", ex.Message);
         var log = h.LogLines();
         Assert.Equal(1, log.Count(l => l.StartsWith("dormant:")));
+    }
+
+    // L48 — a per-leg failure in the chain must name the scene and the
+    // leg: with 5-6 legs x 55 scenes the old bare line was unactionable.
+    [Fact]
+    public async Task GenerateSquareArt_LogsSceneAndLegOnLegFailure()
+    {
+        using var h = new ChainHarness();
+        h.WriteFluxFailPlain();
+        h.WritePoolFailPexelsOkOvh();
+        ImagePool.ResetForTests();
+        var squareBase = Path.Combine(h.Dir, "scene07-art-square");
+        var sb = new System.Text.StringBuilder();
+        var oldOut = Console.Out;
+        try
+        {
+            Console.SetOut(new StringWriter(sb));
+            var (path, source, _) = await GenerateSquareArt(h.Config(), TestPrompt, squareBase, 7, TestPrompt,
+                "COP31 Climate Summit Reaches a Historic Deal", ["COP31", "climate"], "Delegates in Belém agreed a pact.");
+            Assert.Equal("ovhcloud", source);
+            Assert.True(File.Exists(path));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        var log = sb.ToString();
+        Assert.Contains("scene 7", log);
+        Assert.Contains("leg pexels", log);
+        Assert.Contains("leg cloudflare-flux", log);
+    }
+
+    // L49 — the FLUX quota line must name the scene, the 4006 detail and
+    // the park duration (seconds until the 00:00 UTC reset).
+    [Fact]
+    public async Task GenerateSquareArt_FluxQuotaLogNamesSceneAndReset()
+    {
+        using var h = new ChainHarness();
+        h.WriteFluxQuota();
+        h.WritePoolFail();
+        ImagePool.ResetForTests();
+        var squareBase = Path.Combine(h.Dir, "scene03-art-square");
+        var sb = new System.Text.StringBuilder();
+        var oldOut = Console.Out;
+        try
+        {
+            Console.SetOut(new StringWriter(sb));
+            await Assert.ThrowsAsync<FluxQuotaExhaustedException>(() =>
+                GenerateSquareArt(h.Config(), TestPrompt, squareBase, 3, TestPrompt,
+                    "COP31 Climate Summit Reaches a Historic Deal", ["COP31"], "Delegates met."));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        var log = sb.ToString();
+        Assert.Contains("scene 3", log);
+        Assert.Contains("4006", log);
+        Assert.Contains("parked for ", log);
+        Assert.Contains("s until 00:00 UTC", log);
+    }
+
+    // L50 — the terminal art-pool failure must name the scene file, the
+    // leg and the helper's last error, not just "failed after 2 attempts"
+    // (the old summary throw was dead code: the last attempt's exception
+    // propagated raw).
+    [Fact]
+    public async Task ArtPoolClient_FinalFailureIncludesSceneLegAndLastError()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "artpool-final-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var stub = Path.Combine(dir, "pool-fail.py");
+            await File.WriteAllTextAsync(stub,
+                "import sys\nprint('artpool: boom test failure', file=sys.stderr)\nsys.exit(1)\n");
+            var output = Path.Combine(dir, "scene07-art-square.jpg");
+            var cfg = new GenConfig { ArtPoolHelperPath = stub };
+            var sb = new System.Text.StringBuilder();
+            var oldOut = Console.Out;
+            Exception ex;
+            try
+            {
+                Console.SetOut(new StringWriter(sb));
+                ex = await Assert.ThrowsAsync<Exception>(() =>
+                    ArtPoolClient.GenerateSquareWithSourceAsync(cfg, "a test prompt", output, maxAttempts: 2));
+            }
+            finally
+            {
+                Console.SetOut(oldOut);
+            }
+            Assert.Contains("failed after 2 attempts", ex.Message);
+            Assert.Contains("scene07-art-square.jpg", ex.Message);
+            Assert.Contains("art-pool", ex.Message);
+            Assert.Contains("boom test failure", ex.Message);
+            var log = sb.ToString();
+            Assert.Contains("art leg art-pool scene scene07-art-square.jpg failed after 2 attempts", log);
+            Assert.Contains("boom test failure", log);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 }

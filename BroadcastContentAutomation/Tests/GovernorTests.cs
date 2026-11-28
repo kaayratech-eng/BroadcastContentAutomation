@@ -91,7 +91,7 @@ public class GovernorTests
     private abstract class ScriptLegBase(Func<string, Task<string>> impl) : IScriptProvider
     {
         public bool Called { get; private set; }
-        public Task<string> CompleteAsync(string prompt)
+        public Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
         {
             Called = true;
             return impl(prompt);
@@ -112,7 +112,7 @@ public class GovernorTests
     private abstract class TtsLegBase(Func<Task> impl) : ITtsProvider
     {
         public bool Called { get; private set; }
-        public Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
+        public Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null)
         {
             Called = true;
             return impl();
@@ -234,6 +234,95 @@ public class GovernorTests
         var fake = new FakeRunner { Respond = _ => throw new TimeoutException("boom") };
         await NewClient(fake).MarkCooledAsync("groq", "HTTP 429");
         Assert.Single(fake.Calls);
+    }
+
+    [Fact]
+    public async Task RateLimitFailure_ParksLegAndLogsIt()
+    {
+        // L60: a 429 must park the leg AND log the park with the provider
+        // and job id — a parked leg was invisible until the next act
+        // logged a skip.
+        var fake = new FakeRunner();
+        var groq = new GroqHelperScriptProvider(FailWith("HTTP 429 Too Many Requests"));
+        var kilo = new KiloGatewayScriptProvider(Answer("next leg answered"));
+        var pool = new FallbackScriptProvider([groq, kilo], NewClient(fake));
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        try
+        {
+            Assert.Equal("next leg answered",
+                await pool.CompleteAsync("act prompt", new PrepIdentity("job-20261126-test", "Test topic")));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        var cooled = Assert.Single(fake.Calls.Where(c => c[1] == "mark-cooled"));
+        Assert.Equal("groq", ProviderOf(cooled));
+        var log = sb.ToString();
+        Assert.Contains("groq", log);
+        Assert.Contains("parked", log);
+        Assert.Contains("job-20261126-test", log);
+    }
+
+    [Fact]
+    public async Task Governor_UnparseableOutputLogsStdoutTail()
+    {
+        // L61: unparseable governor output must log the stdout/stderr
+        // tail, not just the exit code — otherwise the malformed output
+        // can never be diagnosed.
+        var fake = new FakeRunner();
+        fake.Respond = _ => new ProcessHelper.Result(0, "not-json", "some stderr tail");
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        GovernorDecision decision;
+        try
+        {
+            decision = await NewClient(fake).AcquireAsync("groq", tokens: 7000);
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.True(decision.Allowed);
+        Assert.True(decision.FailOpen);
+        var log = sb.ToString();
+        Assert.Contains("not-json", log);
+        Assert.Contains("failing open", log);
+    }
+
+    [Fact]
+    public async Task GovernorClient_HelperMissing_LogsFailOpenPerCall()
+    {
+        // L61: a missing helper failed open silently on every call after
+        // the one constructor line — each call logs at most one line
+        // naming the fail-open.
+        var fake = new FakeRunner { Respond = _ => throw new Exception("runner must not be called") };
+        var missing = Path.Combine(Path.GetTempPath(), $"governor-missing-{Guid.NewGuid():N}.py");
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        try
+        {
+            var client = new GovernorClient(new GenConfig { GovernorHelperPath = missing }, fake.Run,
+                new PrepIdentity("job-20261126-test"));
+            Assert.True((await client.AcquireAsync("groq", tokens: 7000)).FailOpen);
+            Assert.True((await client.CheckAsync("groq")).FailOpen);
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.Empty(fake.Calls);
+        var log = sb.ToString();
+        Assert.Contains("helper missing", log);
+        Assert.Contains("proceeding ungoverned", log);
+        Assert.Contains("job-20261126-test", log);
+        // Once per call: two calls, two fail-open lines (plus the one
+        // constructor line).
+        Assert.Equal(3, log.Split("helper missing", StringSplitOptions.None).Length - 1);
     }
 
     // ------------------------------------------------------------------
@@ -442,7 +531,7 @@ public class GovernorTests
         var poolIdx = factory.IndexOf("\"pool-helper\" => new FallbackScriptProvider", StringComparison.Ordinal);
         Assert.True(poolIdx >= 0, "pool-helper case missing from ScriptProviderFactory");
         var hybridIdx = factory.IndexOf("\"hybrid\" =>", poolIdx, StringComparison.Ordinal);
-        var govIdx = factory.IndexOf("GovernorClient.FromConfig(cfg)", poolIdx, StringComparison.Ordinal);
+        var govIdx = factory.IndexOf("GovernorClient.FromConfig(cfg, context)", poolIdx, StringComparison.Ordinal);
         Assert.True(govIdx > 0 && govIdx < hybridIdx,
             "pool-helper must pass GovernorClient.FromConfig(cfg) into FallbackScriptProvider");
     }

@@ -405,4 +405,49 @@ public class GlobalTopicTests
         Assert.Contains("Task.WhenAll", source);
         Assert.Contains("NewsFeeds.Select", source);
     }
+
+    private sealed class StubHandler(Func<HttpRequestMessage, HttpResponseMessage> respond) : HttpMessageHandler
+    {
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct) =>
+            Task.FromResult(respond(request));
+    }
+
+    [Fact]
+    public async Task TrendResearch_AllSourcesFailLogsAggregate()
+    {
+        // L65: a YouTube 403 per query + all RSS feeds 500 must log each
+        // skipped call with its status and one aggregate line — and return
+        // an empty news list, not an exception.
+        var handler = new StubHandler(req =>
+            req.RequestUri!.Host.Contains("googleapis.com", StringComparison.Ordinal)
+                ? new HttpResponseMessage(System.Net.HttpStatusCode.Forbidden)
+                    { Content = new StringContent("{\"error\": \"quota exceeded\"}") }
+                : new HttpResponseMessage(System.Net.HttpStatusCode.InternalServerError)
+                    { Content = new StringContent("feed down") });
+        var previous = TrendResearch.HttpClientFactory;
+        TrendResearch.HttpClientFactory = () => new HttpClient(handler);
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        TrendResearch.TrendReport report;
+        try
+        {
+            var profile = ContentProfileRegistry.Get("trendlinenow");
+            report = await TrendResearch.FetchReportAsync(profile,
+                new GenConfig { YouTubeApiKey = "test-key" },
+                new PrepIdentity("job-20261126-test", "Test topic"));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+            TrendResearch.HttpClientFactory = previous;
+        }
+        Assert.Empty(report.News);
+        Assert.Equal("", report.Text);
+        var log = sb.ToString();
+        Assert.Contains("403", log);
+        Assert.Contains("YouTube search failed", log);
+        Assert.Contains("all trend sources failed", log);
+        Assert.Contains("job-20261126-test", log);
+    }
 }

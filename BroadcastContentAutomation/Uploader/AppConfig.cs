@@ -1,6 +1,6 @@
 namespace GiggleGarden.Uploader;
 
-record AppConfig
+public record AppConfig
 {
     public string WatchDirectory { get; init; } = @"D:\Business\Videos";
     public string LogDirectory { get; init; } = @"D:\Business\Videos\logs";
@@ -41,28 +41,47 @@ record AppConfig
     // (e.g. a platform API blip) gets a real chance to clear before the next attempt.
     public int CrashRetryBackoffMinutes { get; init; } = 30;
 
-    // Metadata fallback (only used for videos dropped in without a sidecar).
-    // Free-only (2026-10-25): Groq is tried first, Gemini second. Anthropic/
-    // Claude are kept only so old configs still bind, they are no longer used.
-    public string AnthropicApiKey { get; init; } = "";
-    public string ClaudeModel { get; init; } = "claude-opus-5";
-    public string GroqApiKey { get; init; } = "";
-    public string GroqModel { get; init; } = "llama-3.3-70b-versatile";
-    public string GeminiApiKey { get; init; } = "";
-    public string GeminiModel { get; init; } = "gemini-2.5-flash";
-    public string[] TrendQueries { get; init; } =
-        ["nursery rhymes for kids", "kids learning songs", "hindi rhymes for children"];
-
     // One credential set per ContentProfile/channel (keyed by profile Id, e.g.
-    // "gigglegarden", "chronicleandchaos"), so two channels can publish in the
+    // "trendlinenow", "chronicleandchaos"), so two channels can publish in the
     // same run without sharing tokens. Sidecar.Channel selects which entry a
     // given video routes through; DefaultChannel covers sidecar-less videos
     // dropped in manually with no channel signal at all.
     public Dictionary<string, PlatformsConfig> Channels { get; init; } = new(StringComparer.OrdinalIgnoreCase);
-    public string DefaultChannel { get; init; } = "gigglegarden";
+    public string DefaultChannel { get; init; } = "trendlinenow";
+
+    // L84: fail fast at startup with a named field instead of dying later
+    // in an unrelated-looking error (e.g. a scan over an empty watch dir,
+    // or an auth failure mid-publish for a missing token file). Called from
+    // Program.cs right after the config loads, before the lock/scan, so a
+    // bad field exits 1 with the field named. Only enabled publishers are
+    // checked — a disabled publisher's token path is never read. (The
+    // plan's "SidecarDir" has no such field in this config: sidecars live
+    // next to their video via Sidecar.PathFor, so there is nothing to
+    // validate there.)
+    public void Validate()
+    {
+        if (string.IsNullOrWhiteSpace(WatchDirectory))
+            throw new InvalidOperationException(
+                "appsettings.json: WatchDirectory is empty; set it to the folder holding the videos — fix appsettings.json and re-run");
+        foreach (var (name, platforms) in Channels)
+        {
+            if (platforms.YouTube.Enabled)
+            {
+                if (string.IsNullOrWhiteSpace(platforms.YouTube.ClientSecretPath))
+                    throw new InvalidOperationException(
+                        $"appsettings.json: Channels.{name}.YouTube.ClientSecretPath is empty; fix appsettings.json and re-run");
+                if (string.IsNullOrWhiteSpace(platforms.YouTube.TokenStorePath))
+                    throw new InvalidOperationException(
+                        $"appsettings.json: Channels.{name}.YouTube.TokenStorePath is empty; fix appsettings.json and re-run");
+            }
+            if (platforms.TikTok.Enabled && string.IsNullOrWhiteSpace(platforms.TikTok.TokenStorePath))
+                throw new InvalidOperationException(
+                    $"appsettings.json: Channels.{name}.TikTok.TokenStorePath is empty; fix appsettings.json and re-run");
+        }
+    }
 }
 
-record PlatformsConfig
+public record PlatformsConfig
 {
     public YouTubeConfig YouTube { get; init; } = new();
     public InstagramConfig Instagram { get; init; } = new();
@@ -70,7 +89,7 @@ record PlatformsConfig
     public TikTokConfig TikTok { get; init; } = new();
 }
 
-record YouTubeConfig
+public record YouTubeConfig
 {
     public bool Enabled { get; init; } = true;
     public string ClientSecretPath { get; init; } = "";
@@ -87,7 +106,7 @@ record YouTubeConfig
 // the Page access token — the IG account must be a Business/Creator account linked
 // to the Page. Credentials are uploaded as binary via rupload.facebook.com, so no
 // publicly reachable file URL is required.
-record InstagramConfig
+public record InstagramConfig
 {
     public bool Enabled { get; init; }
     public string IgUserId { get; init; } = "";
@@ -98,7 +117,7 @@ record InstagramConfig
     public int ProcessingTimeoutSeconds { get; init; } = 600;
 }
 
-record FacebookConfig
+public record FacebookConfig
 {
     public bool Enabled { get; init; }
     public string PageId { get; init; } = "";
@@ -108,7 +127,7 @@ record FacebookConfig
     public int ProcessingTimeoutSeconds { get; init; } = 600;
 }
 
-record TikTokConfig
+public record TikTokConfig
 {
     public bool Enabled { get; init; }
     public string ClientKey { get; init; } = "";
@@ -117,7 +136,7 @@ record TikTokConfig
     // Where the rotating refresh token is persisted. TikTok issues a NEW refresh
     // token on every refresh and invalidates the old one, so this file must be
     // writable and backed up — losing it means re-running the OAuth consent flow.
-    public string TokenStorePath { get; init; } = @"C:\Secure\GiggleGarden\tiktok-token.json";
+    public string TokenStorePath { get; init; } = @"C:\Secure\SpotlightNow\tiktok-token.json";
 
     // Direct Post requires an audited app with the video.publish scope. Until that
     // audit passes, leave this false: the video lands in the creator's TikTok inbox

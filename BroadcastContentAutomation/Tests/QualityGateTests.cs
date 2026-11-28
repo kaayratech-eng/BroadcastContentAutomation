@@ -580,6 +580,129 @@ public class QualityGateTests
         Assert.EndsWith(QualityGate.NoTextSuffix, QualityGate.FallbackArtPrompt);
     }
 
+    // ------------------------------------------------------------------
+    // IMAGE — square head-crop (Drake 2026-11-27)
+    // ------------------------------------------------------------------
+    // Commons "Drake 2010.jpg" (3056x4592 portrait) was centre-cropped
+    // to the 1024x1024 square and lost the top 16.7% — the subject's
+    // head — so the Short opened on a headless Drake. CheckSquareCrop
+    // judges the derivation facts (original dimensions + crop anchor);
+    // CropScaleToSquareAsync top-anchors portrait originals so it
+    // cannot happen again.
+
+    [Fact]
+    public void SquareCrop_DrakePortraitCentreCrop_IsError()
+    {
+        var f = QualityGate.CheckSquareCrop(3056, 4592, 0.5, 0, "wikimedia-commons", "scene00-art-square.jpg");
+        Assert.Contains(f, x => x.Check == "square-head-crop" && x.Severity == QualitySeverity.Error);
+        Assert.Contains("16.7%", f.Single(x => x.Check == "square-head-crop").Message);
+        Assert.Equal("scene0", f.Single(x => x.Check == "square-head-crop").Scene);
+    }
+
+    [Fact]
+    public void SquareCrop_DrakePortraitTopAnchored_NoFinding()
+    {
+        Assert.Empty(QualityGate.CheckSquareCrop(3056, 4592, 0.0, 0, "wikimedia-commons", "scene00-art-square.jpg"));
+    }
+
+    [Fact]
+    public void SquareCrop_LandscapeCentreCrop_NoFinding()
+    {
+        // A landscape original has no vertical overflow, so the anchor
+        // is unobservable — centre crop keeps the whole height.
+        Assert.Empty(QualityGate.CheckSquareCrop(4592, 3056, 0.5, 0, "pexels-stock", "scene00-art-square.jpg"));
+    }
+
+    [Fact]
+    public void SquareCrop_ThreeFourPortraitCentreCrop_IsError()
+    {
+        // A 3:4 portrait centre-cropped loses 12.5% from the top.
+        var f = QualityGate.CheckSquareCrop(1200, 1600, 0.5, 3, "pexels-stock", "scene03-art-square.jpg");
+        Assert.Contains(f, x => x.Check == "square-head-crop" && x.Severity == QualitySeverity.Error);
+        Assert.Contains("12.5%", f.Single(x => x.Check == "square-head-crop").Message);
+    }
+
+    [Fact]
+    public void SquareCrop_MildPortraitCentreCrop_IsWarningOnly()
+    {
+        // 1024x1150 loses 5.5% from the top: suspect framing, not a
+        // lost head — warning, never an error.
+        var f = QualityGate.CheckSquareCrop(1024, 1150, 0.5, 5, "pexels-stock", "scene05-art-square.jpg");
+        Assert.Contains(f, x => x.Check == "square-head-crop" && x.Severity == QualitySeverity.Warning);
+        Assert.DoesNotContain(f, x => x.Check == "square-head-crop" && x.Severity == QualitySeverity.Error);
+    }
+
+    [Fact]
+    public void SquareCrop_InvalidDims_NoFinding()
+    {
+        Assert.Empty(QualityGate.CheckSquareCrop(0, 0, 0.5, 0, "wikimedia-commons"));
+        Assert.Empty(QualityGate.CheckSquareCrop(-1, 4592, 0.5, 0, "wikimedia-commons"));
+    }
+
+    [Fact]
+    public void SquareCrop_BatchGateFlagsRecordedCentreCrop()
+    {
+        // The batch gate re-checks a scene that records a
+        // centre-cropped portrait original in script.json.
+        var script = LoadJob4Script();
+        script.Scenes[0].ArtSourceWidth = 3056;
+        script.Scenes[0].ArtSourceHeight = 4592;
+        script.Scenes[0].ArtCropAnchor = "centre";
+        var findings = QualityGate.CheckImagesBatch(Job4, script);
+        Assert.Contains(findings, f => f.Check == "square-head-crop"
+            && f.Severity == QualitySeverity.Error && f.Scene == "scene0");
+    }
+
+    [Fact]
+    public void SquareCrop_BatchGatePassesRecordedTopAnchor()
+    {
+        var script = LoadJob4Script();
+        script.Scenes[0].ArtSourceWidth = 3056;
+        script.Scenes[0].ArtSourceHeight = 4592;
+        script.Scenes[0].ArtCropAnchor = "top";
+        var findings = QualityGate.CheckImagesBatch(Job4, script);
+        Assert.DoesNotContain(findings, f => f.Check == "square-head-crop");
+    }
+
+    [Fact]
+    public void SquareCropBias_PortraitIsTop_LandscapeAndSquareAreCentre()
+    {
+        Assert.Equal(0.0, VideoAssembler.SquareCropBias(3056, 4592));
+        Assert.Equal(0.0, VideoAssembler.SquareCropBias(1200, 1600));
+        Assert.Equal(0.5, VideoAssembler.SquareCropBias(4592, 3056));
+        Assert.Equal(0.5, VideoAssembler.SquareCropBias(1024, 1024));
+    }
+
+    [Fact]
+    public async Task SquareCrop_CropScaleToSquare_KeepsPortraitHead()
+    {
+        // End to end with real ffmpeg: a 600x900 portrait with a
+        // white top band (the "head") must keep the band after the
+        // square derivation; the old centre crop kept rows 150-750
+        // and the band was gone.
+        var tmp = Path.Combine(Path.GetTempPath(), "qg-squarecrop-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var raw = Path.Combine(tmp, "portrait.jpg");
+            var psi = new ProcessStartInfo("ffmpeg",
+                $"-y -v error -f lavfi -i \"color=c=black:s=600x900\" -vf \"drawbox=x=0:y=0:w=600:h=90:color=white:t=fill\" -frames:v 1 \"{raw}\"")
+            { RedirectStandardOutput = true, RedirectStandardError = true };
+            using (var p = Process.Start(psi)!) { p.WaitForExit(); Assert.Equal(0, p.ExitCode); }
+            var square = Path.Combine(tmp, "square.jpg");
+            await VideoAssembler.CropScaleToSquareAsync(new GenConfig(), raw, square);
+            var dims = await VideoAssembler.GetImageDimensionsAsync(new GenConfig(), square);
+            Assert.Equal((1024, 1024), dims);
+            var (gray, reason) = QualityGate.LoadGray256(square);
+            Assert.NotNull(gray);
+            // LoadGray256 downsamples to 256x256: the band spans rows
+            // 0-38 there, so row 5, centre column must be near-white.
+            Assert.True(gray![5 * 256 + 128] > 200,
+                $"top-centre grey is {gray[5 * 256 + 128]}, expected near-white (head kept)");
+        }
+        finally { Directory.Delete(tmp, recursive: true); }
+    }
+
     [Fact]
     public void NoTextSuffixCarriesEyeCatchingDirection()
     {
@@ -1630,6 +1753,41 @@ public class QualityGateTests
         finally { Directory.Delete(tmp, recursive: true); }
     }
 
+    // L52 — a clip the near-duplicate check cannot mid-frame (here:
+    // ffprobe cannot probe any duration from garbage bytes) must warn
+    // with the scene and the reason, not silently exempt the clip.
+    [Fact]
+    public void CheckVisualNearDuplicates_MidFrameFailureWarns()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "qg-midfail-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        try
+        {
+            var dest = Path.Combine(tmp, "scene00-stock.mp4");
+            File.WriteAllBytes(dest, new byte[] { 0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07 });
+            var script = new VideoScript
+            {
+                Title = "Cristiano Ronaldo Hangs Up Portugal Boots - A Legendary Farewell",
+                Description = "Ronaldo retires from Portugal.",
+                Tags = ["ronaldo", "portugal", "football", "news"],
+                MusicMood = "tense atmospheric",
+            };
+            script.Scenes.Add(new Scene
+            {
+                Narration = "Ronaldo scene 0: the stadium lights shone over the pitch as Portugal played on.",
+                SceneKind = "context",
+                StockQuery = "football stadium lights",
+                ClipPath = dest,
+                ArtSource = "pexels-stock",
+            });
+            var findings = QualityGate.CheckVisualNearDuplicates(tmp, script);
+            Assert.Contains(findings, f => f.Check == "near-duplicate-check-skipped"
+                && f.Severity == QualitySeverity.Warning && f.Scene == "scene0"
+                && f.Message.Contains("scene 0") && f.Message.Contains("duration"));
+        }
+        finally { Directory.Delete(tmp, recursive: true); }
+    }
+
     [Fact]
     public void HockeyClipSubjectMismatchWarns()
     {
@@ -1705,5 +1863,40 @@ public class QualityGateTests
                 QualityGate.OneLineSummary("music", []));
         }
         finally { Directory.Delete(tmp, recursive: true); }
+    }
+
+    // L79 — a corrupt quality-report.json must not be rebuilt silently:
+    // the warning names the path and the reason, and the report restarts
+    // empty (the old findings are gone, and the log says so).
+    [Fact]
+    public void AppendReport_CorruptReportLogsWarning()
+    {
+        var tmp = Path.Combine(Path.GetTempPath(), "qg-report-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(tmp);
+        var oldOut = Console.Out;
+        var writer = new StringWriter();
+        try
+        {
+            var reportPath = Path.Combine(tmp, "quality-report.json");
+            File.WriteAllText(reportPath, "{ this is not json");
+            Console.SetOut(writer);
+            var report = QualityGate.AppendReport(reportPath, "job-test", "script",
+                [new QualityFinding("script", "hook", QualitySeverity.Error, "vague hook", "scene0")]);
+            Console.SetOut(oldOut);
+            var log = writer.ToString();
+            Assert.Contains("WARNING: quality-report.json", log);
+            Assert.Contains(reportPath, log);
+            Assert.Contains("rebuilding empty", log);
+            // The corrupt history is gone; only the new finding survives.
+            Assert.Single(report.Findings);
+            Assert.Equal("hook", report.Findings[0].Check);
+            var doc = JsonDocument.Parse(File.ReadAllText(reportPath));
+            Assert.Equal(1, doc.RootElement.GetProperty("Findings").GetArrayLength());
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+            Directory.Delete(tmp, recursive: true);
+        }
     }
 }

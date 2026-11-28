@@ -11,6 +11,7 @@ Run: python3 test_governor.py   (from trendline/)
 """
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -24,7 +25,7 @@ TZ = ZoneInfo("America/Toronto")
 
 TEST_CONFIG = {
     "timezone": "America/Toronto",
-    "daily_video_cap": 2,
+    "daily_video_cap": 1,
     "cooldown_defaults": {"after_429_seconds": 600,
                           "after_timeout_seconds": 600},
     "providers": {
@@ -235,12 +236,14 @@ class GovernorTest(unittest.TestCase):
         out = self.gov("video-started", "--job", "job-20261123-000001")
         self.assertFalse(out["recorded"])
         self.assertEqual(out["videos_today"], 1)
-        self.gov("video-started", "--job", "job-20261123-000002")
-        # Test cap is 2: the next new video must wait for tomorrow.
+        # Fix #5: the cap is 1 long-form/day — the next new video must
+        # wait for tomorrow. (The second slot is a second Short, which is
+        # derived at finish time and never passes through the governor.)
         out = self.gov("video-may-start", expect=1)
         self.assertFalse(out["allowed"])
         self.assertIn("daily video cap", out["reason"])
-        self.assertEqual(out["videos_today"], 2)
+        self.assertEqual(out["videos_today"], 1)
+        self.assertEqual(out["cap"], 1)
         # Yesterday's jobs do not count today.
         data = self.read_ledger()
         yday = (now() - timedelta(days=1)).strftime("%Y-%m-%d")
@@ -249,6 +252,34 @@ class GovernorTest(unittest.TestCase):
         out = self.gov("video-may-start")
         self.assertTrue(out["allowed"])
         self.assertEqual(out["videos_today"], 0)
+
+    def test_VideoStarted_LogsJobCountAndCap(self):
+        # L40: a successful video-started used to be invisible (no log()
+        # call, stdout JSON discarded by the driver). stderr must name
+        # the job, the count and the cap, and say the slot is counted at
+        # prep discovery.
+        r = self.gov_raw("video-started", "--job", "job-20261123-000001")
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertTrue(out["recorded"])
+        self.assertEqual(out["videos_today"], 1)
+        self.assertIn("job-20261123-000001", r.stderr)
+        self.assertIn("videos_today=1/1", r.stderr)
+        self.assertIn("recorded=True", r.stderr)
+        self.assertIn("counted at prep discovery", r.stderr)
+
+    def test_VideoStarted_Duplicate_LogsAlreadyCounted(self):
+        # L40: a duplicate job (recorded=false) was likewise silent.
+        # The second call must log recorded=false and that it was
+        # already counted, and must not consume another cap slot.
+        self.gov("video-started", "--job", "job-20261123-000001")
+        r = self.gov_raw("video-started", "--job", "job-20261123-000001")
+        self.assertEqual(r.returncode, 0)
+        out = json.loads(r.stdout)
+        self.assertFalse(out["recorded"])
+        self.assertEqual(out["videos_today"], 1)
+        self.assertIn("recorded=False", r.stderr)
+        self.assertIn("already counted", r.stderr)
 
     def test_video_may_start_denies_when_all_script_legs_cooled(self):
         # The test stage has a single script leg (groq); cool it.
@@ -286,12 +317,94 @@ class GovernorTest(unittest.TestCase):
         out = self.gov("check", "--provider", "groq")
         self.assertTrue(out["allowed"])
 
+    def test_CorruptLedger_BackedUpAndLogged(self):
+        # L5: a corrupt ledger is backed up to .corrupt-<timestamp> and
+        # stderr names the backup plus the reset counts — the counters
+        # are never silently discarded.
+        with open(self.ledger, "w") as f:
+            f.write("{not json")
+        r = self.gov_raw("check", "--provider", "groq")
+        self.assertEqual(r.returncode, 0)
+        backups = [n for n in os.listdir(self.tmp.name)
+                   if n.startswith("ledger.json.corrupt-")]
+        self.assertEqual(len(backups), 1,
+                         f"expected one .corrupt-* backup, got {backups}")
+        self.assertIn(backups[0], r.stderr)
+        self.assertIn("ledger corrupt", r.stderr)
+        self.assertIn("reset to 0", r.stderr)
+        with open(os.path.join(self.tmp.name, backups[0])) as f:
+            self.assertEqual(f.read(), "{not json")
+
+    def test_CorruptConfig_BackedUpAndLogged(self):
+        # L5 (config half): a corrupt config is backed up and stderr
+        # names the backup plus the fallback cap it fell back to.
+        with open(self.config, "w") as f:
+            f.write("{not json")
+        r = self.gov_raw("check", "--provider", "groq")
+        self.assertEqual(r.returncode, 0)
+        backups = [n for n in os.listdir(self.tmp.name)
+                   if n.startswith("config.json.corrupt-")]
+        self.assertEqual(len(backups), 1,
+                         f"expected one .corrupt-* backup, got {backups}")
+        self.assertIn(backups[0], r.stderr)
+        self.assertIn("config corrupt", r.stderr)
+        self.assertIn("cap 3", r.stderr)
+
+    def test_FailOpen_ReasonSurvivesInDriverLog(self):
+        # L14: a fail-open allow used to delete its own evidence — the
+        # governor's stderr went to .governor-check.err and the script
+        # removed the file unread. The reason must survive on the
+        # script's stderr (the stream the driver/cron captures) even
+        # though the .err file itself is still deleted.
+        # Runs a COPY of the script + governor in a temp dir so the live
+        # ledger/config are untouched (governor-check.sh takes no
+        # --ledger/--config flags — it uses the files next to itself).
+        gov_dir = os.path.join(self.tmp.name, "gov")
+        os.makedirs(gov_dir)
+        shutil.copy(GOVERNOR, os.path.join(gov_dir, "governor.py"))
+        shutil.copy(os.path.join(HERE, "governor-check.sh"),
+                    os.path.join(gov_dir, "governor-check.sh"))
+        with open(os.path.join(gov_dir, "governor-config.json"), "w") as f:
+            json.dump(TEST_CONFIG, f)
+        # Structurally corrupt ledger: valid JSON, but videos_today is a
+        # list, so video-may-start fails open instead of allowing silently.
+        # (The "providers" key must be present or Ledger discards the
+        # loaded data and the corruption never reaches the command.)
+        with open(os.path.join(gov_dir, "usage-ledger.json"), "w") as f:
+            json.dump({"providers": {}, "videos_today": []}, f)
+        r = subprocess.run(
+            ["bash", os.path.join(gov_dir, "governor-check.sh"), "may-start"],
+            capture_output=True, text=True, timeout=30)
+        # may-start's stdout JSON is swallowed by the script by design —
+        # only the exit code (0 = fail-open allow) and stderr matter here.
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("fail-open", r.stderr)
+        self.assertIn("video-may-start failed", r.stderr)
+        self.assertFalse(
+            os.path.exists(os.path.join(gov_dir, ".governor-check.err")),
+            ".governor-check.err must still be deleted after surfacing it")
+
+    def test_ClearCooled_LogsPreviousCooldown(self):
+        # L14: clear-cooled used to log nothing, so the cleared cooldown
+        # vanished without a trace. The log line must name the reason and
+        # the until it was cleared from.
+        self.gov("mark-cooled", "--provider", "groq",
+                 "--reason", "429 test", "--until", "600")
+        r = self.gov_raw("clear-cooled", "--provider", "groq")
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("groq cooldown cleared", r.stderr)
+        self.assertIn("429 test", r.stderr)
+        self.assertRegex(r.stderr, r"until \d{4}-\d{2}-\d{2}T\d{2}:\d{2}")
+        st = self.read_ledger()["providers"]["groq"]
+        self.assertIsNone(st["cooled_until"])
+        self.assertIsNone(st["cooled_reason"])
+
     def test_status_json_reports_counts(self):
         self.gov("acquire", "--provider", "groq", "--tokens", "1000")
         self.gov("video-started", "--job", "job-20261123-000001")
         out = self.gov("status", "--json")
         self.assertEqual(out["videos_today"], 1)
-        self.assertEqual(out["cap"], 2)
+        self.assertEqual(out["cap"], 1)
         groq = [p for p in out["providers"] if p["provider"] == "groq"][0]
         self.assertEqual(groq["day_tokens"], 1000)
         self.assertTrue(groq["allowed"])
@@ -328,7 +441,7 @@ class GovernorTest(unittest.TestCase):
             live = json.load(f)
         self.assertEqual(
             live["stages"]["image"],
-            ["cloudflare", "pexels", "ovhcloud-image", "pollinations-keyed",
+            ["wikimedia", "cloudflare", "pexels", "ovhcloud-image", "pollinations-keyed",
              "leonardo-image"])
         self.assertNotIn("ai-horde", live["providers"])
         self.assertNotIn("pollinations-image", live["providers"])

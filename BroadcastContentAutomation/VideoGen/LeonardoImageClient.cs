@@ -36,6 +36,11 @@ static class LeonardoImageClient
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
         if (ProcessHelper.AlreadyOnDisk(outputPath)) return outputPath;
 
+        // L50: the final attempt is caught too (see ArtPoolClient) — the
+        // old summary throw was dead code. A key-blocked failure still
+        // propagates untouched (neither catch matches it) so the chain
+        // logs the leg dormant instead of retrying a dead key.
+        Exception? lastError = null;
         var temp = outputPath + ".raw";
 
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
@@ -63,7 +68,7 @@ static class LeonardoImageClient
                 }
                 else
                 {
-                    await VideoAssembler.CropScaleToExactAsync(cfg, temp, outputPath, 1024, 1024);
+                    await VideoAssembler.CropScaleToSquareAsync(cfg, temp, outputPath);
                     try { File.Delete(temp); } catch { }
                 }
                 var bytes = new FileInfo(outputPath).Length;
@@ -74,7 +79,12 @@ static class LeonardoImageClient
             {
                 Console.WriteLine($"  Leonardo square art attempt {attempt} failed ({ex.Message}), retrying...");
             }
+            catch (Exception ex) when (!ImagePool.IsKeyBlockedError(ex.Message))
+            {
+                lastError = ex;
+            }
         }
-        throw new Exception($"Leonardo square art generation failed after {maxAttempts} attempts for {outputPath}.");
+        Console.WriteLine($"  art leg leonardo-image scene {Path.GetFileName(outputPath)} failed after {maxAttempts} attempts, last error: {lastError?.Message}");
+        throw new Exception($"Leonardo square art generation failed after {maxAttempts} attempts for {outputPath} (leg leonardo-image, scene {Path.GetFileName(outputPath)}): last error: {lastError?.Message}");
     }
 }

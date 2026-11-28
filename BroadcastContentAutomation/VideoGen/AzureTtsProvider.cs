@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.RegularExpressions;
 using GiggleGarden.Shared;
@@ -6,8 +7,28 @@ using GiggleGarden.Shared;
 // mandatory fallback: it is the only provider covering pa-IN (no free Standard/WaveNet
 // Punjabi voice exists anywhere), and the forced-fallback path for en/hi via
 // GenConfig.TtsProvider = "azure". See TtsProviderFactory for routing.
-partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices) : ITtsProvider
+partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices, HttpMessageHandler? innerHandler = null) : ITtsProvider
 {
+    // L47: the retry budget the provider logs exhaustion against — kept
+    // in sync with the RetryHandler it constructs below.
+    private const int MaxAttempts = 4;
+
+    // Explicit two-arg form: Activator.CreateInstance does not fill
+    // optional parameters, so the primary constructor alone is not enough
+    // for reflection-based construction.
+    public AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (string Locale, string Voice, string? Style)> voices)
+        : this(cfg, voices, null) { }
+
+    // L47: the statuses RetryHandler retries (mirrors its IsTransient),
+    // so the exhaustion line is only logged when retries really ran out.
+    private static bool IsTransientStatus(HttpStatusCode code) =>
+        code is HttpStatusCode.RequestTimeout
+             or HttpStatusCode.TooManyRequests
+             or HttpStatusCode.InternalServerError
+             or HttpStatusCode.BadGateway
+             or HttpStatusCode.ServiceUnavailable
+             or HttpStatusCode.GatewayTimeout
+        || (int)code == 529;
     // Azure reads an all-caps token as an initialism and spells it out letter by letter,
     // so a scripted "AH-CHOO!" comes back as "A-H-C-H-O-O". Scripts legitimately use caps
     // for emphasis and that reads well burned into the frame, so the fix is to soften the
@@ -22,7 +43,7 @@ partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (strin
     [GeneratedRegex(@"\p{Lu}{2,}")]
     private static partial Regex AllCapsRun();
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
@@ -53,7 +74,16 @@ partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (strin
 </speak>
 """;
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [azure-tts] {m}")))
+        // L42/L47: the scene label threads into the RetryHandler log
+        // callback, so every retry line — and the handler's exhaustion
+        // line — names the scene (job id via PrepContext.Prefix).
+        // `innerHandler` is a test seam: tests inject a canned handler so
+        // no live Azure call is made.
+        var sceneSuffix = string.IsNullOrWhiteSpace(sceneLabel) ? "" : $" scene {sceneLabel.Trim()}";
+        var retryHandler = new RetryHandler(maxAttempts: MaxAttempts,
+            log: m => Console.WriteLine($"  {PrepContext.Prefix}[azure-tts]{sceneSuffix} {m}"));
+        if (innerHandler is not null) retryHandler.InnerHandler = innerHandler;
+        using var http = new HttpClient(retryHandler)
         {
             Timeout = TimeSpan.FromMinutes(2),
         };
@@ -65,7 +95,14 @@ partial class AzureTtsProvider(GenConfig cfg, IReadOnlyDictionary<string, (strin
         var resp = await http.PostAsync(url, new StringContent(ssml, Encoding.UTF8, "application/ssml+xml"));
 
         if (!resp.IsSuccessStatusCode)
+        {
+            // L47: the handler already logged "gave up after 4 attempts";
+            // the provider adds the scene-named exhaustion outcome before
+            // throwing, so the give-up is visible at the provider level too.
+            if (IsTransientStatus(resp.StatusCode))
+                Console.WriteLine($"  {PrepContext.Prefix}[azure-tts]{sceneSuffix}: retries exhausted after {MaxAttempts} attempts (HTTP {(int)resp.StatusCode}) — falling through to next TTS provider");
             throw new Exception($"Azure TTS failed ({(int)resp.StatusCode}): {Text.Tail(await resp.Content.ReadAsStringAsync(), 400)}");
+        }
 
         var bytes = await resp.Content.ReadAsByteArrayAsync();
         if (bytes.Length == 0) throw new Exception("Azure TTS returned an empty audio stream.");

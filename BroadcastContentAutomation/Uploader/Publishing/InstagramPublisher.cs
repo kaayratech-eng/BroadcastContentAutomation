@@ -47,7 +47,7 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
             // reuse it — do not post a second Reel.
             if (!string.IsNullOrWhiteSpace(request.ExistingId))
             {
-                var lookup = await MetaGraph.MediaExistsAsync(http, Base, request.ExistingId, cfg.AccessToken, ct);
+                var lookup = await MetaGraph.MediaExistsAsync(http, Base, request.ExistingId, cfg.AccessToken, ct, log);
                 if (lookup == MediaLookup.Found)
                     return PublishResult.Ok(request.ExistingId);
                 if (lookup == MediaLookup.Unknown)
@@ -113,7 +113,20 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
             // The Reel is live NOW. Record the media id before the permalink
             // lookup, so a VM restart in that window cannot post a second Reel.
             if (request.OnPlatformIdAsync is not null)
-                await request.OnPlatformIdAsync(mediaId);
+            {
+                try
+                {
+                    await request.OnPlatformIdAsync(mediaId);
+                }
+                catch (Exception ex)
+                {
+                    // L13: the Reel is live; only the id-save failed. The
+                    // callback already set the id in memory, and Program.cs
+                    // saves the sidecar again after PublishAsync returns —
+                    // log it and continue as a success.
+                    log.Error($"  [instagram] Reel {mediaId} is live but the id could not be recorded ({ex.GetType().Name}: {ex.Message}); continuing — the sidecar save after publish will persist it.");
+                }
+            }
 
             var permalink = await TryPermalinkAsync(http, mediaId, ct);
 
@@ -129,6 +142,15 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
         {
             return PublishResult.Retry($"Instagram transport error: {ex.Message}");
         }
+        catch (Exception ex)
+        {
+            // L13: anything outside the known shapes used to escape to the
+            // per-video catch and burn a crash retry. Return a target-level
+            // Retry instead; a Reel already live is re-verified via
+            // ExistingId on the next run.
+            return PublishResult.Retry(
+                $"Instagram unexpected error ({ex.GetType().Name}): {ex.Message}; target will retry, video already live will be re-verified via ExistingId");
+        }
     }
 
     private async Task<string?> TryPermalinkAsync(HttpClient http, string mediaId, CancellationToken ct)
@@ -139,10 +161,13 @@ sealed class InstagramPublisher(InstagramConfig cfg, Logger log) : IPublisher
                 $"{Base}/{mediaId}?fields=permalink&access_token={Uri.EscapeDataString(cfg.AccessToken)}", ct);
             return doc.RootElement.TryGetProperty("permalink", out var p) ? p.GetString() : null;
         }
-        catch (Exception)
+        catch (Exception ex)
         {
             // The post is live; a missing permalink is cosmetic and must not
             // turn a successful publish into a retry that double-posts.
+            // L74: log the failure anyway — an empty Permalink in the
+            // analytics log needs an explanation, not silence.
+            log.Info($"  [instagram] permalink fetch failed for media {mediaId}: {ex.Message}; permalink left empty, upload already recorded");
             return null;
         }
     }

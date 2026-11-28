@@ -17,7 +17,7 @@ using GiggleGarden.Shared;
 // FallbackScriptProvider).
 class ZaiHelperScriptProvider(GenConfig cfg) : IScriptProvider
 {
-    public async Task<string> CompleteAsync(string prompt)
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
         var result = await ProcessHelper.RunAsync("python3",
         [
@@ -25,13 +25,27 @@ class ZaiHelperScriptProvider(GenConfig cfg) : IScriptProvider
             "--prompt", prompt,
             "--model", "glm-4.7-flash",
             "--max-tokens", "8192",
-        ], timeoutMinutes: 10);
+        ], timeoutMinutes: 10, what: $"Z.ai helper ({cfg.ZaiHelperPath})", context: context);
         if (result.ExitCode != 0)
+        {
+            // L63: one logged non-retry — a transient helper crash is one
+            // failure, not a retried one; the pool falls through to the
+            // next leg.
+            Console.WriteLine($"  {PrepContext.PrefixFor(context)}[zai] helper failed (exit {result.ExitCode}): {Text.Tail(result.Stderr + result.Stdout, 300)} — no retry at this leg, falling through to next leg");
             throw new Exception($"Z.ai helper script generation failed (exit {result.ExitCode}): {Text.Tail(result.Stderr + result.Stdout, 600)}");
+        }
 
         var text = result.Stdout.Replace("```json", "").Replace("```", "").Trim();
+        // L3: an exit-0 helper with empty/garbage stdout used to return ""
+        // (or a refusal) as a script, and the error only surfaced later as
+        // a generic parse failure with the leg name lost. Fail here, with
+        // the leg named, so the pool falls through to the next leg.
+        if (string.IsNullOrWhiteSpace(text))
+            throw new Exception("Z.ai helper returned empty stdout (0 chars) — falling through to next leg");
         var start = text.IndexOf('{');
         var end = text.LastIndexOf('}');
-        return start >= 0 && end > start ? text[start..(end + 1)] : text;
+        if (start < 0 || end <= start)
+            throw new Exception($"Z.ai helper returned no JSON object (output had no {{...}} block, {text.Length} chars) — falling through to next leg");
+        return text[start..(end + 1)];
     }
 }

@@ -37,6 +37,11 @@ static class CloudflareArtClient
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
         if (ProcessHelper.AlreadyOnDisk(outputPath)) return outputPath;
 
+        // L50: the final attempt is caught too (see ArtPoolClient) — the
+        // old summary throw was dead code. A quota refusal still
+        // propagates untouched (neither catch matches it) so the chain
+        // can park the leg until 00:00 UTC.
+        Exception? lastError = null;
         var temp = outputPath + ".square.jpg";
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
@@ -62,7 +67,7 @@ static class CloudflareArtClient
                 }
                 else
                 {
-                    await VideoAssembler.CropScaleToExactAsync(cfg, temp, outputPath, 1024, 1024);
+                    await VideoAssembler.CropScaleToSquareAsync(cfg, temp, outputPath);
                     try { File.Delete(temp); } catch { }
                 }
                 var bytes = new FileInfo(outputPath).Length;
@@ -73,7 +78,12 @@ static class CloudflareArtClient
             {
                 Console.WriteLine($"  Cloudflare FLUX square art attempt {attempt} failed ({ex.Message}), retrying...");
             }
+            catch (Exception ex) when (!ImagePool.IsFluxQuotaError(ex.Message))
+            {
+                lastError = ex;
+            }
         }
-        throw new Exception($"Cloudflare FLUX square art generation failed after {maxAttempts} attempts for {outputPath}.");
+        Console.WriteLine($"  art leg cloudflare-flux scene {Path.GetFileName(outputPath)} failed after {maxAttempts} attempts, last error: {lastError?.Message}");
+        throw new Exception($"Cloudflare FLUX square art generation failed after {maxAttempts} attempts for {outputPath} (leg cloudflare-flux, scene {Path.GetFileName(outputPath)}): last error: {lastError?.Message}");
     }
 }

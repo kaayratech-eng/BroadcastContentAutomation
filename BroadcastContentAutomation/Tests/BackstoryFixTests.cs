@@ -236,11 +236,11 @@ public class BackstoryFixTests
         // not the unguarded single summary — and the dry-script path must
         // do the same, so a dry run measures the backstory fix.
         var text = File.ReadAllText(ProgramPath);
-        Assert.Contains("FetchBackgroundForPickedTopicAsync(topic, null)", text);
+        Assert.Contains("FetchBackgroundForPickedTopicAsync(topic, null, PrepContext.Current)", text);
         Assert.DoesNotContain(text, "FetchSummaryAsync(topic)");
         // Both call sites present (prep + dry-script).
-        var first = text.IndexOf("FetchBackgroundForPickedTopicAsync(topic, null)", StringComparison.Ordinal);
-        var second = text.IndexOf("FetchBackgroundForPickedTopicAsync(topic, null)", first + 1, StringComparison.Ordinal);
+        var first = text.IndexOf("FetchBackgroundForPickedTopicAsync(topic, null, PrepContext.Current)", StringComparison.Ordinal);
+        var second = text.IndexOf("FetchBackgroundForPickedTopicAsync(topic, null, PrepContext.Current)", first + 1, StringComparison.Ordinal);
         Assert.True(first >= 0 && second > first,
             "both the prep path and the dry-script path must fetch the guarded backgrounds for a forced topic");
         // And the forced-topic marker is what carries them (so the gate

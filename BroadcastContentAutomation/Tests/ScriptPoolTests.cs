@@ -68,9 +68,14 @@ public class ScriptPoolTests
     {
         // FallbackScriptProvider: return the first provider that answers;
         // only throw when every provider failed, listing each failure.
+        // L3: an empty answer counts as a failure (fall through), not a
+        // script — the leg call is guarded, not returned bare.
         var fallback = ReadRepoFile("BroadcastContentAutomation", "VideoGen", "FallbackScriptProvider.cs");
-        Assert.Contains("foreach (var provider in providers)", fallback);
-        Assert.Contains("return await provider.CompleteAsync(prompt)", fallback);
+        // L59: the loop is indexed (the log line names legs remaining),
+        // but it still tries the providers in order.
+        Assert.Contains("for (var i = 0; i < providers.Count; i++)", fallback);
+        Assert.Contains("var provider = providers[i];", fallback);
+        Assert.Contains("returned empty output", fallback);
         Assert.Contains("All script providers failed", fallback);
     }
 
@@ -249,15 +254,71 @@ public class ScriptPoolTests
         Assert.Contains("cfg.CloudflareTextModel", provider);
     }
 
+    [Fact]
+    public void Factory_UnknownProviderLogsFallback()
+    {
+        // L66: a typo in ScriptProvider ("groc") must log the unknown
+        // value + the fallback to paid Claude, not silently select it.
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        IScriptProvider provider;
+        try
+        {
+            provider = ScriptProviderFactory.Create(new GenConfig { ScriptProvider = "groc" });
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        Assert.IsType<ClaudeScriptProvider>(provider);
+        var log = sb.ToString();
+        Assert.Contains("\"groc\"", log);
+        Assert.Contains("falling back to Claude", log);
+    }
+
     private sealed class FailingProvider(string message) : IScriptProvider
     {
-        public Task<string> CompleteAsync(string prompt) =>
+        public Task<string> CompleteAsync(string prompt, PrepIdentity? context = null) =>
             Task.FromException<string>(new Exception(message));
     }
 
     private sealed class AnsweringProvider(string answer) : IScriptProvider
     {
-        public Task<string> CompleteAsync(string prompt) => Task.FromResult(answer);
+        public Task<string> CompleteAsync(string prompt, PrepIdentity? context = null) => Task.FromResult(answer);
+    }
+
+    [Fact]
+    public async Task Hybrid_FailedCallLogsProviderAndNext()
+    {
+        // L67: a failed hybrid call must log the leg name + reason + the
+        // next provider's name — the failure used to consume its slot
+        // silently.
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        try
+        {
+            var hybrid = new HybridScriptProvider(
+                new FailingProvider("groq boom"), new AnsweringProvider("ok"), firstProviderCalls: 2);
+            var ex = await Assert.ThrowsAsync<Exception>(() =>
+                hybrid.CompleteAsync("act prompt", new PrepIdentity("job-20261126-test")));
+            Assert.Contains("groq boom", ex.Message);
+            // The failed call still advanced the switch: call 2 still goes
+            // to the first leg (and fails), call 3 moves to the second leg.
+            await Assert.ThrowsAsync<Exception>(() => hybrid.CompleteAsync("act prompt"));
+            Assert.Equal("ok", await hybrid.CompleteAsync("act prompt"));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        var log = sb.ToString();
+        Assert.Contains("FailingProvider", log);
+        Assert.Contains("groq boom", log);
+        Assert.Contains("AnsweringProvider", log);
+        Assert.Contains("next call will use", log);
+        Assert.Contains("job-20261126-test", log);
     }
 
     [Fact]
@@ -283,6 +344,212 @@ public class ScriptPoolTests
         Assert.Contains("All script providers failed", ex.Message);
         Assert.Contains("groq 429", ex.Message);
         Assert.Contains("cloudflare 4006", ex.Message);
+    }
+
+    [Fact]
+    public async Task LegFailure_EmptyResultFallsThrough()
+    {
+        // L3: a leg that returns "" is a leg failure, not a script — the
+        // pool must try the next leg and return its answer.
+        var pool = new FallbackScriptProvider([
+            new AnsweringProvider(""),
+            new AnsweringProvider("{\"scenes\": []}"),
+        ]);
+        Assert.Equal("{\"scenes\": []}", await pool.CompleteAsync("act prompt"));
+    }
+
+    [Fact]
+    public async Task LegFailure_EmptyResultNamesLegAndReason()
+    {
+        // L3: when every leg returns empty, the aggregate failure must
+        // name the leg and "empty output" (the same reason strings the
+        // [script-pool] log line carries) instead of a bare parse error.
+        var pool = new FallbackScriptProvider([
+            new AnsweringProvider(""),
+            new AnsweringProvider("   "),
+        ]);
+        var ex = await Assert.ThrowsAsync<Exception>(() => pool.CompleteAsync("act prompt"));
+        Assert.Contains("All script providers failed", ex.Message);
+        Assert.Contains("AnsweringProvider", ex.Message);
+        Assert.Contains("empty output", ex.Message);
+    }
+
+    [Fact]
+    public async Task LegFailure_LogsReasonAndFallsThrough()
+    {
+        // L59: a leg failure must log the leg name, the reason, the job
+        // id, "trying next" (with legs remaining), and the winning leg
+        // must log a success line — a parked leg must be visible, not
+        // just the fall-through.
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        try
+        {
+            var pool = new FallbackScriptProvider([
+                new FailingProvider("429 quota exceeded"),
+                new AnsweringProvider("{\"scenes\": []}"),
+            ]);
+            var answer = await pool.CompleteAsync(
+                "act prompt", new PrepIdentity("job-20261126-test", "Test topic"));
+            Assert.Equal("{\"scenes\": []}", answer);
+            Assert.Equal("AnsweringProvider", pool.LastWinningLegName);
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        var log = sb.ToString();
+        Assert.Contains("FailingProvider", log);
+        Assert.Contains("429", log);
+        Assert.Contains("job-20261126-test", log);
+        Assert.Contains("trying next leg", log);
+        Assert.Contains("AnsweringProvider", log);
+        Assert.Contains("succeeded", log);
+    }
+
+    [Fact]
+    public async Task Pool_AllLegsFail_LogsSummaryBeforeThrow()
+    {
+        // L59: before the "all providers failed" throw, one summary line
+        // must list every leg as attempted/skipped + reason.
+        var sb = new StringWriter();
+        var oldOut = Console.Out;
+        Console.SetOut(sb);
+        try
+        {
+            var pool = new FallbackScriptProvider([
+                new FailingProvider("groq 429"),
+                new FailingProvider("cloudflare 4006"),
+            ]);
+            await Assert.ThrowsAsync<Exception>(() => pool.CompleteAsync("act prompt"));
+        }
+        finally
+        {
+            Console.SetOut(oldOut);
+        }
+        var log = sb.ToString();
+        Assert.Contains("all legs failed", log);
+        Assert.Contains("attempted — failed", log);
+        Assert.Contains("groq 429", log);
+        Assert.Contains("cloudflare 4006", log);
+        Assert.Contains("aborting prep", log);
+    }
+
+    private static string StubHelperScript(string dir, string name, string body)
+    {
+        var path = Path.Combine(dir, name);
+        File.WriteAllText(path, "#!/usr/bin/env python3\n" + body);
+        return path;
+    }
+
+    [Fact]
+    public async Task HelperLeg_EmptyStdoutThrowsWithLegName()
+    {
+        // L3: a helper that exits 0 with empty stdout must throw naming
+        // the leg + "empty stdout" — it must not return "" as a script.
+        var dir = Path.Combine(Path.GetTempPath(), "tn-l3-empty-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var stub = StubHelperScript(dir, "empty.py", "import sys\nsys.exit(0)\n");
+            var provider = new GroqHelperScriptProvider(new GenConfig { GroqHelperPath = stub });
+            var ex = await Assert.ThrowsAsync<Exception>(() => provider.CompleteAsync("act prompt"));
+            Assert.Contains("Groq", ex.Message);
+            Assert.Contains("empty stdout", ex.Message);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HelperLeg_NoJsonBlockThrowsWithLegName()
+    {
+        // L3: a helper that exits 0 with a brace-less refusal must throw
+        // naming the leg + "no JSON object" instead of returning the
+        // refusal as a script.
+        var dir = Path.Combine(Path.GetTempPath(), "tn-l3-nobrace-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var stub = StubHelperScript(dir, "refusal.py", "print('Sorry, I cannot help with that.')\n");
+            var provider = new GroqHelperScriptProvider(new GenConfig { GroqHelperPath = stub });
+            var ex = await Assert.ThrowsAsync<Exception>(() => provider.CompleteAsync("act prompt"));
+            Assert.Contains("Groq", ex.Message);
+            Assert.Contains("no JSON object", ex.Message);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task ProcessHelper_TimeoutNamesHelperAndJob()
+    {
+        // L62: a helper timeout must name the helper path + leg + job,
+        // not just `python3` (the exe is always python3).
+        var dir = Path.Combine(Path.GetTempPath(), "tn-l62-timeout-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var stub = StubHelperScript(dir, "sleep.py", "import time\ntime.sleep(60)\n");
+            var ex = await Assert.ThrowsAsync<TimeoutException>(() =>
+                ProcessHelper.RunAsync("python3", [stub], timeoutMinutes: 0,
+                    what: $"Groq helper ({stub})",
+                    context: new PrepIdentity("job-20261126-test", "Test topic")));
+            Assert.Contains(stub, ex.Message);
+            Assert.Contains("Groq helper", ex.Message);
+            Assert.Contains("job-20261126-test", ex.Message);
+            Assert.Contains("0 minutes", ex.Message);
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
+    }
+
+    [Fact]
+    public async Task HelperLeg_TransientExit_LogsNoRetryFallThrough()
+    {
+        // L63: a helper that exits 1 is ONE failure with no retry at the
+        // leg — the log must name the exit code and "falling through", and
+        // the helper must have been called exactly once.
+        var dir = Path.Combine(Path.GetTempPath(), "tn-l63-noretry-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(dir);
+        try
+        {
+            var marker = Path.Combine(dir, "calls.txt");
+            var stub = StubHelperScript(dir, "crash.py",
+                $"import sys\nopen({System.Text.Json.JsonSerializer.Serialize(marker)}, 'a').write('called\\n')\n" +
+                "sys.stderr.write('transient boom\\n')\nsys.exit(1)\n");
+            var provider = new GroqHelperScriptProvider(new GenConfig { GroqHelperPath = stub });
+            var sb = new StringWriter();
+            var oldOut = Console.Out;
+            Console.SetOut(sb);
+            Exception ex;
+            try
+            {
+                ex = await Assert.ThrowsAsync<Exception>(() =>
+                    provider.CompleteAsync("act prompt", new PrepIdentity("job-20261126-test")));
+            }
+            finally
+            {
+                Console.SetOut(oldOut);
+            }
+            Assert.Contains("exit 1", ex.Message);
+            var log = sb.ToString();
+            Assert.Contains("exit 1", log);
+            Assert.Contains("falling through", log);
+            Assert.Contains("no retry at this leg", log);
+            Assert.Equal("called\n", File.ReadAllText(marker));
+        }
+        finally
+        {
+            Directory.Delete(dir, recursive: true);
+        }
     }
 
     // ------------------------------------------------------------------
@@ -315,6 +582,18 @@ public class ScriptPoolTests
     {
         var provider = ReadRepoFile("BroadcastContentAutomation", "VideoGen", "PollinationsScriptProvider.cs");
         Assert.Contains("catch (JsonException)", provider);
+    }
+
+    [Fact]
+    public void Pollinations_EmptyContentThrowsNotReturnsEmpty()
+    {
+        // L3: an empty Pollinations response is a hard failure (like
+        // Kilo/OVH), not an empty script — the pool must fall through.
+        // The leg builds its own HttpClient, so this is pinned as a
+        // source guard: the guard + throw must be present.
+        var provider = ReadRepoFile("BroadcastContentAutomation", "VideoGen", "PollinationsScriptProvider.cs");
+        Assert.Contains("IsNullOrWhiteSpace(text)", provider);
+        Assert.Contains("Pollinations returned no content", provider);
     }
 
     // ------------------------------------------------------------------

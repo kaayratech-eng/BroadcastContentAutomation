@@ -192,8 +192,8 @@ public class ForcedTopicFixTests
         // not before — so a forced-topic prep always leaves a context
         // behind for resumes and the gate.
         var text = File.ReadAllText(ProgramPath);
-        Assert.Contains("ArticleClient.FetchForTopicAsync(topic, cfg)", text);
-        Assert.Contains("ArticleClient.BuildArticleSection(await ArticleClient.FetchForTopicAsync(topic, cfg))", text);
+        Assert.Contains("ArticleClient.FetchForTopicAsync(topic, cfg, context: PrepContext.Current)", text);
+        Assert.Contains("ArticleClient.BuildArticleSection(await ArticleClient.FetchForTopicAsync(topic, cfg, context: PrepContext.Current))", text);
         // The snapshot write is guarded by a non-empty check (it fires for
         // forced topics too, where trendContext used to be null here) and
         // sits after the Wikipedia append in the file.
@@ -216,7 +216,7 @@ public class ForcedTopicFixTests
         var text = File.ReadAllText(ProgramPath);
         var dryIdx = text.IndexOf("async Task<int> RunDryScriptAsync()", StringComparison.Ordinal);
         Assert.True(dryIdx >= 0, "RunDryScriptAsync definition not found");
-        var fetchIdx = text.IndexOf("ArticleClient.FetchForTopicAsync(topic, cfg)", dryIdx, StringComparison.Ordinal);
+        var fetchIdx = text.IndexOf("ArticleClient.FetchForTopicAsync(topic, cfg, context: PrepContext.Current)", dryIdx, StringComparison.Ordinal);
         Assert.True(fetchIdx > dryIdx,
             "RunDryScriptAsync must also fetch articles for a forced topic");
     }

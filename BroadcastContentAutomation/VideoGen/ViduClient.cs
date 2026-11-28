@@ -35,7 +35,7 @@ class ViduClient(GenConfig cfg) : IVideoProvider
     }
 
     private HttpClient CreateClient() =>
-        new(new RetryHandler(log: m => Console.WriteLine($"  [vidu] {m}")))
+        new(new RetryHandler(log: m => Console.WriteLine($"  {PrepContext.Prefix}[vidu] {m}")))
         {
             Timeout = TimeSpan.FromMinutes(10),
         };

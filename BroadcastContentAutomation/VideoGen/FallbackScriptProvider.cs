@@ -41,15 +41,35 @@ class FallbackScriptProvider(IReadOnlyList<IScriptProvider> providers, GovernorC
         _ => null,
     };
 
-    public async Task<string> CompleteAsync(string prompt)
+    // L59/L68: the leg that produced the last successful answer, so a
+    // 0-scene result can name its winner instead of hiding behind the
+    // pool. Null until a leg succeeds on this pool instance.
+    internal string? LastWinningLegName { get; private set; }
+
+    public async Task<string> CompleteAsync(string prompt, PrepIdentity? context = null)
     {
+        // L21: the explicit context wins; the ambient prep identity is the
+        // fallback (set at the prep entry point in Program.cs). The
+        // governor must log with the job id too, and it is constructed
+        // before this call, so hand it the effective context here.
+        var effective = context ?? PrepContext.Current;
+        governor?.SetContext(effective);
+        var prefix = PrepContext.PrefixFor(effective);
+        var act = effective?.Act;
         var failures = new List<string>();
         var attempted = 0;
         var skipped = 0;
         string? resetsAt = null;
-        foreach (var provider in providers)
+        // L59: every leg's outcome, for the summary logged before either
+        // throw below — a reader must see which legs were attempted or
+        // skipped and why, not just the aggregate count.
+        var outcomes = new List<string>();
+        for (var i = 0; i < providers.Count; i++)
         {
+            var provider = providers[i];
             var name = provider.GetType().Name;
+            // Legs after this one, still untried.
+            var remaining = providers.Count - i - 1;
             var key = GovernorKeyFor(name);
             if (governor is not null && key is not null)
             {
@@ -60,9 +80,10 @@ class FallbackScriptProvider(IReadOnlyList<IScriptProvider> providers, GovernorC
                     : await governor.AcquireAsync(key, tokens: governor.TokensPerActCall);
                 if (!decision.Allowed)
                 {
-                    Console.WriteLine($"governor: {key} skipped: {decision.Reason} (resets {decision.ResetsAt ?? "unknown"})");
+                    Console.WriteLine($"{prefix}governor: {key} skipped: {decision.Reason} (resets {decision.ResetsAt ?? "unknown"}) — trying next leg ({remaining} remaining)");
                     skipped++;
                     resetsAt ??= decision.ResetsAt;
+                    outcomes.Add($"{name}: skipped — {decision.Reason} (resets {decision.ResetsAt ?? "unknown"})");
                     continue;
                 }
             }
@@ -70,21 +91,35 @@ class FallbackScriptProvider(IReadOnlyList<IScriptProvider> providers, GovernorC
             attempted++;
             try
             {
-                return await provider.CompleteAsync(prompt);
+                // L3: a leg that returns empty output is a leg failure, not
+                // a script — fall through to the next leg instead of
+                // returning "" as a script (the error then surfaced later
+                // as a generic parse failure with the leg name lost).
+                var text = await provider.CompleteAsync(prompt, effective);
+                if (string.IsNullOrWhiteSpace(text))
+                    throw new Exception($"{name} returned empty output (0 chars) — falling through to next leg");
+                LastWinningLegName = name;
+                Console.WriteLine($"  {prefix}[script-pool] {(act is null ? "" : $"act {act}: ")}{name} succeeded ({text.Length} chars)");
+                return text;
             }
             catch (Exception ex)
             {
                 var reason = Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200);
                 if (governor is not null && key is not null && GovernorClient.IsRateLimitFailure(ex.Message))
                     await governor.MarkCooledAsync(key, reason);
-                Console.WriteLine($"  [script-pool] {name} failed: {reason}, trying next");
+                Console.WriteLine($"  {prefix}[script-pool] {(act is null ? "" : $"act {act}: ")}{name} failed: {reason} — trying next leg ({remaining} remaining)");
                 failures.Add($"{name}: {reason}");
+                outcomes.Add($"{name}: attempted — failed: {reason}");
             }
         }
 
         if (skipped > 0 && attempted == 0)
+        {
+            Console.WriteLine($"  {prefix}[script-pool] all legs skipped by the governor ({skipped} skipped, 0 attempted): {string.Join("; ", outcomes)} — aborting prep, no leg was attempted");
             throw new GovernorAllCooledException(resetsAt);
+        }
 
+        Console.WriteLine($"  {prefix}[script-pool] all legs failed ({failures.Count} attempted, {skipped} skipped): {string.Join("; ", outcomes)} — aborting prep, no further retry");
         throw new Exception(
             $"All script providers failed ({failures.Count}): {string.Join(" | ", failures)}");
     }

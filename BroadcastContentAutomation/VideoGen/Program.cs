@@ -37,7 +37,9 @@ var config = new ConfigurationBuilder()
 var cfg = config.Get<GenConfig>() ?? throw new InvalidOperationException("appsettings.json invalid");
 
 string? topic = null, language = "en", job = null, profileId = null, scriptFile = null;
-string? reportOut = null, checkMp4 = null;
+string? reportOut = null, checkMp4 = null, outDir = null, slug = null;
+int? sourceScene = null;
+double anchorXOverride = -1, anchorYOverride = -1;
 var mode = "";
 string? formatOverride = null;
 var longForm = false;
@@ -59,6 +61,33 @@ for (var i = 0; i < args.Length; i++)
         case "--write-props": mode = "write-props"; break;
         case "--check-quality": mode = "check-quality"; break;
         case "--repair-images": mode = "repair-images"; break;
+        case "--make-thumbnails": mode = "make-thumbnails"; break;
+        case "--out" when i + 1 < args.Length: outDir = args[++i]; break;
+        case "--slug" when i + 1 < args.Length: slug = args[++i]; break;
+        case "--source-scene" when i + 1 < args.Length:
+            if (!int.TryParse(args[++i], out var sceneIdx))
+            {
+                Console.Error.WriteLine("--source-scene needs an integer scene index.");
+                return 1;
+            }
+            sourceScene = sceneIdx;
+            break;
+        case "--anchor-x" when i + 1 < args.Length:
+            if (!double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ax))
+            {
+                Console.Error.WriteLine("--anchor-x needs a number 0..1.");
+                return 1;
+            }
+            anchorXOverride = ax;
+            break;
+        case "--anchor-y" when i + 1 < args.Length:
+            if (!double.TryParse(args[++i], System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var ay))
+            {
+                Console.Error.WriteLine("--anchor-y needs a number 0..1.");
+                return 1;
+            }
+            anchorYOverride = ay;
+            break;
         case "--report-out" when i + 1 < args.Length: reportOut = args[++i]; break;
         case "--mp4" when i + 1 < args.Length: checkMp4 = args[++i]; break;
         case "--long": longForm = true; break;
@@ -71,7 +100,7 @@ for (var i = 0; i < args.Length; i++)
             formatOverride = args[++i];
             break;
         case "--help" or "-h":
-            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile gigglegarden] [--format <id>] [--long]   (valid --format ids depend on --profile; see that profile's Formats catalog. --long generates a 12-15 minute YouTube documentary cut instead of the usual ~8-scene short; only supported by profiles with AllowsContextScenes.)");
+            Console.WriteLine("Usage: VideoGen --prep [--topic \"...\"] [--language en|hi|pa] [--profile trendlinenow] [--format <id>] [--long]   (valid --format ids depend on --profile; see that profile's Formats catalog. --long generates a 12-15 minute YouTube documentary cut instead of the usual ~8-scene short; only supported by profiles with AllowsContextScenes.)");
             Console.WriteLine("       VideoGen --prep --job job-YYYYMMDD-HHMMSS [--long] [--profile ...]   resume a --prep that died during script generation, continuing from the next act after the job's script-partial.json checkpoint (acts already saved are reused, never regenerated)");
             Console.WriteLine("       VideoGen --assemble [--job job-YYYYMMDD-HHMMSS]");
             Console.WriteLine("       VideoGen --resume   [--job job-YYYYMMDD-HHMMSS]   continue an interrupted --prep, skipping any scene whose audio/art is already on disk (falls back to the script-partial.json checkpoint when no script.json exists yet)");
@@ -83,6 +112,7 @@ for (var i = 0; i < args.Length; i++)
             Console.WriteLine("       VideoGen --rewrite-gate --job job-YYYYMMDD-HHMMSS   apply the fact-gate rewrite to a job whose prep died at the old hard gate (script-partial.json, no script.json yet) and save script.json for review — no TTS, visuals, render, or upload");
             Console.WriteLine("       VideoGen --write-props --job job-YYYYMMDD-HHMMSS   write both remotion-props-*.json files without rendering (laptop-render prep: the laptop needs the props before it can render; refuses non-Remotion profiles)");
             Console.WriteLine("       VideoGen --check-quality --job job-YYYYMMDD-HHMMSS [--report-out <path>] [--mp4 <path>]   read-only quality check of a job's script, images and music (plus the final mix when --mp4 is given); writes the report to <job>/quality-report.json unless --report-out says otherwise; exits 1 when any gate errors");
+            Console.WriteLine("       VideoGen --make-thumbnails --job job-YYYYMMDD-HHMMSS --out <dir> [--slug <slug>] [--source-scene N] [--anchor-x 0..1] [--anchor-y 0..1]   build the 3 purpose-built thumbnail variants for a job (fix #3) without rendering — live-video re-thumbnailing; nothing is set on YouTube");
             Console.WriteLine("       VideoGen --repair-images --job job-YYYYMMDD-HHMMSS [--report-out <path>]   selective image repair: re-checks every image and regenerates ONLY the failing scenes, with an improved prompt (never the same prompt again); the original art is kept as sceneNN-art-square.jpg.bad until the repair passes; exits 1 when errors remain");
             Console.WriteLine("       VideoGen --status   lists every job with a decision still pending: never rendered, rendered but not approved, or approved and processed but never actually published anywhere");
             return 0;
@@ -146,13 +176,13 @@ var jsonOptions = Sidecar.Options;
 using var sigterm = PosixSignalRegistration.Create(PosixSignal.SIGTERM, ctx =>
 {
     Console.Error.WriteLine(
-        $"[{DateTime.UtcNow:HH:mm:ss}Z] FATAL: received SIGTERM - killed externally " +
+        $"[{DateTime.UtcNow:HH:mm:ss}Z] FATAL: {PrepContext.Prefix}received SIGTERM - killed externally " +
         "(driver/VM shutdown?). Last checkpoint is in script-partial.json; re-run --prep --job to resume.");
     ctx.Cancel = false;
 });
 using var sigint = PosixSignalRegistration.Create(PosixSignal.SIGINT, ctx =>
 {
-    Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}Z] FATAL: received SIGINT - interrupted.");
+    Console.Error.WriteLine($"[{DateTime.UtcNow:HH:mm:ss}Z] FATAL: {PrepContext.Prefix}received SIGINT - interrupted.");
     ctx.Cancel = false;
 });
 
@@ -172,12 +202,23 @@ try
         "write-props" => await RunWritePropsAsync(),
         "check-quality" => await RunCheckQualityAsync(),
         "repair-images" => await RunRepairImagesAsync(),
+        "make-thumbnails" => await RunMakeThumbnailsAsync(),
         _ => await RunAssembleAsync(),
     };
 }
 catch (Exception ex)
 {
-    Console.Error.WriteLine($"FATAL: [{ex.GetType().Name}] {ex.Message}");
+    // L21: the old line had only the exception type + message — no job
+    // id, no stack, no next action. The job comes from the ambient prep
+    // identity (set at every prep entry point) or the --job argument.
+    var fatalJob = PrepContext.Current?.JobId ?? (job is not null ? Path.GetFileName(job) : null);
+    var firstFrame = ex.StackTrace?.Split('\n').Select(s => s.Trim())
+        .FirstOrDefault(s => s.StartsWith("at ", StringComparison.Ordinal));
+    var fatalNext = fatalJob is not null
+        ? $"re-run --prep --job {fatalJob} to resume from the checkpoint; full log in that job's prep.log"
+        : "fix the cause and re-run --prep; the log is in the job folder's prep.log";
+    Console.Error.WriteLine($"FATAL: {(fatalJob is null ? "" : $"[{fatalJob}] ")}[{ex.GetType().Name}] {ex.Message}" +
+        $"{(firstFrame is null ? "" : $" | {firstFrame}")} — {fatalNext}");
     return 1;
 }
 
@@ -192,6 +233,11 @@ async Task<int> RunPrepAsync()
     if (job is not null)
     {
         var resumeDir = ResolveJobDirectory();
+        // L10: install the per-job log before anything that can throw,
+        // so even the early resume checks leave a record in prep.log.
+        PrepLog.Install(resumeDir);
+        // L21: from here on every downstream prep log line carries [jobId].
+        PrepContext.Current = new PrepIdentity(Path.GetFileName(resumeDir), topic);
         if (File.Exists(Path.Combine(resumeDir, "script.json")))
             throw new InvalidOperationException(
                 $"{resumeDir} already has a script.json - run --resume --job {Path.GetFileName(resumeDir)} instead.");
@@ -203,6 +249,10 @@ async Task<int> RunPrepAsync()
 
     var workDir = Directory.CreateDirectory(
         Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
+    // L10: mirror every Console line into <job>/prep.log from here on.
+    PrepLog.Install(workDir);
+    // L21: from here on every downstream prep log line carries [jobId].
+    PrepContext.Current = new PrepIdentity(Path.GetFileName(workDir), topic);
     Console.WriteLine($"Workspace: {workDir}");
 
     // 1. Character, then script. A pooled character is resolved first so the script can
@@ -219,8 +269,27 @@ async Task<int> RunPrepAsync()
     // The news profile needs the structured report (category + headline list)
     // for its faceless prompt; other profiles only ever read the text block,
     // so FetchAsync's plain-text wrapper still serves them unchanged.
-    var trendReport = topic is null ? await TrendResearch.FetchReportAsync(profile, cfg) : null;
+    // L71: the trend fetch ran unwrapped — a throw killed the prep before
+    // generation and the only record was the bare top-level FATAL. Continue
+    // without trend context; the empty-facts warning below says so.
+    TrendResearch.TrendReport? trendReport = null;
+    if (topic is null)
+    {
+        try
+        {
+            trendReport = await TrendResearch.FetchReportAsync(profile, cfg, PrepContext.Current);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}[prep] trend fetch failed: {ex.GetType().Name}: {ex.Message} — continuing without trend context");
+        }
+    }
     var trendContext = trendReport?.Text;
+    // L18: record which grounding sources failed, for the degraded-prep
+    // summary in FinishPrepAsync (a prep that completes with its sources
+    // down must not look identical to a fully-grounded one).
+    var forcedArticleEmpty = false;
+    var forcedWikipediaEmpty = false;
     // Forced topic (2026-11-23): FetchReportAsync is skipped when --topic
     // is given, so a forced prep got NO headlines and NO article text —
     // only the single Wikipedia summary below (null for COP31), leaving
@@ -231,13 +300,26 @@ async Task<int> RunPrepAsync()
     // a failed prep.
     if (topic is not null)
     {
-        var articleSection = ArticleClient.BuildArticleSection(await ArticleClient.FetchForTopicAsync(topic, cfg));
+        var articleSection = ArticleClient.BuildArticleSection(await ArticleClient.FetchForTopicAsync(topic, cfg, context: PrepContext.Current));
+        forcedArticleEmpty = articleSection.Length == 0;
         if (articleSection.Length > 0)
             trendContext = (trendContext ?? "") + "\n" + articleSection;
     }
     var analyticsDir = Path.Combine(cfg.WorkDirectory, "analytics");
-    var analyticsBrief = GiggleGarden.Shared.AnalyticsLog.Summarize(await GiggleGarden.Shared.AnalyticsLog.LoadAsync(analyticsDir));
-    if (!analyticsBrief.StartsWith("No published", StringComparison.Ordinal))
+    // L8: surface corrupt log entries in the prep log instead of skipping
+    // them silently.
+    // L71: the brief load ran unwrapped — continue without it.
+    string analyticsBrief;
+    try
+    {
+        analyticsBrief = GiggleGarden.Shared.AnalyticsLog.Summarize(await GiggleGarden.Shared.AnalyticsLog.LoadAsync(analyticsDir, msg => Console.WriteLine($"  [analytics] {msg}")));
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine($"  {PrepContext.Prefix}[prep] analytics brief load failed: {ex.GetType().Name}: {ex.Message} — continuing without it");
+        analyticsBrief = "";
+    }
+    if (analyticsBrief.Length > 0 && !analyticsBrief.StartsWith("No published", StringComparison.Ordinal))
         trendContext = (trendContext ?? "") + "\nWhat worked on this channel before:\n" + analyticsBrief;
     // Wikipedia fact context (priority 4) when a topic is given: free, no key.
     // Backstory (2026-11-23): the old single unguarded FetchSummaryAsync
@@ -253,7 +335,8 @@ async Task<int> RunPrepAsync()
     {
         try
         {
-            var forcedBackgrounds = await TrendResearch.FetchBackgroundForPickedTopicAsync(topic, null);
+            var forcedBackgrounds = await TrendResearch.FetchBackgroundForPickedTopicAsync(topic, null, PrepContext.Current);
+            forcedWikipediaEmpty = forcedBackgrounds.WikipediaBackgrounds.Count == 0;
             if (forcedBackgrounds.WikipediaBackgrounds.Count > 0)
             {
                 var wikiBlock = new System.Text.StringBuilder();
@@ -265,6 +348,7 @@ async Task<int> RunPrepAsync()
         }
         catch (Exception ex)
         {
+            forcedWikipediaEmpty = true;
             Console.WriteLine($"  [wikipedia] forced-topic background fetch failed ({ex.Message}) — continuing without it.");
         }
     }
@@ -279,18 +363,34 @@ async Task<int> RunPrepAsync()
     // unchecked. A news prep must always leave a context behind.
     if (!string.IsNullOrWhiteSpace(trendContext))
         await File.WriteAllTextAsync(Path.Combine(workDir, "trend-snapshot.txt"), trendContext);
-    var recentTopics = topic is null ? await TopicHistory.RecentAsync(profile.Id) : [];
-    var scriptProvider = ScriptProviderFactory.Create(cfg);
+    // L71: the topic-history load ran unwrapped — continue without it.
+    List<string> recentTopics = [];
+    if (topic is null)
+    {
+        try
+        {
+            recentTopics = await TopicHistory.RecentAsync(profile.Id);
+        }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"  {PrepContext.Prefix}[prep] topic history load failed: {ex.GetType().Name}: {ex.Message} — continuing without recent topics");
+        }
+    }
+    var scriptProvider = ScriptProviderFactory.Create(cfg, PrepContext.Current);
     // Total acts for the checkpoint: news long-form has 3 acts, mascot
     // long-form has 4. (Older checkpoints recorded 4 for the news path -
     // the resume path derives the total from the profile instead.)
     var totalActs = longForm ? (profile.UsesCharacterMascot ? 4 : 3) : 1;
     VideoScript script;
+    // L71: a headlines-only thin context used to sail into generation with
+    // no warning (the only backstop was the no-context FATAL in
+    // FinishPrepAsync, which fires only when the check context is empty).
+    WarnOnEmptyFactsBlock(trendContext, profile.CategoryStyles is not null);
     try
     {
         script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, pooled, recentNames, formatOverride, longForm, recentTopics,
             onActComplete: (s, act) => SavePartialScriptAsync(workDir, s, act, totalActs),
-            topicCategory: trendReport?.Category, newsItems: trendReport?.News);
+            topicCategory: trendReport?.Category, newsItems: trendReport?.News, context: PrepContext.Current);
     }
     catch (Exception ex) when (ScriptGenerator.IsFloorFailure(ex))
     {
@@ -305,7 +405,8 @@ async Task<int> RunPrepAsync()
         DeletePartialScriptFiles(workDir);
         throw;
     }
-    return await FinishPrepAsync(workDir, script, pooled, addToPool, trendContext, trendReport?.News, DateTime.Today);
+    var degradedSources = PrepDegradation.Collect(trendReport, forcedArticleEmpty, forcedWikipediaEmpty, pickedBackgroundFailed: false);
+    return await FinishPrepAsync(workDir, script, pooled, addToPool, trendContext, trendReport?.News, DateTime.Today, degradedSources);
 }
 
 // Shared tail of --prep (fresh and resumed): once GenerateAsync has returned
@@ -313,8 +414,12 @@ async Task<int> RunPrepAsync()
 // run the TTS/visual loops. Called by RunPrepAsync and RunPrepResumeAsync
 // alike, so a resumed prep finishes identically to a fresh one.
 async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBrief? pooled, bool addToPool,
-    string? trendContext = null, IReadOnlyList<TrendResearch.NewsItem>? newsItems = null, DateTime prepDate = default)
+    string? trendContext = null, IReadOnlyList<TrendResearch.NewsItem>? newsItems = null, DateTime prepDate = default,
+    List<string>? degradedSources = null)
 {
+    // L21: every caller sets the ambient identity, but a future caller
+    // that forgets still gets the job folder name on its log lines.
+    PrepContext.Current ??= new PrepIdentity(Path.GetFileName(workDir));
     if (prepDate == default) prepDate = DateTime.Today;
 
     // Fact-traceability gate (review #2 §E, fix sequence #2 ITEM 2): video
@@ -333,6 +438,10 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
     // missing scenes regenerated (RepairAfterGateDropsAsync) instead of
     // being dropped. The no-context guard below is NOT part of the
     // rewrite: a news prep with zero source material still fails loudly.
+    // L18: the picked-topic background fetch is the one source failure
+    // that happens inside FinishPrepAsync itself — record it for the
+    // degraded-prep summary at the end instead of only logging it.
+    var pickedBackgroundFailed = false;
     if (profile.CategoryStyles is not null)
     {
         if (trendContext is null)
@@ -343,7 +452,7 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
         string? pickedBackground = null;
         try
         {
-            var picked = await TrendResearch.FetchBackgroundForPickedTopicAsync(script.Title, newsItems);
+            var picked = await TrendResearch.FetchBackgroundForPickedTopicAsync(script.Title, newsItems, PrepContext.Current);
             if (!string.IsNullOrWhiteSpace(TrendResearch.BuildPickedTopicContext(picked)))
             {
                 pickedBackground = TrendResearch.BuildPickedTopicContext(picked);
@@ -352,6 +461,7 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
         }
         catch (Exception ex)
         {
+            pickedBackgroundFailed = true;
             Console.WriteLine($"  [fact-check] WARNING: picked-topic background fetch failed ({ex.Message}) — checking against the trend headlines only.");
         }
         var checkContext = FactTraceability.BuildCheckContext(trendContext, pickedBackground);
@@ -389,9 +499,9 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
                 // re-check. The prep proceeds on the rewritten script.
                 foreach (var f in findings)
                     Console.WriteLine($"  [fact-check] {f}");
-                var result = FactGateRewrite.Rewrite(script, findings, checkContext, prepDate);
-                foreach (var a in result.Actions)
-                    Console.WriteLine($"  [fact-check] rewrite: {a}");
+                // L72: Rewrite() logs each action itself now (with the job
+                // id) — the caller loop that did it is gone, not duplicated.
+                var result = FactGateRewrite.Rewrite(script, findings, checkContext, prepDate, PrepContext.Current);
                 var rewriteReport = BuildFactGateRewriteReport(script.Title, prepDate, findings, result);
                 if (result.RemainingFindings.Count > 0)
                 {
@@ -408,7 +518,7 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
                 await File.WriteAllTextAsync(Path.Combine(workDir, "fact-check-rewritten.txt"), rewriteReport);
                 var staleFailures = Path.Combine(workDir, "fact-check-failures.txt");
                 if (File.Exists(staleFailures)) File.Delete(staleFailures);
-                Console.WriteLine($"  [fact-check] OK after rewrite: {result.ReframedScenes.Count} scene(s) reframed as speculation, {result.DroppedScenes.Count} dropped, {result.SourceFixedScenes.Count} visual source(s) fixed — re-check clean, {script.Scenes.Count} scenes.");
+                Console.WriteLine($"  {FactGateRewrite.OkSummary(result, script.Scenes.Count)}");
             }
             else
                 Console.WriteLine($"  [fact-check] OK: all numbers, quotes, entities and chart sources in \"{script.Title}\" trace to the supplied trend context.");
@@ -428,7 +538,7 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
     // Post-generation Wikipedia check for Chronicle figures (priority 4).
     if (profile.AllowsContextScenes && !string.IsNullOrWhiteSpace(script.CharacterName))
     {
-        var wikiFigure = await WikipediaClient.FetchSummaryAsync(script.CharacterName);
+        var wikiFigure = await WikipediaClient.FetchSummaryAsync(script.CharacterName, PrepContext.Current);
         if (wikiFigure is not null)
         {
             await File.WriteAllTextAsync(Path.Combine(workDir, "fact-check.txt"), wikiFigure);
@@ -552,6 +662,19 @@ async Task<int> FinishPrepAsync(string workDir, VideoScript script, CharacterBri
             : "Peak rate: clips usually land within minutes. Run --assemble to collect and render.");
     }
     Console.WriteLine($"  dotnet run -- --assemble --job {Path.GetFileName(workDir)}");
+
+    // L18: one aggregate outcome line — a prep that completes on degraded
+    // sources must not look identical to a fully-grounded one. The list was
+    // collected upstream (RunPrepAsync) or, for a resumed prep that does
+    // not re-fetch, re-read from the original run's prep-warnings.txt.
+    // Exit stays 0 (see PrepDegradation): the prep did not fail, its
+    // inputs did — the line + file are the signal, not a failure code.
+    var degraded = degradedSources is null
+        ? await PrepDegradation.LoadExistingAsync(workDir)
+        : new List<string>(degradedSources);
+    if (pickedBackgroundFailed && !degraded.Contains(PrepDegradation.PickedBackground))
+        degraded.Add(PrepDegradation.PickedBackground);
+    await PrepDegradation.FinishAsync(workDir, degraded);
     return 0;
 }
 
@@ -631,17 +754,17 @@ async Task RepairAfterGateDropsAsync(VideoScript script, string checkContext, Da
     var postRepair = FactTraceability.Check(script, checkContext, prepDate);
     if (postRepair.Count > 0)
     {
-        var repairResult = FactGateRewrite.Rewrite(script, postRepair, checkContext, prepDate);
-        foreach (var a in repairResult.Actions)
-            Console.WriteLine($"  [fact-check] rewrite (repair): {a}");
+        // L72: Rewrite() logs each action itself (tagged "rewrite
+        // (repair)" here) — no caller loop.
+        var repairResult = FactGateRewrite.Rewrite(script, postRepair, checkContext, prepDate, PrepContext.Current, "rewrite (repair)");
         if (repairResult.RemainingFindings.Count > 0)
         {
             var report = BuildFactGateRewriteReport(script.Title, prepDate, postRepair, repairResult);
             throw new InvalidOperationException(
-                $"Fact-gate rewrite of the repaired scenes still fails the re-check:\n{report}");
+                $"{PrepContext.Prefix}Fact-gate rewrite of the repaired scenes still fails the re-check:\n{report}");
         }
     }
-    ScriptGenerator.ValidateLongFormFloors(script.Scenes.Count - introScenes, script.Scenes.Skip(introScenes).Sum(s => s.Narration.Length));
+    ScriptGenerator.ValidateLongFormFloors(script.Scenes.Count - introScenes, script.Scenes.Skip(introScenes).Sum(s => s.Narration.Length), PrepContext.Current);
     Console.WriteLine($"  [fact-check] floor repaired: {script.Scenes.Count - introScenes} scenes, {script.Scenes.Skip(introScenes).Sum(s => s.Narration.Length)} chars.");
 }
 
@@ -691,9 +814,8 @@ async Task<int> RunRewriteGateAsync()
     {
         foreach (var f in findings)
             Console.WriteLine($"  [fact-check] {f}");
-        result = FactGateRewrite.Rewrite(partial, findings, checkContext, prepDate);
-        foreach (var a in result.Actions)
-            Console.WriteLine($"  [fact-check] rewrite: {a}");
+        // L72: Rewrite() logs each action itself now (with the job id).
+        result = FactGateRewrite.Rewrite(partial, findings, checkContext, prepDate, PrepContext.Current);
         if (result.RemainingFindings.Count > 0)
         {
             var failReport = BuildFactGateRewriteReport(partial.Title, prepDate, findings, result);
@@ -702,7 +824,7 @@ async Task<int> RunRewriteGateAsync()
         }
         if (partial.IsLongForm && result.BelowFloor)
             Console.WriteLine($"  [fact-check] rewrite left the script below the long-form floor ({result.SceneCount} scenes, {result.TotalChars} chars) — regenerating the missing scene(s) after the intro/dedup step below.");
-        Console.WriteLine($"  [fact-check] OK after rewrite: {result.ReframedScenes.Count} scene(s) reframed as speculation, {result.DroppedScenes.Count} dropped, {result.SourceFixedScenes.Count} visual source(s) fixed — re-check clean, {result.SceneCount} scenes.");
+        Console.WriteLine($"  {FactGateRewrite.OkSummary(result, result.SceneCount)}");
     }
     else
     {
@@ -794,6 +916,8 @@ async Task<(VideoScript Script, int CompletedActs)> LoadPartialScriptAsync(strin
 // continuity with the saved acts.
 async Task<int> RunPrepResumeAsync(string workDir)
 {
+    // L21: a resumed prep's downstream lines carry this job's id.
+    PrepContext.Current ??= new PrepIdentity(Path.GetFileName(workDir), topic);
     Console.WriteLine($"Workspace: {workDir}");
     var (partial, completedActs) = await LoadPartialScriptAsync(workDir);
     // A partial only ever exists for long-form (short-form has no acts).
@@ -821,15 +945,18 @@ async Task<int> RunPrepResumeAsync(string workDir)
     var resumeLanguage = language != "en" ? language!
         : string.IsNullOrWhiteSpace(partial.Language) ? "en" : partial.Language;
     var formatOverrideForResume = string.IsNullOrWhiteSpace(partial.Format) ? formatOverride : partial.Format;
-    var scriptProvider = ScriptProviderFactory.Create(cfg);
+    var scriptProvider = ScriptProviderFactory.Create(cfg, PrepContext.Current);
     VideoScript script;
+    // L71: same empty-facts warning as the fresh prep — a resumed prep
+    // reads its facts from the snapshot, which may itself be empty.
+    WarnOnEmptyFactsBlock(trendContext, profile.CategoryStyles is not null);
     try
     {
         script = await ScriptGenerator.GenerateAsync(profile, topic: null, resumeLanguage, scriptProvider, trendContext,
             character: null, avoidNames: null, formatOverride: formatOverrideForResume, longForm: true, avoidTopics: [],
             onActComplete: (s, act) => SavePartialScriptAsync(workDir, s, act, totalActs),
             topicCategory: partial.TopicCategory, newsItems: null,
-            resumeFrom: new ScriptResume(partial, completedActs));
+            resumeFrom: new ScriptResume(partial, completedActs), context: PrepContext.Current);
     }
     catch (Exception ex) when (ScriptGenerator.IsFloorFailure(ex))
     {
@@ -919,12 +1046,12 @@ void DeduplicateConsecutiveScenes(VideoScript script)
 // to ship as clipped narration). The TTS providers write directly to
 // whatever path they are given - the Azure/GCP helpers included - so the
 // atomicity lives here, at the call sites, not in each provider.
-async Task SynthesizeAtomicAsync(ITtsProvider tts, string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
+async Task SynthesizeAtomicAsync(ITtsProvider tts, string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null)
 {
     var tmp = outputPath + ".tmp";
     try
     {
-        await tts.SynthesizeAsync(text, language, tmp, rate, pitch, styleOverride);
+        await tts.SynthesizeAsync(text, language, tmp, rate, pitch, styleOverride, sceneLabel);
         File.Move(tmp, outputPath, overwrite: true);
     }
     finally
@@ -982,7 +1109,9 @@ async Task RunTtsLoopAsync(string workDir, VideoScript script)
         // either channel - the express-as variations sound poor. Narration is
         // plain (no styleOverride); the profile's fixed style is null too, so
         // the voice stays consistent across every scene.
-        await SynthesizeAtomicAsync(tts, scene.Narration, language!, audioPath, rate, pitch, null);
+        // L42: the "{i+1}/{n}" scene label threads into the TTS providers so
+        // their log lines name the scene (job id via PrepContext.Prefix).
+        await SynthesizeAtomicAsync(tts, scene.Narration, language!, audioPath, rate, pitch, null, $"{i + 1}/{script.Scenes.Count}");
         // Silence trim (priority 6, free FFmpeg): TTS files often start/end
         // with dead air, and dead air at the start of a Short is a scroll-past.
         // Trimming here also shortens DurationSeconds, which is what the
@@ -1221,9 +1350,10 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                 var squarePrompt = ImageClient.BuildPrompt(
                     scene.ImagePrompt, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
                     ImageClient.Orientation.Square, matchReference: profile.UsesCharacterMascot);
-                var (squarePath, artSource) = await GenerateSquareArtAsync(cfg, squarePrompt, artBase + "-square", i, scene.ImagePrompt,
+                var (squarePath, artSource, squareProvenance) = await GenerateSquareArtAsync(cfg, squarePrompt, artBase + "-square", i, scene.ImagePrompt,
                     script.Title, script.Tags, scene.Narration);
                 if (artSource is not null) scene.ArtSource = artSource;
+                RecordSquareProvenance(scene, squareProvenance);
                 scene.ImagePath = await DeriveArtAsync(cfg, squarePath, artBase + ".png", 1080, 1920);
                 scene.LandscapeImagePath = squarePath;
                 Console.WriteLine($"Art {label}: square source {Path.GetFileName(squarePath)} -> portrait + landscape");
@@ -1296,9 +1426,10 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                 scene.ImagePrompt + " (different angle and composition from the previous scene)",
                 profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
                 ImageClient.Orientation.Square, matchReference: profile.UsesCharacterMascot);
-            var (variantSquare, variantSource) = await GenerateSquareArtAsync(cfg, variantPrompt, artBase + "-square-variant", i, scene.ImagePrompt,
+            var (variantSquare, variantSource, variantProvenance) = await GenerateSquareArtAsync(cfg, variantPrompt, artBase + "-square-variant", i, scene.ImagePrompt,
                 script.Title, script.Tags, scene.Narration);
             if (variantSource is not null) scene.ArtSource = variantSource;
+            RecordSquareProvenance(scene, variantProvenance);
             scene.ImagePath = await DeriveArtAsync(cfg, variantSquare, artBase + "-variant.png", 1080, 1920);
             scene.LandscapeImagePath = variantSquare;
         }
@@ -1337,13 +1468,14 @@ async Task RunVisualLoopAsync(string workDir, VideoScript script, string charact
                     // illustration from the stock query instead of showing
                     // the previous scene's footage again.
                     Console.WriteLine($"Stock {label}: no different clip available - generating an illustration variant instead.");
-                    var (variantSquare, variantSource) = await GenerateSquareArtAsync(cfg,
+                    var (variantSquare, variantSource, variantProvenance) = await GenerateSquareArtAsync(cfg,
                         ImageClient.BuildPrompt($"Editorial news illustration of {scene.StockQuery}",
                             profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
                             ImageClient.Orientation.Square, matchReference: profile.UsesCharacterMascot),
                         artBase + "-square-variant", i, $"Editorial news illustration of {scene.StockQuery}",
                         script.Title, script.Tags, scene.Narration);
                     if (variantSource is not null) scene.ArtSource = variantSource;
+                    RecordSquareProvenance(scene, variantProvenance);
                     scene.ClipPath = null;
                     scene.LandscapeClipPath = null;
                     scene.ImagePath = await DeriveArtAsync(cfg, variantSquare, artBase + "-variant.png", 1080, 1920);
@@ -1492,7 +1624,19 @@ static string StockFileHash(string path) =>
 // driver backs off instead of burning retries, and --resume picks up
 // the art already on disk. The discarded legs (Pollinations anonymous,
 // AI Horde) are never attempted, and Cloudflare SDXL is gone entirely.
-static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
+// Records a pool leg's square-crop provenance on the scene, so the
+// batch quality gate can re-check the crop at prep end (see
+// QualityGate.CheckSquareCrop). Null provenance (native-square
+// generation, already-on-disk file) leaves the fields untouched.
+static void RecordSquareProvenance(Scene scene, ArtProvenance? provenance)
+{
+    if (provenance is null) return;
+    scene.ArtSourceWidth = provenance.RawWidth;
+    scene.ArtSourceHeight = provenance.RawHeight;
+    scene.ArtCropAnchor = provenance.VerticalBias <= 0.0 ? "top" : "centre";
+}
+
+static async Task<(string Path, string? ArtSource, ArtProvenance? Provenance)> GenerateSquareArtAsync(
     GenConfig cfg, string prompt, string squareBase, int sceneIndex = -1, string? rawPrompt = null,
     string? scriptTitle = null, IReadOnlyList<string>? scriptTags = null, string? narration = null)
 {
@@ -1509,7 +1653,7 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
 
     var existing = ManualArtClient.ImageExtensions
         .Select(ext => squareBase + ext).FirstOrDefault(File.Exists);
-    if (existing is not null) return (existing, null);
+    if (existing is not null) return (existing, null, null);
 
     var governor = ImagePool.GovernorFor(cfg);
     var fluxQuotaExhausted = false;
@@ -1533,7 +1677,7 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
         if (!decision.Allowed)
         {
             fluxQuotaExhausted = true;
-            Console.WriteLine($"  Square art FLUX skipped by governor ({decision.Reason}; resets {decision.ResetsAt ?? "unknown"}) — falling through to Pexels + OVH.");
+            Console.WriteLine($"  Square art scene {sceneIndex} FLUX skipped by governor ({decision.Reason}; resets {decision.ResetsAt ?? "unknown"}) — falling through to Pexels + OVH.");
             throw new ImagePoolSkipException("FLUX skipped by governor.");
         }
         try
@@ -1548,7 +1692,7 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
             await governor.MarkCooledAsync(ImagePool.CloudflareGovernorKey,
                 Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200),
                 until: untilSeconds.ToString());
-            Console.WriteLine("  Square art FLUX quota exhausted — FLUX parked until 00:00 UTC; filling this scene with Pexels + OVH.");
+            Console.WriteLine($"  Square art scene {sceneIndex} FLUX quota exhausted ({Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200).Trim()}) — FLUX parked for {untilSeconds}s until 00:00 UTC; filling this scene with Pexels + OVH.");
             throw new ImagePoolSkipException("FLUX quota exhausted.");
         }
     }
@@ -1568,19 +1712,19 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
         if (!File.Exists(helperPath))
         {
             ImagePool.NoteDormant(leg);
-            Console.WriteLine($"  Square art {leg} dormant (helper missing: {helperPath}) — skipping for the rest of this run.");
+            Console.WriteLine($"  Square art scene {sceneIndex} {leg} dormant (helper missing: {helperPath}) — skipping for the rest of this run.");
             throw new ImagePoolSkipException($"{leg} dormant (helper missing).");
         }
         if (notReadyReason is not null)
         {
             ImagePool.NoteDormant(leg);
-            Console.WriteLine($"  Square art {leg} dormant ({notReadyReason}) — skipping for the rest of this run.");
+            Console.WriteLine($"  Square art scene {sceneIndex} {leg} dormant ({notReadyReason}) — skipping for the rest of this run.");
             throw new ImagePoolSkipException($"{leg} dormant ({notReadyReason}).");
         }
         var decision = await governor.AcquireAsync(ImagePool.GovernorKeyForLeg(leg));
         if (!decision.Allowed)
         {
-            Console.WriteLine($"  Square art {leg} skipped by governor ({decision.Reason}) — trying next provider.");
+            Console.WriteLine($"  Square art scene {sceneIndex} {leg} skipped by governor ({decision.Reason}) — trying next provider.");
             throw new ImagePoolSkipException($"{leg} skipped by governor.");
         }
         try
@@ -1591,7 +1735,7 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
         catch (Exception ex) when (ImagePool.IsKeyBlockedError(ex.Message))
         {
             ImagePool.NoteDormant(leg);
-            Console.WriteLine($"  Square art {leg} dormant ({Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 160).Trim()}) — skipping for the rest of this run.");
+            Console.WriteLine($"  Square art scene {sceneIndex} {leg} dormant ({Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 160).Trim()}) — skipping for the rest of this run.");
             throw new ImagePoolSkipException($"{leg} dormant (no key).");
         }
     }
@@ -1608,35 +1752,40 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
     var starMatch = StarRanking.TryMatchStar((scriptTitle ?? "") + " " + (narration ?? ""));
     var commonsSeenFile = Path.Combine(Path.GetDirectoryName(squareBase) ?? ".", "commons-used.json");
 
-    var attempts = new List<(string Source, Func<Task<(string Path, string? Source)>>)> 
+    // The attempt also returns the square-crop provenance when the
+    // leg reports it (pool legs only): the raw photo's dimensions +
+    // crop anchor, so the head-crop check below can judge the crop.
+    // Native-square legs (FLUX, dormant keyed) report null — no crop
+    // happens there, so there is nothing to check.
+    var attempts = new List<(string Source, Func<Task<(string Path, string? Source, ArtProvenance? Provenance)>>)> 
     {
         // FLUX first (bake-off 2026-11-24): the old SceneArtProvider
         // primary/secondary swap is gone — the order is fixed now.
-        ("cloudflare-flux", TryFluxAsync),
+        ("cloudflare-flux", async () => { var (p, s) = await TryFluxAsync(); return (p, s, (ArtProvenance?)null); }),
         // Pexels #2 for news scenes: real photo, topic/entity query.
-        ("pexels", async () => await ArtPoolClient.GenerateSquareWithSourceAsync(cfg, prompt, squareBase + ".jpg",
+        ("pexels", async () => await ArtPoolClient.GenerateSquareWithProvenanceAsync(cfg, prompt, squareBase + ".jpg",
             only: "pexels", query: pexelsQuery.Length == 0 ? null : pexelsQuery, seenFile: seenFile)),
         // OVHcloud filler only (SDXL retires 2027-02-10).
-        ("ovhcloud", async () => await ArtPoolClient.GenerateSquareWithSourceAsync(cfg, prompt, squareBase + ".jpg",
+        ("ovhcloud", async () => await ArtPoolClient.GenerateSquareWithProvenanceAsync(cfg, prompt, squareBase + ".jpg",
             only: "ovh", query: null, seenFile: null)),
         // Dormant keyed legs, in order. Pollinations keyed is dormant
         // until Pollen exists (402); Leonardo until a key + model id
         // are set.
-        ("pollinations-keyed", async () => await TryDormantLegAsync("pollinations-keyed", "pollinations-keyed", cfg.PollinationsHelperPath, null,
-            () => PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg"))),
-        ("leonardo-image", async () => await TryDormantLegAsync("leonardo-image", "leonardo-image", cfg.LeonardoHelperPath,
+        ("pollinations-keyed", async () => { var (p, s) = await TryDormantLegAsync("pollinations-keyed", "pollinations-keyed", cfg.PollinationsHelperPath, null,
+            () => PollinationsKeyedClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg")); return (p, s, (ArtProvenance?)null); }),
+        ("leonardo-image", async () => { var (p, s) = await TryDormantLegAsync("leonardo-image", "leonardo-image", cfg.LeonardoHelperPath,
             string.IsNullOrWhiteSpace(cfg.LeonardoModelId) ? "no model id configured (LeonardoModelId empty)" : null,
-            () => LeonardoImageClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg"))),
+            () => LeonardoImageClient.GenerateSquareAsync(cfg, prompt, squareBase + ".jpg")); return (p, s, (ArtProvenance?)null); }),
     };
     if (starMatch is not null)
-        attempts.Insert(0, ("wikimedia-commons", async () => await ArtPoolClient.GenerateSquareWithSourceAsync(cfg, prompt, squareBase + ".jpg",
+        attempts.Insert(0, ("wikimedia-commons", async () => await ArtPoolClient.GenerateSquareWithProvenanceAsync(cfg, prompt, squareBase + ".jpg",
             only: "wikimedia", query: starMatch.Value.Star.Name, seenFile: commonsSeenFile)));
     Exception? lastError = null;
     foreach (var (label, attempt) in attempts)
     {
         try
         {
-            var (path, source) = await attempt();
+            var (path, source, provenance) = await attempt();
             // Quality gate (video #4): check the file before accepting
             // it — a bad image is deleted and the next provider is tried
             // instead of shipping a blurry/blank upscale to the render.
@@ -1653,10 +1802,34 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
                 try { File.Delete(path); } catch { }
                 throw new InvalidOperationException($"Quality gate rejected art from {label}: {string.Join("; ", fileErrors.Select(e => $"[{e.Check}] {e.Message}"))}");
             }
+            // Square head-crop (Drake 2026-11-27): when the leg reports
+            // the raw photo's dimensions + crop anchor, flag a portrait
+            // original whose square crop discarded the top region. An
+            // error rejects the file exactly like a file error above —
+            // the next provider is tried instead of shipping a headless
+            // photo to the render. A warning is logged and the file is
+            // kept. Legs without provenance (native-square generation)
+            // have no crop to check and skip this.
+            if (provenance is not null)
+            {
+                var cropFindings = QualityGate.CheckSquareCrop(
+                    provenance.RawWidth, provenance.RawHeight, provenance.VerticalBias,
+                    sceneIndex, source ?? label, Path.GetFileName(path));
+                var cropErrors = cropFindings.Where(f => f.Severity == QualitySeverity.Error).ToList();
+                foreach (var wf in cropFindings.Where(f => f.Severity == QualitySeverity.Warning))
+                    Console.WriteLine($"  Square art quality warn [{wf.Check}]: {wf.Message}");
+                if (cropErrors.Count > 0)
+                {
+                    foreach (var ef in cropErrors)
+                        Console.WriteLine($"  Square art quality ERROR [{ef.Check}]: {ef.Message} — rejecting, trying the next provider.");
+                    try { File.Delete(path); } catch { }
+                    throw new InvalidOperationException($"Quality gate rejected art from {label}: {string.Join("; ", cropErrors.Select(e => $"[{e.Check}] {e.Message}"))}");
+                }
+            }
             // A step that produced the file knows its source; the pool step
             // reports the provider it actually used, the keyed steps their
             // fixed label.
-            return (path, source ?? label);
+            return (path, source ?? label, provenance);
         }
         catch (ImagePoolSkipException)
         {
@@ -1665,7 +1838,7 @@ static async Task<(string Path, string? ArtSource)> GenerateSquareArtAsync(
         }
         catch (Exception ex)
         {
-            Console.WriteLine($"  Square art provider step failed ({ex.Message}), trying next provider...");
+            Console.WriteLine($"  Square art scene {sceneIndex} leg {label} failed: {ex.Message} — trying next provider");
             lastError = ex;
         }
     }
@@ -1744,6 +1917,10 @@ async Task<int> RunViduLoopAsync(string workDir, VideoScript script, string char
 async Task<int> RunResumeAsync()
 {
     var workDir = ResolveJobDirectory();
+    // L10: the resume mode continues a prep — same per-job log.
+    PrepLog.Install(workDir);
+    // L21: the TTS/visual loops' downstream lines carry [jobId].
+    PrepContext.Current = new PrepIdentity(Path.GetFileName(workDir), topic);
     Console.WriteLine($"Workspace: {workDir}");
 
     // No script.json yet but a partial checkpoint exists: the prep died
@@ -1847,6 +2024,10 @@ async Task<int> RunManualAsync()
 
     var workDir = Directory.CreateDirectory(
         Path.Combine(cfg.WorkDirectory, profile.Id, $"job-{DateTime.Now:yyyyMMdd-HHmmss}")).FullName;
+    // L10: mirror every Console line into <job>/prep.log from here on.
+    PrepLog.Install(workDir);
+    // L21: from here on every downstream prep log line carries [jobId].
+    PrepContext.Current = new PrepIdentity(Path.GetFileName(workDir), topic);
     Console.WriteLine($"Workspace: {workDir}");
 
     InsertIntroScene(script);
@@ -1919,7 +2100,8 @@ async Task<int> RunRettsAsync()
         var audioPath = Path.Combine(workDir, $"scene{i:D2}.mp3");
         // Voice variations OFF (Rishi 2026-11-17): no per-scene mood styles -
         // see the prep call site. Plain narration, no styleOverride.
-        await SynthesizeAtomicAsync(tts, scene.Narration, language!, audioPath, rate, pitch, null);
+        // L42: scene label threads into the TTS providers (see RunTtsLoopAsync).
+        await SynthesizeAtomicAsync(tts, scene.Narration, language!, audioPath, rate, pitch, null, $"{i + 1}/{script.Scenes.Count}");
         scene.AudioPath = audioPath;
 
         var before = scene.DurationSeconds;
@@ -1993,12 +2175,14 @@ async Task<int> RunDryScriptAsync()
         // checkpoint (no TTS/art, no writes to the job dir) - the way to prove
         // the resume path works without spending anything on a real prep.
         var resumeDir = ResolveJobDirectory();
+        // L21: dry-script resume lines carry the resumed job's id.
+        PrepContext.Current = new PrepIdentity(Path.GetFileName(resumeDir), topic);
         var (partial, completedActs) = await LoadPartialScriptAsync(resumeDir);
         var totalActs = profile.UsesCharacterMascot ? 4 : 3;
         profile = ApplyAssetMapping(string.IsNullOrWhiteSpace(partial.Profile) ? profile : ContentProfileRegistry.Get(partial.Profile));
         var snapshotPath = Path.Combine(resumeDir, "trend-snapshot.txt");
         var trendContext = File.Exists(snapshotPath) ? await File.ReadAllTextAsync(snapshotPath) : null;
-        var scriptProvider = ScriptProviderFactory.Create(cfg);
+        var scriptProvider = ScriptProviderFactory.Create(cfg, PrepContext.Current);
         var resumeLanguage = language != "en" ? language!
             : string.IsNullOrWhiteSpace(partial.Language) ? "en" : partial.Language;
         var formatOverrideForResume = string.IsNullOrWhiteSpace(partial.Format) ? formatOverride : partial.Format;
@@ -2016,7 +2200,7 @@ async Task<int> RunDryScriptAsync()
             character: null, avoidNames: null, formatOverride: formatOverrideForResume, longForm: true, avoidTopics: [],
             onActComplete: (s, act) => SavePartialScriptAsync(outDir, s, act, totalActs),
             topicCategory: partial.TopicCategory, newsItems: null,
-            resumeFrom: new ScriptResume(partial, completedActs));
+            resumeFrom: new ScriptResume(partial, completedActs), context: PrepContext.Current);
         // Verify the saved acts came back verbatim: the resumed script's
         // first N scenes must carry the same model-authored content as the
         // partial's. (SceneKind/IsSpeculative are excluded - the
@@ -2037,7 +2221,7 @@ async Task<int> RunDryScriptAsync()
     }
     else
     {
-        var trendReport = topic is null ? await TrendResearch.FetchReportAsync(profile, cfg) : null;
+        var trendReport = topic is null ? await TrendResearch.FetchReportAsync(profile, cfg, PrepContext.Current) : null;
         var trendContext = trendReport?.Text;
         // Same forced-topic gap as RunPrepAsync (2026-11-23): a --topic
         // dry-script skipped FetchReportAsync and got no article text, so
@@ -2045,7 +2229,7 @@ async Task<int> RunDryScriptAsync()
         // forced topic here too.
         if (topic is not null)
         {
-            var articleSection = ArticleClient.BuildArticleSection(await ArticleClient.FetchForTopicAsync(topic, cfg));
+            var articleSection = ArticleClient.BuildArticleSection(await ArticleClient.FetchForTopicAsync(topic, cfg, context: PrepContext.Current));
             if (articleSection.Length > 0)
                 trendContext = (trendContext ?? "") + "\n" + articleSection;
         }
@@ -2058,7 +2242,7 @@ async Task<int> RunDryScriptAsync()
         {
             try
             {
-                var forcedBackgrounds = await TrendResearch.FetchBackgroundForPickedTopicAsync(topic, null);
+                var forcedBackgrounds = await TrendResearch.FetchBackgroundForPickedTopicAsync(topic, null, PrepContext.Current);
                 if (forcedBackgrounds.WikipediaBackgrounds.Count > 0)
                 {
                     var wikiBlock = new System.Text.StringBuilder();
@@ -2073,11 +2257,11 @@ async Task<int> RunDryScriptAsync()
                 Console.WriteLine($"  [wikipedia] forced-topic background fetch failed ({ex.Message}) — continuing without it.");
             }
         }
-        var scriptProvider = ScriptProviderFactory.Create(cfg);
+        var scriptProvider = ScriptProviderFactory.Create(cfg, PrepContext.Current);
         var totalActs = longForm ? (profile.UsesCharacterMascot ? 4 : 3) : 1;
         script = await ScriptGenerator.GenerateAsync(profile, topic, language!, scriptProvider, trendContext, null, null, formatOverride, longForm,
             onActComplete: (s, act) => SavePartialScriptAsync(outDir, s, act, totalActs),
-            topicCategory: trendReport?.Category, newsItems: trendReport?.News);
+            topicCategory: trendReport?.Category, newsItems: trendReport?.News, context: PrepContext.Current);
     }
     // Full script generated: the timestamped save below supersedes the checkpoints.
     DeletePartialScriptFiles(outDir);
@@ -2230,7 +2414,17 @@ async Task<int> RunWritePropsAsync()
         running = next;
     }
     if (shortScenes.Count < script.Scenes.Count)
+    {
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s scenes + {shortOutroSeconds:0.#}s outro) for the {cfg.VerticalMaxSeconds}s cap.");
+        // Fix #2: the Short must end on an open loop, never a flat summary.
+        // Warning only (ShortRules is a heuristic — scenes carry no
+        // cliffhanger marker): the reviewer decides, and the profile
+        // guidance is what makes the next prep better. Only when a trim
+        // actually happened — a whole-script Short ends on the video's own
+        // ending, not on a teaser cut.
+        if (!ShortRules.ShortEndsOnOpenLoop(shortScenes))
+            Console.WriteLine($"Short: WARNING — ends on scene {shortScenes.Count - 1}, which ends flat, not on an open loop (fix #2: the Short must tease the payoff, never resolve it).");
+    }
 
     var (landscapePropsPath, landscapeMusic) = await VideoAssembler.BuildAndWritePropsAsync(profile, cfg, script.Scenes, workDir, 1920, 1080, script.MusicMood,
         outroLines: baseOutroLines, outroAudioPath: baseOutroAudio, isCalm: formatDef.IsCalm,
@@ -2441,9 +2635,10 @@ async Task<int> RunRepairImagesAsync()
             var squarePrompt = ImageClient.BuildPrompt(
                 improved, profile.CharacterStyle, profile.CharacterPortraitStyleSuffix,
                 ImageClient.Orientation.Square, matchReference: profile.UsesCharacterMascot);
-            var (newSquare, artSource) = await GenerateSquareArtAsync(cfg, squarePrompt, squareBase, i, scene.ImagePrompt,
+            var (newSquare, artSource, repairProvenance) = await GenerateSquareArtAsync(cfg, squarePrompt, squareBase, i, scene.ImagePrompt,
                 script.Title, script.Tags, scene.Narration);
             if (artSource is not null) scene.ArtSource = artSource;
+            RecordSquareProvenance(scene, repairProvenance);
             // Save the improved prompt back into the script: the
             // batch check judges the prompt recorded here, so keeping
             // the old text-asking prompt would make the repair look
@@ -2490,6 +2685,70 @@ async Task<int> RunRepairImagesAsync()
         ? $"Image repair: {remainingErrors} error(s) remain — fix by hand or re-run --repair-images."
         : "Image repair: all image errors cleared.");
     return remainingErrors > 0 ? 1 : 0;
+}
+
+async Task<int> RunMakeThumbnailsAsync()
+{
+    // Live-video re-thumbnailing (fix #3): builds the 3 purpose-built
+    // variants for a finished job without rendering anything and without
+    // touching YouTube — setting a variant on a live video is the
+    // Uploader's --set-thumbnail step, after Rishi picks.
+    if (job is null)
+    {
+        Console.Error.WriteLine("--make-thumbnails needs --job <job-id>.");
+        return 1;
+    }
+    if (outDir is null)
+    {
+        Console.Error.WriteLine("--make-thumbnails needs --out <dir>.");
+        return 1;
+    }
+    var workDir = ResolveJobDirectory();
+    var script = await LoadScriptAsync(workDir);
+    var slugValue = slug ?? Path.GetFileName(workDir);
+    var outputBase = Path.Combine(outDir, slugValue + ".thumb");
+
+    // Legacy base for the CLI: first story scene still art, then scene 0.
+    // (The finish path also tries clip frames and a render frame; the CLI
+    // has no render to pull a frame from, and every live job has still
+    // art — a job with none fails loudly instead of guessing.)
+    string? legacyBase = null;
+    for (var i = 1; i < script.Scenes.Count && legacyBase is null; i++)
+    {
+        var scene = script.Scenes[i];
+        if (!string.IsNullOrWhiteSpace(scene.LandscapeImagePath) && File.Exists(scene.LandscapeImagePath))
+            legacyBase = scene.LandscapeImagePath;
+        else if (!string.IsNullOrWhiteSpace(scene.ImagePath) && File.Exists(scene.ImagePath))
+            legacyBase = scene.ImagePath;
+    }
+    if (legacyBase is null && script.Scenes.Count > 0)
+    {
+        var scene = script.Scenes[0];
+        if (!string.IsNullOrWhiteSpace(scene.LandscapeImagePath) && File.Exists(scene.LandscapeImagePath))
+            legacyBase = scene.LandscapeImagePath;
+        else if (!string.IsNullOrWhiteSpace(scene.ImagePath) && File.Exists(scene.ImagePath))
+            legacyBase = scene.ImagePath;
+    }
+    if (legacyBase is null)
+    {
+        Console.Error.WriteLine($"--make-thumbnails: no still art in {workDir} — nothing to build a thumbnail from.");
+        return 1;
+    }
+
+    var built = await ThumbnailBuilder.BuildVariantsAsync(
+        cfg, script, legacyBase, outputBase,
+        new ThumbnailBuilder.ThumbnailBuildOptions(sourceScene, anchorXOverride, anchorYOverride));
+    var star = StarRanking.TryMatchStar(script.Title);
+    if (star is not null && built.Source is null)
+        Console.WriteLine($"Thumbnail WARNING: ranked star '{star.Value.Star.Name}' has no verified real photo in this job — variants use the legacy first-story art.");
+    else if (built.Source is not null)
+        Console.WriteLine($"Thumbnail: source is scene {built.Source.SceneIndex} ({built.Source.ArtSource}).");
+    foreach (var variant in built.Variants)
+        Console.WriteLine(
+            $"{variant.Path} | words='{variant.Words}' font={variant.FontSizePx} zoom={ThumbnailBuilder.Invariant(variant.Zoom)} " +
+            $"anchor=({ThumbnailBuilder.Invariant(variant.AnchorX)},{ThumbnailBuilder.Invariant(variant.AnchorY)}) " +
+            $"320px text height={variant.TextHeightAt320Px:F1}px mobile-check={(variant.MobileCheckPass ? "PASS" : "WARN")}");
+    return 0;
 }
 
 async Task<int> RunAssembleAsync()
@@ -2648,7 +2907,13 @@ async Task<int> RunAssembleAsync()
     }
 
     if (shortScenes.Count < script.Scenes.Count)
+    {
         Console.WriteLine($"Short: trimmed to {shortScenes.Count}/{script.Scenes.Count} scenes ({running:0}s scenes + {shortOutroSeconds:0.#}s outro) for the {cfg.VerticalMaxSeconds}s cap.");
+        // Fix #2: same open-loop warning as --write-props above — the Short
+        // must end on a tease, never a flat summary or a resolution.
+        if (!ShortRules.ShortEndsOnOpenLoop(shortScenes))
+            Console.WriteLine($"Short: WARNING — ends on scene {shortScenes.Count - 1}, which ends flat, not on an open loop (fix #2: the Short must tease the payoff, never resolve it).");
+    }
 
     // Shared crossfade for this format's SRT/chapters (Root.tsx: 0.2s brisk,
     // 0.45s calm) - the timeline math must use the same value as the render.
@@ -2748,7 +3013,7 @@ async Task<int> RunAssembleAsync()
             [Platforms.Facebook] = shortReelsCaption,
             [Platforms.TikTok] = shortTikTokCaption,
         },
-    }.SaveAsync(vertical);
+    }.SaveAsync(vertical, msg => Console.WriteLine($"  [sidecar] {msg}"));
     rendered.Add(vertical);
 
     // The 16:9 master reuses the same clips on a blurred blow-up of themselves rather
@@ -2822,8 +3087,54 @@ async Task<int> RunAssembleAsync()
         var grabAt = Math.Min(3.0, Math.Max(0.5, script.Scenes[0].DurationSeconds * 0.6));
         await VideoAssembler.ExtractThumbnailFrameAsync(cfg, landscape, grabAt, thumbBase);
     }
-    await VideoAssembler.BuildThumbnailAsync(cfg, thumbBase, Path.ChangeExtension(landscape, ".thumb.jpg"));
-    Console.WriteLine("Thumbnail generated (1280x720).");
+    // Purpose-built thumbnails (fix #3, audit 2026-11-26): real verified
+    // star face 60-70% frame + 1-3 words, 3 variants, Rishi picks. The
+    // builder prefers a Wikimedia Commons / Pexels real photo over the
+    // legacy first-story-art base (which may be FLUX); for a ranked star
+    // with no real photo on file it falls back to that base with a loud
+    // warning instead of failing the finish — the variant pick is the
+    // identity check, and a missing thumbnail must never block a video.
+    // Any failure in the variant build falls back to the old plain
+    // single thumb, same reason.
+    var thumbBaseForSidecar = Path.ChangeExtension(landscape, ".thumb.jpg");
+    try
+    {
+        var built = await ThumbnailBuilder.BuildVariantsAsync(
+            cfg, script, thumbBase, Path.ChangeExtension(landscape, ".thumb"));
+        var starForLog = StarRanking.TryMatchStar(script.Title);
+        if (starForLog is not null && built.Source is null)
+            Console.WriteLine(
+                $"Thumbnail WARNING: ranked star '{starForLog.Value.Star.Name}' has no verified real photo " +
+                "in this job — variants use the legacy first-story art (possibly AI-generated). " +
+                "Check the face before upload.");
+        else if (built.Source is not null)
+            Console.WriteLine(
+                $"Thumbnail: source is scene {built.Source.SceneIndex} ({built.Source.ArtSource}).");
+        foreach (var variant in built.Variants)
+            Console.WriteLine(
+                $"Thumbnail: {Path.GetFileName(variant.Path)} words='{variant.Words}' font={variant.FontSizePx} " +
+                $"320px text height={variant.TextHeightAt320Px:F1}px mobile-check={(variant.MobileCheckPass ? "PASS" : "WARN")}.");
+        thumbBaseForSidecar = built.Variants[0].Path;
+        Console.WriteLine("Thumbnail variants generated (1280x720 x3, default v1).");
+    }
+    catch (Exception ex)
+    {
+        // L57: the variant-build failure line must name the job, and a
+        // failing fallback must say so explicitly (it used to propagate
+        // to the top-level FATAL with only the ffmpeg error).
+        var thumbJobId = Path.GetFileName(workDir);
+        Console.WriteLine($"Thumbnail: variant build failed ({ex.Message}) — falling back to the plain single thumb (job {thumbJobId}).");
+        try
+        {
+            await VideoAssembler.BuildThumbnailAsync(cfg, thumbBase, Path.ChangeExtension(landscape, ".thumb.jpg"));
+        }
+        catch (Exception fallbackEx)
+        {
+            Console.WriteLine($"Thumbnail fallback also failed ({fallbackEx.Message}) — assemble aborting without thumbnail (job {thumbJobId})");
+            throw;
+        }
+        Console.WriteLine("Thumbnail generated (1280x720).");
+    }
 
     // Long-form chapters (priority 5): at most 12, first at 0:00
     // (the opening hook), one per visual-group boundary, time-spaced
@@ -2853,12 +3164,12 @@ async Task<int> RunAssembleAsync()
         HookText = script.Scenes.Count > 0 ? script.Scenes[0].Narration : null,
         CommentPrompt = string.IsNullOrWhiteSpace(script.CommentPrompt) ? null : script.CommentPrompt,
         Chapters = chapters,
-        ThumbnailPath = Path.ChangeExtension(landscape, ".thumb.jpg"),
+        ThumbnailPath = thumbBaseForSidecar,
         HookScore = script.HookScore,
         SeoScore = script.SeoScoreValue,
         LoudnessLUFS = -14,
         MusicTrack = landscapeMusic,
-    }.SaveAsync(landscape);
+    }.SaveAsync(landscape, msg => Console.WriteLine($"  [sidecar] {msg}"));
     rendered.Add(landscape);
 
     Console.WriteLine();
@@ -2920,7 +3231,8 @@ async Task<int> RunStatusAsync()
 
             if (File.Exists(liveVideo))
             {
-                var sidecar = await Sidecar.LoadAsync(liveVideo);
+                // L82: wire the helper's log sink into the run log.
+                var sidecar = await Sidecar.LoadAsync(liveVideo, msg => Console.WriteLine($"  [sidecar] {msg}"));
                 if (sidecar is not null && sidecar.Approved != true)
                     flagged.Add($"[{jobName}] \"{script.Title}\" ({kind}) — rendered, awaiting your approval. " +
                         $"Set \"approved\": true in {Sidecar.PathFor(liveVideo)}, or delete both files to discard.");
@@ -2928,7 +3240,8 @@ async Task<int> RunStatusAsync()
             else if (File.Exists(doneVideo) || File.Exists(failedVideo))
             {
                 var terminalVideo = File.Exists(doneVideo) ? doneVideo : failedVideo;
-                var sidecar = await Sidecar.LoadAsync(terminalVideo);
+                // L82: wire the helper's log sink into the run log.
+                var sidecar = await Sidecar.LoadAsync(terminalVideo, msg => Console.WriteLine($"  [sidecar] {msg}"));
                 if (sidecar is not null && !sidecar.AnyPublished())
                     flagged.Add($"[{jobName}] \"{script.Title}\" ({kind}) — processed but never published on any " +
                         $"target. Check {Sidecar.PathFor(terminalVideo)} for per-platform errors, then fix and " +
@@ -3028,9 +3341,31 @@ async Task SavePartialScriptAsync(string dir, VideoScript script, int completedA
     script.CompletedActs = completedAct;
     var path = Path.Combine(dir, "script-partial.json");
     var temp = path + ".tmp";
-    await File.WriteAllTextAsync(temp, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
-    File.Move(temp, path, overwrite: true);
+    try
+    {
+        await File.WriteAllTextAsync(temp, System.Text.Json.JsonSerializer.Serialize(script, jsonOptions));
+        File.Move(temp, path, overwrite: true);
+    }
+    catch (Exception ex)
+    {
+        // L71: a failed checkpoint used to surface as a raw I/O exception
+        // with no act number and no word on whether the partial on disk is
+        // stale. It still throws — a checkpoint that cannot be written
+        // means resume is broken — but now it says which act and that the
+        // partial on disk is stale.
+        Console.WriteLine($"  {PrepContext.Prefix}[prep] checkpoint save failed for act {completedAct}/{totalActs}: {ex.GetType().Name}: {ex.Message} — the partial on disk is stale (act {completedAct - 1} or none); failing generation rather than losing the acts already paid for");
+        throw;
+    }
     Console.WriteLine($"  Checkpoint: act {completedAct}/{totalActs} saved ({script.Scenes.Count} scenes) -> {path}");
+}
+
+// L71: warn when generation starts with an empty facts block (news
+// profiles only — mascot scripts are invented by design). Kept free of
+// captured locals so tests can invoke it by name via ReflectionHelper.
+void WarnOnEmptyFactsBlock(string? trendContext, bool isNewsProfile)
+{
+    if (!isNewsProfile || !string.IsNullOrWhiteSpace(trendContext)) return;
+    Console.WriteLine($"  {PrepContext.Prefix}[prep] WARNING: generating with an empty facts block (no headlines, articles or Wikipedia background) — the script will be judged against an empty context; check the trend fetch above");
 }
 
 void DeletePartialScriptFiles(string dir)
@@ -3042,7 +3377,16 @@ void DeletePartialScriptFiles(string dir)
             var path = Path.Combine(dir, name);
             if (File.Exists(path)) File.Delete(path);
         }
-        catch { }
+        catch (Exception ex)
+        {
+            // L71: the old bare `catch { }` hid a failed delete — on a
+            // floor failure the next attempt then silently resumed the same
+            // thin partial, the exact failure mode the delete exists to
+            // prevent. (Tagged [prep], not [floor-failure]: this helper is
+            // also the success-path cleanup, so the floor tag would
+            // mislabel those calls.)
+            Console.WriteLine($"  {PrepContext.Prefix}[prep] could not delete {Path.Combine(dir, name)}: {ex.GetType().Name}: {ex.Message} — next attempt may resume the thin partial");
+        }
     }
 }
 

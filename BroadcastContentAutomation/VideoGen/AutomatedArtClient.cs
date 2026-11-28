@@ -43,7 +43,8 @@ static class AutomatedArtClient
     }
 
     public static async Task<string> GenerateAsync(
-        string prompt, string outputPath, string model, int delaySeconds = 15, int maxAttempts = 3)
+        string prompt, string outputPath, string model, int delaySeconds = 15, int maxAttempts = 3,
+        HttpClient? http = null, int retryWaitBaseSeconds = 30)
     {
         var directory = Path.GetDirectoryName(outputPath);
         if (!string.IsNullOrEmpty(directory)) Directory.CreateDirectory(directory);
@@ -55,7 +56,16 @@ static class AutomatedArtClient
         // Deterministic seed per output file, so a retry of the same beat
         // reproduces the same image instead of a new random one.
         var seed = Math.Abs(outputPath.GetHashCode(StringComparison.Ordinal));
+        // L20: http is the test seam (mock a 429 then a 200); production
+        // passes none and uses the shared client. retryWaitBaseSeconds is
+        // the 429 backoff base (30s in production — the test passes 1 so
+        // the suite does not wait 30s for a real retry).
+        var client = http ?? Http;
 
+        // L50: the final attempt is caught too (see ArtPoolClient) — the
+        // old summary throw was dead code and the last error's reason
+        // was lost.
+        Exception? lastError = null;
         for (var attempt = 1; attempt <= maxAttempts; attempt++)
         {
             try
@@ -63,10 +73,13 @@ static class AutomatedArtClient
                 await ThrottleAsync(delaySeconds);
                 var url = "https://image.pollinations.ai/prompt/" + Uri.EscapeDataString(prompt) +
                     $"?width=1080&height=1920&model={Uri.EscapeDataString(model)}&seed={seed}&nologo=true";
-                using var resp = await Http.GetAsync(url);
+                using var resp = await client.GetAsync(url);
                 if ((int)resp.StatusCode == 429 && attempt < maxAttempts)
                 {
-                    await Task.Delay(TimeSpan.FromSeconds(30 * attempt));
+                    // L20: the 30s/60s 429 wait used to stall in complete
+                    // silence — name the scene, the attempt, and the wait.
+                    Console.WriteLine($"  Automated art scene {Path.GetFileName(outputPath)} got HTTP 429 (attempt {attempt}/{maxAttempts}) — waiting {retryWaitBaseSeconds * attempt}s before retry");
+                    await Task.Delay(TimeSpan.FromSeconds(retryWaitBaseSeconds * attempt));
                     continue;
                 }
                 resp.EnsureSuccessStatusCode();
@@ -80,7 +93,12 @@ static class AutomatedArtClient
             {
                 Console.WriteLine($"  Automated art attempt {attempt} failed ({ex.Message}), retrying...");
             }
+            catch (Exception ex)
+            {
+                lastError = ex;
+            }
         }
-        throw new Exception($"Pollinations art generation failed after {maxAttempts} attempts for {outputPath}.");
+        Console.WriteLine($"  art leg pollinations-anonymous scene {Path.GetFileName(outputPath)} failed after {maxAttempts} attempts, last error: {lastError?.Message}");
+        throw new Exception($"Pollinations art generation failed after {maxAttempts} attempts for {outputPath} (leg pollinations-anonymous, scene {Path.GetFileName(outputPath)}): last error: {lastError?.Message}");
     }
 }

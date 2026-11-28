@@ -45,6 +45,7 @@ import argparse
 import fcntl
 import json
 import os
+import shutil
 import sys
 from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
@@ -86,6 +87,20 @@ def log(msg):
 
 def now_toronto():
     return datetime.now(TZ)
+
+
+def backup_corrupt(path):
+    """Copy a corrupt governor file aside so the evidence survives the
+    reset. Returns the backup path, or None if the copy itself failed
+    (the reset still proceeds — the log line says the backup failed)."""
+    stamp = now_toronto().strftime("%Y%m%dT%H%M%S")
+    backup = f"{path}.corrupt-{stamp}"
+    try:
+        shutil.copy2(path, backup)
+        return backup
+    except Exception as e:
+        log(f"governor: could not back up corrupt file {path}: {e}")
+        return None
 
 
 def window_keys(now):
@@ -135,7 +150,11 @@ def load_config(path):
         cfg.setdefault("stages", STAGE_PROVIDERS)
         return cfg
     except Exception as e:
-        log(f"config unreadable ({path}): {e} — using fallback (cap 3, no numeric budgets)")
+        # L5: a corrupt config used to fall back silently (and the fallback
+        # cap 3 is HIGHER than the live cap 2, so it silently raised the
+        # cap). Back the corrupt file up and say so, with the fallback cap.
+        backup = backup_corrupt(path)
+        log(f"governor: config corrupt ({e}); backed up to {backup or 'BACKUP FAILED'}; using fallback (cap {FALLBACK_CONFIG['daily_video_cap']}, no numeric budgets); investigate the corrupt file before trusting today's limits")
         return dict(FALLBACK_CONFIG)
 
 
@@ -176,7 +195,11 @@ class Ledger:
                 if isinstance(loaded, dict) and "providers" in loaded:
                     self.data = loaded
         except Exception as e:
-            log(f"ledger unreadable ({self.path}): {e} — starting fresh")
+            # L5: a corrupt ledger used to be silently discarded — the
+            # videos_today jobs and all provider counters vanished with no
+            # trace. Back the corrupt file up and say what was reset.
+            backup = backup_corrupt(self.path)
+            log(f"governor: ledger corrupt ({e}); backed up to {backup or 'BACKUP FAILED'}; starting fresh — videos_today and provider counters reset to 0; investigate the corrupt file before trusting today's counts")
             self.data = fresh_ledger()
         self.data.setdefault("version", 1)
         self.data.setdefault("videos_today", {"date": "", "jobs": []})
@@ -330,6 +353,10 @@ def cmd_check(args, cfg):
                 cfg, st, args.provider, amounts, now)
     except Exception as e:
         return fail_open(f"check failed: {e}", {"provider": args.provider})
+    if not allowed:
+        # L14: a denial used to emit JSON on stdout only — no log line —
+        # so a provider denial was visible only if the caller logged it.
+        log(f"check: provider {args.provider} denied: {reason}, resets {resets_at}")
     return emit({"allowed": allowed, "provider": args.provider,
                  "reason": reason, "resets_at": resets_at,
                  "usage_fraction": round(fraction, 4),
@@ -354,6 +381,9 @@ def cmd_acquire(args, cfg):
                 record_usage(st, amounts, now)
     except Exception as e:
         return fail_open(f"acquire failed: {e}", {"provider": args.provider})
+    if not allowed:
+        # L14: see cmd_check — a denial needs a log line, not just JSON.
+        log(f"acquire: provider {args.provider} denied: {reason}, resets {resets_at}")
     return emit({"allowed": allowed, "provider": args.provider,
                  "reason": reason, "resets_at": resets_at,
                  "usage_fraction": round(fraction, 4),
@@ -415,14 +445,24 @@ def cmd_mark_cooled(args, cfg):
 
 
 def cmd_clear_cooled(args, cfg):
+    # L14: the cleared cooldown used to vanish without a trace — capture
+    # what it was before clearing so the log line names it.
+    was_reason = None
+    was_until = None
     try:
         with Ledger(args.ledger) as led:
             st = led.provider(args.provider)
+            was_reason = st.get("cooled_reason")
+            was_until = st.get("cooled_until")
             st["cooled_until"] = None
             st["cooled_reason"] = None
     except Exception as e:
         return fail_open(f"clear-cooled failed: {e}",
                          {"provider": args.provider})
+    if was_reason or was_until:
+        log(f"{args.provider} cooldown cleared (was {was_reason} until {was_until})")
+    else:
+        log(f"{args.provider} cooldown cleared (was not cooled)")
     return emit({"cleared": True, "provider": args.provider}, 0)
 
 
@@ -508,6 +548,14 @@ def cmd_video_started(args, cfg):
             count = len(vt["jobs"])
     except Exception as e:
         return fail_open(f"video-started failed: {e}")
+    # L40: a successful video-started used to be invisible — no log() call
+    # — so the prep-counting behaviour (counted at prep discovery, when
+    # the driver first learns the job id from the prep log, not at video
+    # start/publish) left no trace, and a duplicate job (recorded=False)
+    # was likewise silent. Logging only here: the counting behaviour
+    # itself is NOT changed by this item.
+    dup_note = "" if recorded else " (already counted — duplicate job, cap unchanged)"
+    log(f"video-started: job {args.job} recorded={recorded} videos_today={count}/{cap} (counted at prep discovery; a failed prep still consumes the slot){dup_note}")
     return emit({"recorded": recorded, "job": args.job,
                  "videos_today": count, "cap": cap}, 0)
 

@@ -1,10 +1,16 @@
 {
-  "_comment": "Usage governor budgets for the Spotlight Now pipeline (renamed from Trendline Now 2026-11-24) (2026-11-23). Free-tier limits, verified Nov 2026; the governor never lets a prep burn through them. Daily windows reset at midnight America/Toronto; monthly windows on the 1st (Toronto time); hourly windows on the hour. A provider with no numeric budget is still governed: a 429/limit response cools it (cooldown_after_429_seconds) instead of being retried in a tight loop. See hidden_files/governor.md. Daily cap is 2 max (Rishi 2026-11-24: quality over quantity); 1/day when top-quality image supply (FLUX) is short — the pool fails loudly on FLUX exhaustion rather than filling with weak legs. Do NOT put secrets in this file.",
+  "_comment": "Usage governor budgets for the Spotlight Now pipeline (renamed from Trendline Now 2026-11-24) (2026-11-23). Free-tier limits, verified Nov 2026; the governor never lets a prep burn through them. Daily windows reset at midnight America/Toronto; monthly windows on the 1st (Toronto time); hourly windows on the hour. A provider with no numeric budget is still governed: a 429/limit response cools it (cooldown_after_429_seconds) instead of being retried in a tight loop. See hidden_files/governor.md. Daily cap is 1 long-form/day (fix #5, Rishi 2026-11-27: quality over quantity — the freed second slot is a second Short, not a second long-form; revisit at >=500 subs or a video clearing ~1,000 views with >40% intro retention; see the \"cadence\" block below). Do NOT put secrets in this file.",
   "cooldown_defaults": {
     "after_429_seconds": 600,
     "after_timeout_seconds": 600
   },
-  "daily_video_cap": 2,
+  "daily_video_cap": 1,
+  "cadence": {
+    "long_form_per_day": 1,
+    "second_slot": "second Short — an ffmpeg tail cut of the finished vertical master (finish-chunks.py step 3c); no new prep, no cap slot, no new images/TTS",
+    "revisit_when": {"subs": 500, "views": 1000, "intro_retention": 0.40},
+    "note": "Fix #5 (Rishi 2026-11-27): stay at 1 long-form/day; spend the freed slot on a second Short, not a second long-form. Revisit at >=500 subs OR a video clearing ~1,000 views with >40% intro retention. The second Short is derived at finish time, so it never passes through video-may-start / video-started and never consumes this cap."
+  },
   "providers": {
     "azure-tts": {
       "budgets": {

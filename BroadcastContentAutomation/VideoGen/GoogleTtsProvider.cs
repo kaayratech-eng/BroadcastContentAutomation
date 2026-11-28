@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text;
 using System.Text.Json;
 using GiggleGarden.Shared;
@@ -13,8 +14,27 @@ using GiggleGarden.Shared;
 // Console. If that ever stops working against the live API, the fallback is a
 // service-account JSON key + self-signed-JWT exchange, not implemented here
 // because the simple key has not been shown to fail.
-class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
+class GoogleTtsProvider(GenConfig cfg, HttpMessageHandler? innerHandler = null) : ITtsProvider
 {
+    // L47: the retry budget the provider logs exhaustion against — kept
+    // in sync with the RetryHandler it constructs below.
+    private const int MaxAttempts = 4;
+
+    // Explicit one-arg form: Activator.CreateInstance does not fill
+    // optional parameters, so the primary constructor alone is not enough
+    // for reflection-based construction.
+    public GoogleTtsProvider(GenConfig cfg) : this(cfg, null) { }
+
+    // L47: the statuses RetryHandler retries (mirrors its IsTransient),
+    // so the exhaustion line is only logged when retries really ran out.
+    private static bool IsTransientStatus(HttpStatusCode code) =>
+        code is HttpStatusCode.RequestTimeout
+             or HttpStatusCode.TooManyRequests
+             or HttpStatusCode.InternalServerError
+             or HttpStatusCode.BadGateway
+             or HttpStatusCode.ServiceUnavailable
+             or HttpStatusCode.GatewayTimeout
+        || (int)code == 529;
     // Standard (not WaveNet/Chirp/Studio) voices only - Standard is the tier with the
     // largest free allowance and the one whose SSML support is unrestricted, matching
     // what AzureTtsProvider already relies on (<prosody rate/pitch>).
@@ -24,7 +44,7 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         ["hi"] = ("hi-IN", "hi-IN-Standard-A"),
     };
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null)
     {
         if (string.IsNullOrWhiteSpace(text))
             throw new ArgumentException("Cannot synthesize empty narration.", nameof(text));
@@ -52,7 +72,16 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         // narration at the default rate.
         var ssml = $"<speak><prosody pitch='{pitch}'>{escaped}</prosody></speak>";
 
-        using var http = new HttpClient(new RetryHandler(log: m => Console.WriteLine($"  [google-tts] {m}")))
+        // L42/L47: the scene label threads into the RetryHandler log
+        // callback, so every retry line — and the handler's exhaustion
+        // line — names the scene (job id via PrepContext.Prefix).
+        // `innerHandler` is a test seam: tests inject a canned handler so
+        // no live Google call is made.
+        var sceneSuffix = string.IsNullOrWhiteSpace(sceneLabel) ? "" : $" scene {sceneLabel.Trim()}";
+        var retryHandler = new RetryHandler(maxAttempts: MaxAttempts,
+            log: m => Console.WriteLine($"  {PrepContext.Prefix}[google-tts]{sceneSuffix} {m}"));
+        if (innerHandler is not null) retryHandler.InnerHandler = innerHandler;
+        using var http = new HttpClient(retryHandler)
         {
             Timeout = TimeSpan.FromMinutes(2),
         };
@@ -61,14 +90,21 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         {
             input = new { ssml },
             voice = new { languageCode = voice.LanguageCode, name = voice.VoiceName },
-            audioConfig = new { audioEncoding = "MP3", speakingRate = RateToSpeakingRate(rate) },
+            audioConfig = new { audioEncoding = "MP3", speakingRate = RateToSpeakingRate(rate, sceneLabel) },
         });
 
         var url = $"https://texttospeech.googleapis.com/v1/text:synthesize?key={cfg.GoogleCloudTtsApiKey}";
         var resp = await http.PostAsync(url, new StringContent(body, Encoding.UTF8, "application/json"));
 
         if (!resp.IsSuccessStatusCode)
+        {
+            // L47: the handler already logged "gave up after 4 attempts";
+            // the provider adds the scene-named exhaustion outcome before
+            // throwing, so the give-up is visible at the provider level too.
+            if (IsTransientStatus(resp.StatusCode))
+                Console.WriteLine($"  {PrepContext.Prefix}[google-tts]{sceneSuffix}: retries exhausted after {MaxAttempts} attempts (HTTP {(int)resp.StatusCode}) — falling through to next TTS provider");
             throw new Exception($"Google TTS failed ({(int)resp.StatusCode}): {Text.Tail(await resp.Content.ReadAsStringAsync(), 400)}");
+        }
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync());
         var audioContent = doc.RootElement.GetProperty("audioContent").GetString()!;
@@ -83,7 +119,7 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
     // clamped to the API's 0.25-4.0 range. Mirrors gcp_tts.py's
     // _rate_to_speaking_rate exactly, so the direct provider and the helper
     // provider agree.
-    private static double RateToSpeakingRate(string rate)
+    private static double RateToSpeakingRate(string rate, string? sceneLabel = null)
     {
         double multiplier;
         try
@@ -95,6 +131,9 @@ class GoogleTtsProvider(GenConfig cfg) : ITtsProvider
         }
         catch
         {
+            // L78: a malformed rate used to synthesize silently at 1.0x —
+            // the wrong pace with no trace. Log the bad value + scene.
+            Console.WriteLine($"  {PrepContext.Prefix}[google-tts] unparseable rate \"{rate}\" for {PrepContext.ScenePhrase(sceneLabel)} — using 1.0x");
             multiplier = 1.0;
         }
         return Math.Clamp(multiplier, 0.25, 4.0);

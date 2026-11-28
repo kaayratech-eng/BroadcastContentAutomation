@@ -44,9 +44,16 @@ class FallbackTtsProvider(IReadOnlyList<ITtsProvider> providers, GovernorClient?
         _ => null,
     };
 
-    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null)
+    public async Task SynthesizeAsync(string text, string language, string outputPath, string rate, string pitch, string? styleOverride = null, string? sceneLabel = null)
     {
+        // L42: the scene label threads into every pool log line below (and
+        // into each leg via the call), so a failure in a 55-scene prep can
+        // be tied to a scene; the job id comes from PrepContext.Prefix.
+        var scene = PrepContext.ScenePhrase(sceneLabel);
         var failures = new List<string>();
+        // L43: the reason each leg was skipped, so the all-skipped abort
+        // can name every leg instead of leaving only scattered skip lines.
+        var skippedLegs = new List<string>();
         var attempted = 0;
         var skipped = 0;
         string? resetsAt = null;
@@ -61,24 +68,27 @@ class FallbackTtsProvider(IReadOnlyList<ITtsProvider> providers, GovernorClient?
                 var check = await governor.CheckAsync(key);
                 if (!check.Allowed)
                 {
-                    Console.WriteLine($"governor: {key} skipped: {check.Reason} (resets {check.ResetsAt ?? "unknown"})");
+                    Console.WriteLine($"{PrepContext.Prefix}governor: {key} skipped {scene}: {check.Reason} (resets {check.ResetsAt ?? "unknown"})");
                     skipped++;
+                    skippedLegs.Add($"{key}: {check.Reason}");
                     resetsAt ??= check.ResetsAt;
                     continue;
                 }
                 if (key == "azure-tts" && !check.FailOpen && check.SoftCapFraction > 0
                     && check.UsageFraction >= check.SoftCapFraction)
                 {
-                    Console.WriteLine($"governor: azure-tts skipped: usage {check.UsageFraction:P0} at soft cap {check.SoftCapFraction:P0} — preserving the Azure monthly budget, Google voices this scene");
+                    Console.WriteLine($"{PrepContext.Prefix}governor: azure-tts skipped {scene}: usage {check.UsageFraction:P0} at soft cap {check.SoftCapFraction:P0} — preserving the Azure monthly budget, Google voices {scene}");
                     skipped++;
+                    skippedLegs.Add($"azure-tts: usage {check.UsageFraction:P0} at soft cap {check.SoftCapFraction:P0}");
                     resetsAt ??= check.ResetsAt;
                     continue;
                 }
                 var acquire = await governor.AcquireAsync(key, chars: text.Length);
                 if (!acquire.Allowed)
                 {
-                    Console.WriteLine($"governor: {key} skipped: {acquire.Reason} (resets {acquire.ResetsAt ?? "unknown"})");
+                    Console.WriteLine($"{PrepContext.Prefix}governor: {key} skipped {scene}: {acquire.Reason} (resets {acquire.ResetsAt ?? "unknown"})");
                     skipped++;
+                    skippedLegs.Add($"{key}: {acquire.Reason}");
                     resetsAt ??= acquire.ResetsAt;
                     continue;
                 }
@@ -87,8 +97,8 @@ class FallbackTtsProvider(IReadOnlyList<ITtsProvider> providers, GovernorClient?
             attempted++;
             try
             {
-                await provider.SynthesizeAsync(text, language, outputPath, rate, pitch, styleOverride);
-                Console.WriteLine($"  [tts-fallback] {name} voiced this scene.");
+                await provider.SynthesizeAsync(text, language, outputPath, rate, pitch, styleOverride, sceneLabel);
+                Console.WriteLine($"  {PrepContext.Prefix}[tts-fallback] {name} voiced {scene}.");
                 return;
             }
             catch (Exception ex)
@@ -96,13 +106,19 @@ class FallbackTtsProvider(IReadOnlyList<ITtsProvider> providers, GovernorClient?
                 var reason = Text.Tail(ex.Message.Replace('\n', ' ').Replace('\r', ' '), 200);
                 if (governor is not null && key is not null && GovernorClient.IsRateLimitFailure(ex.Message))
                     await governor.MarkCooledAsync(key, reason);
-                Console.WriteLine($"  [tts-fallback] {name} failed: {reason}, trying next");
+                Console.WriteLine($"  {PrepContext.Prefix}[tts-fallback] {name} failed {scene}: {reason}, trying next");
                 failures.Add($"{name}: {reason}");
             }
         }
 
         if (skipped > 0 && attempted == 0)
+        {
+            // L43: the scattered per-leg skip lines above are not a
+            // summary — log one abort line naming every skipped leg and
+            // the scene before throwing, so the abort is greppable.
+            Console.WriteLine($"  {PrepContext.Prefix}[tts-fallback] TTS all legs skipped ({string.Join(", ", skippedLegs)}) — aborting {scene}, no provider attempted");
             throw new GovernorAllCooledException(resetsAt);
+        }
 
         throw new Exception(
             $"All TTS providers failed ({failures.Count}): {string.Join(" | ", failures)}");
